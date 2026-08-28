@@ -20,6 +20,8 @@ use url::Url;
 mod http;
 mod parse;
 
+pub mod registry;
+
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
 
