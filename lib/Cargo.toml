@@ -9,9 +9,23 @@ license-file.workspace = true
 [lints]
 workspace = true
 
+[features]
+fake = []
+
 [dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+feed-rs = { workspace = true }
+qbit-rs = { workspace = true }
+reqwest = { workspace = true }
+snafu = { workspace = true }
+sqlx = { workspace = true }
 topcoat = { workspace = true, features = ["default", "tailwind"] }
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "time"] }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [build-dependencies]
 topcoat = { workspace = true, features = ["tailwind"] }
