@@ -17,6 +17,12 @@ use chrono::{DateTime, Utc};
 use snafu::Snafu;
 use url::Url;
 
+#[cfg(any(test, feature = "fake"))]
+pub mod fake;
+
+#[cfg(any(test, feature = "fake"))]
+pub use fake::FakeFeeds;
+
 /// One fetch of one tracker feed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feed {
