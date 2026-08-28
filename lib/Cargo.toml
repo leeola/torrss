@@ -10,3 +10,8 @@ license-file.workspace = true
 workspace = true
 
 [dependencies]
+topcoat = { workspace = true, features = ["default", "tailwind"] }
+tokio = { workspace = true, features = ["net"] }
+
+[build-dependencies]
+topcoat = { workspace = true, features = ["tailwind"] }

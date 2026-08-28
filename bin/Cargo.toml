@@ -6,12 +6,10 @@ publish.workspace = true
 authors.workspace = true
 license-file.workspace = true
 
-[[bin]]
-name = "torrss"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
 torrss = { path = "../lib" }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

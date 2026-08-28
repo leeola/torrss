@@ -30,7 +30,7 @@ serde_json = "1.0.151"
 snafu = "0.9.2"
 sqlx = "0.9.0"
 tokio = "1.53.1"
-topcoat = "0.6.2"
+topcoat = { version = "0.6.2", default-features = false }
 tracing = "0.1.44"
 
 # Enable a small amount of optimization in the dev profile.
