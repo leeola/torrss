@@ -10,6 +10,7 @@ use sqlx::SqlitePool;
 
 use crate::clock::Clock;
 use crate::feed::FeedSource;
+use crate::torrent::TorrentClient;
 
 /// The outside world, as the application sees it.
 ///
@@ -19,6 +20,7 @@ use crate::feed::FeedSource;
 #[derive(Clone)]
 pub struct Services {
     pub feeds: Arc<dyn FeedSource>,
+    pub torrents: Arc<dyn TorrentClient>,
     pub clock: Arc<dyn Clock>,
     pub db: SqlitePool,
 }
@@ -36,6 +38,7 @@ mod fake {
     use super::Services;
     use crate::clock::FakeClock;
     use crate::feed::FakeFeeds;
+    use crate::torrent::FakeTorrents;
 
     /// The same fakes [`Services`] holds, at their concrete types.
     ///
@@ -45,6 +48,7 @@ mod fake {
     /// test reads.
     pub struct Fakes {
         pub feeds: Arc<FakeFeeds>,
+        pub torrents: Arc<FakeTorrents>,
         pub clock: Arc<FakeClock>,
     }
 
@@ -60,6 +64,7 @@ mod fake {
         /// of its own and removes it once the test passes.
         pub fn fake(db: SqlitePool) -> (Self, Fakes) {
             let feeds = Arc::new(FakeFeeds::new());
+            let torrents = Arc::new(FakeTorrents::new());
             let clock = Arc::new(FakeClock::at(start()));
 
             // Each field coerces the concrete fake to its trait object here.
@@ -67,11 +72,19 @@ mod fake {
             // method form is what keeps both structs pointed at one value.
             let services = Self {
                 feeds: feeds.clone(),
+                torrents: torrents.clone(),
                 clock: clock.clone(),
                 db,
             };
 
-            (services, Fakes { feeds, clock })
+            (
+                services,
+                Fakes {
+                    feeds,
+                    torrents,
+                    clock,
+                },
+            )
         }
     }
 

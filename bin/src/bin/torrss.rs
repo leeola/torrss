@@ -6,6 +6,8 @@ use torrss::clock::SystemClock;
 use torrss::feed::HttpFeedSource;
 use torrss::server::{self, Config};
 use torrss::services::Services;
+use torrss::torrent::Qbit;
+use url::Url;
 
 // `topcoat dev` spawns the built executable with no arguments and offers no
 // way to supply any, so serving is what a bare invocation does. The options
@@ -33,6 +35,33 @@ struct Cli {
         default_value = "torrss.db"
     )]
     db: PathBuf,
+
+    /// qBittorrent web interface address.
+    #[arg(
+        long,
+        env = "QBIT_URL",
+        value_name = "URL",
+        default_value = "http://127.0.0.1:8080"
+    )]
+    qbit_url: Url,
+
+    /// qBittorrent account name.
+    #[arg(
+        long,
+        env = "QBIT_USERNAME",
+        value_name = "NAME",
+        default_value = "admin"
+    )]
+    qbit_username: String,
+
+    /// qBittorrent account password.
+    #[arg(
+        long,
+        env = "QBIT_PASSWORD",
+        value_name = "PASSWORD",
+        default_value = ""
+    )]
+    qbit_password: String,
 }
 
 impl From<Cli> for Config {
@@ -48,6 +77,10 @@ impl From<Cli> for Config {
 /// Opens everything the application talks to the outside world through.
 ///
 /// `mode=rwc` creates the database file, so a first run needs no setup step.
+///
+/// Only the database is contacted here. A wrong qBittorrent address or
+/// password therefore starts the server anyway, and shows up on the admin
+/// page as a failed connection check.
 async fn services(cli: &Cli) -> io::Result<Services> {
     let db = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", cli.db.display()))
         .await
@@ -55,6 +88,11 @@ async fn services(cli: &Cli) -> io::Result<Services> {
 
     Ok(Services {
         feeds: Arc::new(HttpFeedSource::new()),
+        torrents: Arc::new(Qbit::new(
+            cli.qbit_url.clone(),
+            &cli.qbit_username,
+            &cli.qbit_password,
+        )),
         clock: Arc::new(SystemClock),
         db,
     })

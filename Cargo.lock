@@ -3863,6 +3863,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "torrss",
+ "url",
 ]
 
 [[package]]
