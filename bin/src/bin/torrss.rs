@@ -6,6 +6,7 @@ use torrss::clock::SystemClock;
 use torrss::feed::HttpFeedSource;
 use torrss::server::{self, Config};
 use torrss::services::Services;
+use torrss::store;
 use torrss::torrent::Qbit;
 use url::Url;
 
@@ -76,7 +77,8 @@ impl From<Cli> for Config {
 
 /// Opens everything the application talks to the outside world through.
 ///
-/// `mode=rwc` creates the database file, so a first run needs no setup step.
+/// `mode=rwc` creates the database file and the migration builds its schema,
+/// so a first run needs no setup step.
 ///
 /// Only the database is contacted here. A wrong qBittorrent address or
 /// password therefore starts the server anyway, and shows up on the admin
@@ -85,6 +87,8 @@ async fn services(cli: &Cli) -> io::Result<Services> {
     let db = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", cli.db.display()))
         .await
         .map_err(io::Error::other)?;
+
+    store::migrate(&db).await.map_err(io::Error::other)?;
 
     Ok(Services {
         feeds: Arc::new(HttpFeedSource::new()),
