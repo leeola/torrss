@@ -17,8 +17,6 @@ use chrono::{DateTime, Utc};
 use snafu::Snafu;
 use url::Url;
 
-use crate::torrent::TorrentSource;
-
 /// One fetch of one tracker feed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feed {
@@ -37,8 +35,12 @@ pub struct FeedItem {
     /// The release filename, which is what a rule matches against.
     pub title: String,
 
-    /// Where to get the torrent data, ready to hand to a torrent client.
-    pub link: TorrentSource,
+    /// Where to get the torrent data.
+    ///
+    /// A `magnet:` scheme marks a magnet link, and any other scheme marks a
+    /// torrent file to download. The scheme carries that distinction, so an
+    /// item stays one URL and stores as one text column.
+    pub link: Url,
 
     /// When the tracker announced the release. A feed that omits a date
     /// leaves this empty, so an age is never inferred from the fetch time.
