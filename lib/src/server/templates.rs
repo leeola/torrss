@@ -1,6 +1,13 @@
-use topcoat::{Result, dev, router::layout, tailwind, view::view};
+use topcoat::{
+    Result,
+    context::Cx,
+    dev,
+    router::{layout, request::uri},
+    tailwind,
+    view::{class, component, view},
+};
 
-/// Wraps every page in the HTML document shell.
+/// Wraps every page in the HTML document shell and the site header.
 #[layout("/")]
 async fn document(slot: Result) -> Result {
     view! {
@@ -14,8 +21,49 @@ async fn document(slot: Result) -> Result {
                 dev::script()
             </head>
             <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
-                (slot?)
+                site_header()
+                <main class="mx-auto w-full max-w-5xl px-6 py-10">
+                    (slot?)
+                </main>
             </body>
         </html>
+    }
+}
+
+/// The bar every page shares, holding the wordmark and the primary nav.
+#[component]
+async fn site_header(cx: &Cx) -> Result {
+    let path = uri(cx).path();
+
+    view! {
+        <header class="border-b border-slate-800 bg-slate-900/40">
+            <div class="mx-auto flex w-full max-w-5xl items-center gap-8 px-6 py-4">
+                <a href="/" class="text-base font-semibold tracking-tight text-slate-100">
+                    "torrss"
+                </a>
+                <nav class="flex items-center gap-1 text-sm">
+                    nav_link(href: "/", label: "Feed", current: path == "/")
+                    nav_link(href: "/admin", label: "Admin", current: path.starts_with("/admin"))
+                </nav>
+            </div>
+        </header>
+    }
+}
+
+#[component]
+async fn nav_link(href: &str, label: &str, current: bool) -> Result {
+    view! {
+        <a
+            href=(href)
+            class=(class!(
+                "rounded-md px-3 py-1.5 transition-colors",
+                "bg-slate-800 text-slate-100" if current else "text-slate-400 hover:text-slate-200",
+            ))
+            if current {
+                aria-current="page"
+            }
+        >
+            (label)
+        </a>
     }
 }

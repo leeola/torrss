@@ -5,6 +5,8 @@ use topcoat::{
     router::{Router, RouterBuilderDiscoverExt},
 };
 
+use crate::server::state::RulesetSwitches;
+
 /// Builds the router from every discovered page, layout, and layer.
 ///
 /// Discovery collects the annotated functions across the whole binary at link
@@ -13,6 +15,7 @@ pub(super) fn build(assets: Option<&Path>) -> io::Result<Router> {
     Ok(Router::builder()
         .discover()
         .assets(load_assets(assets)?)
+        .app_context(RulesetSwitches::new())
         .build())
 }
 
