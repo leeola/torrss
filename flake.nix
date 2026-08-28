@@ -62,6 +62,9 @@
             cargo-hack
             # Provides `topcoat dev`, the auto-rebuilding development server.
             topcoat-cli
+            # Read by the `build.rs` Tailwind step, which uses a dev shell CLI
+            # instead of downloading one that NixOS cannot run.
+            tailwindcss_4
           ];
 
           # Silence nixpkgs cc-wrapper's target-mismatch warning emitted
