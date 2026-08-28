@@ -31,7 +31,7 @@ mod fake {
     use std::sync::Arc;
 
     use chrono::{DateTime, TimeZone, Utc};
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
     use super::Services;
     use crate::clock::FakeClock;
@@ -55,14 +55,10 @@ mod fake {
         /// `clock.now()` rather than repeating that instant, so a later
         /// change of start does not break a test that does not care.
         ///
-        /// The database is a fresh empty in-memory one, so a caller that
-        /// needs a schema runs its own migration.
-        ///
-        /// # Panics
-        ///
-        /// Panics when the in-memory database does not open, which means
-        /// the sqlite driver itself is broken.
-        pub async fn fake() -> (Self, Fakes) {
+        /// The database is `db`, which the caller owns. Take it from a
+        /// `#[sqlx::test]` parameter, which hands over a migrated database
+        /// of its own and removes it once the test passes.
+        pub fn fake(db: SqlitePool) -> (Self, Fakes) {
             let feeds = Arc::new(FakeFeeds::new());
             let clock = Arc::new(FakeClock::at(start()));
 
@@ -72,14 +68,7 @@ mod fake {
             let services = Self {
                 feeds: feeds.clone(),
                 clock: clock.clone(),
-                // One connection only. Every connection to `sqlite::memory:`
-                // opens a database of its own, so a second one sees an empty
-                // schema instead of what the first wrote.
-                db: SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect("sqlite::memory:")
-                    .await
-                    .expect("an in-memory sqlite database always opens"),
+                db,
             };
 
             (services, Fakes { feeds, clock })
@@ -95,12 +84,14 @@ mod fake {
 
 #[cfg(test)]
 mod tests {
+    use sqlx::SqlitePool;
+
     use super::Services;
     use crate::feed::{Feed, fake};
 
-    #[tokio::test]
-    async fn scripting_a_fake_reaches_the_services() {
-        let (services, fakes) = Services::fake().await;
+    #[sqlx::test]
+    async fn scripting_a_fake_reaches_the_services(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
         let url = "https://tracker.invalid/rss";
         fakes
             .feeds
