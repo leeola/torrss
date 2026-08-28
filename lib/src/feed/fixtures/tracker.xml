@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Invented Tracker</title>
+    <link>https://tracker.invalid/</link>
+    <description>An invented feed that exists only to test the parser.</description>
+    <item>
+      <title>Invented.Show.S01E01.1080p.WEB-DL.x264-GROUP</title>
+      <guid isPermaLink="false">invented-show-s01e01</guid>
+      <pubDate>Tue, 04 Mar 2025 09:15:00 +0000</pubDate>
+      <enclosure
+        url="https://tracker.invalid/torrents/invented-show-s01e01.torrent"
+        length="734003200"
+        type="application/x-bittorrent"/>
+    </item>
+    <item>
+      <title>Invented.Movie.2024.2160p.BluRay.x265-GROUP</title>
+      <guid isPermaLink="false">invented-movie-2024</guid>
+      <pubDate>Wed, 05 Mar 2025 21:40:00 +0000</pubDate>
+      <link>magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Invented.Movie.2024</link>
+    </item>
+  </channel>
+</rss>

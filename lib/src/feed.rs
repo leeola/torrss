@@ -17,8 +17,13 @@ use chrono::{DateTime, Utc};
 use snafu::Snafu;
 use url::Url;
 
+mod http;
+mod parse;
+
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
+
+pub use http::HttpFeedSource;
 
 #[cfg(any(test, feature = "fake"))]
 pub use fake::FakeFeeds;
