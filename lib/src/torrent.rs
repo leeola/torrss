@@ -13,6 +13,12 @@ use async_trait::async_trait;
 use snafu::Snafu;
 use url::Url;
 
+#[cfg(any(test, feature = "fake"))]
+mod fake;
+
+#[cfg(any(test, feature = "fake"))]
+pub use fake::FakeTorrents;
+
 /// Where the torrent data comes from.
 ///
 /// A tracker publishes a release as a magnet link, as a `.torrent` URL, or
