@@ -3694,6 +3694,7 @@ dependencies = [
  "feed-rs",
  "qbit-rs",
  "reqwest",
+ "serde_json",
  "snafu",
  "sqlx",
  "tokio",

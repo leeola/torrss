@@ -13,8 +13,12 @@ use async_trait::async_trait;
 use snafu::Snafu;
 use url::Url;
 
+mod qbit;
+
 #[cfg(any(test, feature = "fake"))]
 mod fake;
+
+pub use qbit::Qbit;
 
 #[cfg(any(test, feature = "fake"))]
 pub use fake::FakeTorrents;
