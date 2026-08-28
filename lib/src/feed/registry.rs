@@ -8,11 +8,16 @@
 //! in the app context, and a handler reads it there rather than through an
 //! argument.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use sqlx::SqlitePool;
 use url::Url;
 
+use crate::clock::Clock;
+use crate::feed::FeedSource;
+use crate::store;
 use crate::store::Ingest;
 
 /// One registered feed.
@@ -136,12 +141,83 @@ impl FeedRegistry {
     }
 }
 
+/// Fetches one feed, stores what it returned, and records the outcome.
+///
+/// Returns whether `id` names a registered feed. A feed that fails to fetch
+/// is still a feed, so a failure here reports `true` with the error text
+/// recorded against it.
+///
+/// The clock is read once, at the start. The same instant stamps the stored
+/// rows and the recorded check, so a listing's age and the admin page's
+/// last-checked time never disagree by the length of a fetch.
+pub async fn check(
+    registry: &FeedRegistry,
+    pool: &SqlitePool,
+    source: &dyn FeedSource,
+    clock: &dyn Clock,
+    id: &str,
+) -> bool {
+    // Reading the entry out clones and releases the lock, so no page render
+    // waits behind the fetch and the writes that follow.
+    let Some(entry) = registry.get(id) else {
+        return false;
+    };
+
+    let at = clock.now();
+    let outcome = match source.fetch(&entry.url).await {
+        Ok(feed) => store::ingest(pool, &entry.url, at, &feed.items)
+            .await
+            .map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
+
+    registry.record(id, FeedCheck { at, outcome })
+}
+
+/// Checks every registered feed, in the order they were added.
+///
+/// One feed's failure never stops the pass, because each check records its
+/// own outcome and returns.
+pub async fn check_all(
+    registry: &FeedRegistry,
+    pool: &SqlitePool,
+    source: &dyn FeedSource,
+    clock: &dyn Clock,
+) {
+    for entry in registry.entries() {
+        check(registry, pool, source, clock, &entry.id).await;
+    }
+}
+
+/// Checks every feed forever, pausing `interval` between passes.
+///
+/// The pause runs after a pass rather than on a fixed schedule, so a slow
+/// tracker delays the next pass instead of stacking passes on top of each
+/// other.
+pub async fn poll(
+    registry: Arc<FeedRegistry>,
+    pool: SqlitePool,
+    source: Arc<dyn FeedSource>,
+    clock: Arc<dyn Clock>,
+    interval: Duration,
+) {
+    loop {
+        check_all(&registry, &pool, source.as_ref(), clock.as_ref()).await;
+        clock.sleep(interval).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, TimeZone, Utc};
+    use sqlx::SqlitePool;
     use url::Url;
 
-    use super::{FeedCheck, FeedEntry, FeedRegistry};
+    use super::{FeedCheck, FeedEntry, FeedRegistry, check, check_all};
+    use crate::clock::Clock;
+    use crate::feed::{FeedError, fake};
+    use crate::services::Services;
+    use crate::store;
     use crate::store::Ingest;
 
     const FEED: &str = "https://tracker.invalid/rss";
@@ -260,5 +336,137 @@ mod tests {
 
         assert_eq!(registry.name_of(&url(FEED)), Some("Tracker".to_owned()));
         assert_eq!(registry.name_of(&url(OTHER)), None);
+    }
+
+    #[sqlx::test]
+    async fn check_unknown_id_is_false(pool: SqlitePool) {
+        let (services, _fakes) = Services::fake(pool);
+        let registry = FeedRegistry::new();
+
+        assert!(
+            !check(
+                &registry,
+                &services.db,
+                services.feeds.as_ref(),
+                services.clock.as_ref(),
+                "f404",
+            )
+            .await
+        );
+        assert_eq!(registry.entries(), Vec::new(), "nothing was recorded");
+    }
+
+    #[sqlx::test]
+    async fn check_ingests_items_and_records_counts(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = FeedRegistry::new();
+        let id = registry.add("Tracker".to_owned(), url(FEED));
+        let at = fakes.clock.now();
+        fakes
+            .feeds
+            .feed(FEED, vec![fake::item("A.Release"), fake::item("B.Release")]);
+
+        assert!(
+            check(
+                &registry,
+                &services.db,
+                services.feeds.as_ref(),
+                services.clock.as_ref(),
+                &id,
+            )
+            .await
+        );
+
+        assert_eq!(
+            registry.entries(),
+            vec![entry(
+                "f1",
+                "Tracker",
+                FEED,
+                Some(FeedCheck {
+                    at,
+                    outcome: Ok(Ingest { items: 2, added: 2 }),
+                })
+            )],
+            "the counts and the check time are recorded"
+        );
+        assert_eq!(
+            store::items(&services.db, None)
+                .await
+                .expect("items")
+                .into_iter()
+                .map(|stored| stored.item.title)
+                .collect::<Vec<_>>(),
+            vec!["B.Release", "A.Release"],
+            "both items reached the store, the later row first because \
+             undated items of one fetch tie until the id breaks it"
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_records_fetch_error_text(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = FeedRegistry::new();
+        let id = registry.add("Tracker".to_owned(), url(FEED));
+        let at = fakes.clock.now();
+        fakes.feeds.failing(FEED, FeedError::Status { code: 503 });
+
+        assert!(
+            check(
+                &registry,
+                &services.db,
+                services.feeds.as_ref(),
+                services.clock.as_ref(),
+                &id,
+            )
+            .await,
+            "a failed fetch is still a registered feed"
+        );
+
+        assert_eq!(
+            registry.entries(),
+            vec![entry(
+                "f1",
+                "Tracker",
+                FEED,
+                Some(FeedCheck {
+                    at,
+                    outcome: Err("the feed answered with status 503".to_owned()),
+                })
+            )]
+        );
+        assert_eq!(
+            store::items(&services.db, None).await.expect("items"),
+            Vec::new(),
+            "a failed fetch stores nothing"
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_all_fetches_every_feed_in_order(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = FeedRegistry::new();
+        registry.add("Tracker".to_owned(), url(FEED));
+        registry.add("Other".to_owned(), url(OTHER));
+        fakes.feeds.feed(FEED, vec![fake::item("A.Release")]);
+        fakes.feeds.feed(OTHER, vec![fake::item("B.Release")]);
+
+        check_all(
+            &registry,
+            &services.db,
+            services.feeds.as_ref(),
+            services.clock.as_ref(),
+        )
+        .await;
+
+        assert_eq!(
+            fakes.feeds.fetched(),
+            vec![url(FEED), url(OTHER)],
+            "registration order"
+        );
+        assert!(
+            registry.entries().iter().all(|entry| entry.check.is_some()),
+            "every feed was checked"
+        );
     }
 }
