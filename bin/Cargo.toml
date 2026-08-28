@@ -12,4 +12,5 @@ workspace = true
 [dependencies]
 torrss = { path = "../lib" }
 clap = { workspace = true, features = ["derive", "env"] }
+sqlx = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

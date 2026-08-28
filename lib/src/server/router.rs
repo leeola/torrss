@@ -6,16 +6,20 @@ use topcoat::{
 };
 
 use crate::server::state::RulesetSwitches;
+use crate::services::Services;
 
 /// Builds the router from every discovered page, layout, and layer.
 ///
 /// Discovery collects the annotated functions across the whole binary at link
 /// time, so a route appears here by existing rather than by being listed.
-pub(super) fn build(assets: Option<&Path>) -> io::Result<Router> {
+///
+/// `services` reaches a handler through the app context, keyed by its type.
+pub(super) fn build(assets: Option<&Path>, services: Services) -> io::Result<Router> {
     Ok(Router::builder()
         .discover()
         .assets(load_assets(assets)?)
         .app_context(RulesetSwitches::new())
+        .app_context(services)
         .build())
 }
 

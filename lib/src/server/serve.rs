@@ -3,6 +3,7 @@ use std::{io, path::PathBuf};
 use tokio::net::TcpListener;
 
 use super::router;
+use crate::services::Services;
 
 /// Host the listener binds to when the caller names none.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -32,8 +33,8 @@ pub struct Config {
 ///
 /// Returns an error if the asset bundle is missing or unreadable, if binding
 /// the listener fails, or if accepting a connection fails.
-pub async fn serve(config: &Config) -> io::Result<()> {
-    let router = router::build(config.assets.as_deref())?;
+pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
+    let router = router::build(config.assets.as_deref(), services)?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
 
     topcoat::serve(listener, router).await
