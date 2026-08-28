@@ -18,10 +18,11 @@ chrono = { workspace = true }
 feed-rs = { workspace = true }
 qbit-rs = { workspace = true }
 reqwest = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 topcoat = { workspace = true, features = ["default", "tailwind"] }
-tokio = { workspace = true, features = ["net", "time"] }
+tokio = { workspace = true, features = ["net", "rt", "time"] }
 url = { workspace = true }
 
 [dev-dependencies]
