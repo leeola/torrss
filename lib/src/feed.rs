@@ -25,6 +25,7 @@ mod http;
 mod parse;
 
 pub mod registry;
+pub mod store;
 
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
