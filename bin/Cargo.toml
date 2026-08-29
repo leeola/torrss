@@ -14,4 +14,6 @@ torrss = { path = "../lib" }
 clap = { workspace = true, features = ["derive", "env"] }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 url = { workspace = true }
