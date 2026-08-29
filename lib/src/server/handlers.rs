@@ -307,12 +307,19 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<&'static 
             continue;
         };
 
+        // A feed removed while its items remain leaves no credentials to
+        // find, and none is the only honest answer for a download then.
+        let auth = app_context::<Arc<FeedRegistry>>(cx)
+            .auth_of(&item.feed_url)
+            .unwrap_or_default();
+
         let _ = grab::grab(
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
             services.clock.as_ref(),
             &item,
+            &auth,
         )
         .await;
     }

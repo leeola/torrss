@@ -5,6 +5,8 @@ use reqwest::Client;
 use url::Url;
 
 use super::{DownloadError, Downloader};
+use crate::feed::FeedAuth;
+use crate::feed::http::authorize;
 
 /// A torrent file fetched over HTTP.
 ///
@@ -43,10 +45,8 @@ impl Default for HttpDownloader {
 
 #[async_trait]
 impl Downloader for HttpDownloader {
-    async fn download(&self, url: &Url) -> Result<Vec<u8>, DownloadError> {
-        let response = self
-            .client
-            .get(url.clone())
+    async fn download(&self, url: &Url, auth: &FeedAuth) -> Result<Vec<u8>, DownloadError> {
+        let response = authorize(self.client.get(url.clone()), auth)
             .send()
             .await
             .map_err(unreachable)?

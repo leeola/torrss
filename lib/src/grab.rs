@@ -14,6 +14,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::clock::Clock;
 use crate::download::{DownloadError, Downloader};
+use crate::feed::FeedAuth;
 use crate::rules::ENGINE;
 use crate::store::StoredItem;
 use crate::store::grabs;
@@ -55,6 +56,7 @@ pub(crate) async fn grab(
     client: &dyn TorrentClient,
     clock: &dyn Clock,
     item: &StoredItem,
+    auth: &FeedAuth,
 ) -> Result<(), GrabError> {
     let rulesets = ENGINE.claimants(&item.item.title);
 
@@ -62,7 +64,7 @@ pub(crate) async fn grab(
         debug!(ruleset.id = id, "ruleset passed");
     }
 
-    let submitted = submit(downloader, client, item).await;
+    let submitted = submit(downloader, client, item, auth).await;
 
     let recorded = grabs::record(
         pool,
@@ -87,8 +89,9 @@ async fn submit(
     downloader: &dyn Downloader,
     client: &dyn TorrentClient,
     item: &StoredItem,
+    auth: &FeedAuth,
 ) -> Result<(), GrabError> {
-    let source = source(downloader, item).await?;
+    let source = source(downloader, item, auth).await?;
 
     client
         .add(&AddTorrent::new(source))
@@ -104,13 +107,14 @@ async fn submit(
 async fn source(
     downloader: &dyn Downloader,
     item: &StoredItem,
+    auth: &FeedAuth,
 ) -> Result<TorrentSource, GrabError> {
     if item.item.link.scheme() == "magnet" {
         return Ok(TorrentSource::Magnet(item.item.link.clone()));
     }
 
     let data = downloader
-        .download(&item.item.link)
+        .download(&item.item.link, auth)
         .await
         .context(DownloadSnafu)?;
 
@@ -131,7 +135,9 @@ mod tests {
     use super::grab;
     use crate::clock::Clock;
     use crate::download::DownloadError;
-    use crate::feed::{FeedItem, fake};
+    use std::collections::BTreeMap;
+
+    use crate::feed::{FeedAuth, FeedItem, fake};
     use crate::services::Services;
     use crate::store;
     use crate::store::grabs::{self, Grab};
@@ -175,6 +181,7 @@ mod tests {
             services.torrents.as_ref(),
             services.clock.as_ref(),
             &item,
+            &FeedAuth::default(),
         )
         .await
         .expect("grab");
@@ -203,6 +210,7 @@ mod tests {
             services.torrents.as_ref(),
             services.clock.as_ref(),
             &item,
+            &FeedAuth::default(),
         )
         .await
         .expect("grab");
@@ -237,6 +245,7 @@ mod tests {
                 services.torrents.as_ref(),
                 services.clock.as_ref(),
                 &item,
+                &FeedAuth::default(),
             )
             .await
             .is_err()
@@ -278,6 +287,7 @@ mod tests {
                 services.torrents.as_ref(),
                 services.clock.as_ref(),
                 &item,
+                &FeedAuth::default(),
             )
             .await
             .is_err()
@@ -309,6 +319,7 @@ mod tests {
             services.torrents.as_ref(),
             services.clock.as_ref(),
             &item,
+            &FeedAuth::default(),
         )
         .await
         .expect("grab");
@@ -342,6 +353,7 @@ mod tests {
             services.torrents.as_ref(),
             services.clock.as_ref(),
             &item,
+            &FeedAuth::default(),
         )
         .await
         .expect("grab");
@@ -379,6 +391,7 @@ mod tests {
             services.torrents.as_ref(),
             services.clock.as_ref(),
             &item,
+            &FeedAuth::default(),
         )
         .await
         .expect("grab");
@@ -395,6 +408,35 @@ mod tests {
                 }
             )]),
             "a title no ruleset claims still grabs, and records nothing"
+        );
+    }
+
+    #[sqlx::test]
+    async fn torrent_url_downloads_with_the_feed_auth(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let item = stored(&services.db, fake::item(TITLE)).await;
+        fakes.downloads.file(TORRENT_URL, BYTES);
+
+        let auth = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("Cookie".to_owned(), "session=abc".to_owned())]),
+        };
+
+        grab(
+            &services.db,
+            services.downloads.as_ref(),
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &item,
+            &auth,
+        )
+        .await
+        .expect("grab");
+
+        assert_eq!(
+            fakes.downloads.downloaded_auth(),
+            vec![(url(TORRENT_URL), auth)],
+            "a tracker that gates the feed gates the torrent file the same way"
         );
     }
 }

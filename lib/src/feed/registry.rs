@@ -195,6 +195,18 @@ impl FeedRegistry {
             .map(|feed| feed.name.clone())
     }
 
+    /// Returns the credentials registered for `url`.
+    ///
+    /// A stored item carries its feed's URL rather than an id, so this is what
+    /// turns one into the credentials a download for it has to send.
+    pub fn auth_of(&self, url: &Url) -> Option<FeedAuth> {
+        self.lock()
+            .feeds
+            .iter()
+            .find(|feed| &feed.url == url)
+            .map(|feed| feed.auth.clone())
+    }
+
     /// Stores `check` as the feed's latest, and reports whether `id` exists.
     ///
     /// Only the last check is kept. A history grows without bound, and the
@@ -456,6 +468,27 @@ mod tests {
             }
         ));
         assert_eq!(registry.entries(), Vec::new());
+    }
+
+    #[sqlx::test]
+    async fn auth_of_unknown_url_is_none(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        let auth = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("Cookie".to_owned(), "session=abc".to_owned())]),
+        };
+
+        registry
+            .add("Tracker".to_owned(), url(FEED), Some(auth.clone()))
+            .await
+            .expect("add");
+
+        assert_eq!(registry.auth_of(&url(FEED)), Some(auth));
+        assert_eq!(
+            registry.auth_of(&url(OTHER)),
+            None,
+            "a URL nothing registered has no credentials to find"
+        );
     }
 
     #[sqlx::test]

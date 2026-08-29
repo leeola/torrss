@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use url::Url;
 
-mod http;
+pub(crate) mod http;
 mod parse;
 
 pub mod registry;

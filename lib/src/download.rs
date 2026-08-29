@@ -16,6 +16,8 @@ use async_trait::async_trait;
 use snafu::Snafu;
 use url::Url;
 
+use crate::feed::FeedAuth;
+
 mod http;
 
 #[cfg(any(test, feature = "fake"))]
@@ -46,10 +48,13 @@ pub enum DownloadError {
 /// Another replies from a script for a test.
 #[async_trait]
 pub trait Downloader: Send + Sync {
-    /// Fetches `url` and returns the bytes it answered with.
+    /// Fetches `url` with `auth` and returns the bytes it answered with.
+    ///
+    /// A tracker that gates its feed behind credentials gates the torrent
+    /// file too, so the same [`FeedAuth`] goes with both.
     ///
     /// The bytes are not checked for being a torrent file. The client
     /// rejects a body it cannot read, and that rejection says more about the
     /// tracker than a parse here would.
-    async fn download(&self, url: &Url) -> Result<Vec<u8>, DownloadError>;
+    async fn download(&self, url: &Url, auth: &FeedAuth) -> Result<Vec<u8>, DownloadError>;
 }

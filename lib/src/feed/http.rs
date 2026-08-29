@@ -1,7 +1,7 @@
 //! The [`FeedSource`] that reads a tracker feed over HTTP.
 
 use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::{Client, RequestBuilder};
 use tracing::{debug, instrument};
 use url::Url;
 
@@ -46,20 +46,7 @@ impl Default for HttpFeedSource {
 impl FeedSource for HttpFeedSource {
     #[instrument(name = "fetch_feed", level = "debug", skip_all, fields(feed.url = %redacted(url)))]
     async fn fetch(&self, url: &Url, auth: &FeedAuth) -> Result<Feed, FeedError> {
-        let mut request = self.client.get(url.clone());
-
-        // A malformed name or value defers to `send`, which reports it as the
-        // same `reqwest::Error` any other request failure takes, so nothing
-        // is validated here.
-        for (name, value) in &auth.headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        if let Some(basic) = &auth.basic {
-            request = request.basic_auth(&basic.username, Some(&basic.password));
-        }
-
-        let response = request
+        let response = authorize(self.client.get(url.clone()), auth)
             .send()
             .await
             .map_err(unreachable)?
@@ -75,6 +62,29 @@ impl FeedSource for HttpFeedSource {
 
         parse::parse(&body)
     }
+}
+
+/// Puts `auth` on a request.
+///
+/// Shared with the torrent-file download, because a tracker that gates its
+/// feed behind a cookie or a basic pair gates the `.torrent` link the same
+/// way.
+///
+/// A malformed header name or value defers to `send`, which reports it as the
+/// same `reqwest::Error` any other request failure takes, so nothing is
+/// validated here.
+pub(crate) fn authorize(request: RequestBuilder, auth: &FeedAuth) -> RequestBuilder {
+    let mut request = request;
+
+    for (name, value) in &auth.headers {
+        request = request.header(name.as_str(), value.as_str());
+    }
+
+    if let Some(basic) = &auth.basic {
+        request = request.basic_auth(&basic.username, Some(&basic.password));
+    }
+
+    request
 }
 
 fn unreachable(error: reqwest::Error) -> FeedError {

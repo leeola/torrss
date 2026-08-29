@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use url::Url;
 
 use super::{DownloadError, Downloader};
+use crate::feed::FeedAuth;
 
 /// A scripted [`Downloader`].
 ///
@@ -24,7 +25,7 @@ use super::{DownloadError, Downloader};
 #[derive(Debug, Default)]
 pub struct FakeDownloader {
     replies: Mutex<HashMap<Url, Result<Vec<u8>, DownloadError>>>,
-    downloaded: Mutex<Vec<Url>>,
+    downloaded: Mutex<Vec<(Url, FeedAuth)>>,
 }
 
 impl FakeDownloader {
@@ -44,6 +45,17 @@ impl FakeDownloader {
 
     /// Returns every URL downloaded so far, in the order it was asked for.
     pub fn downloaded(&self) -> Vec<Url> {
+        self.lock_downloaded()
+            .iter()
+            .map(|(url, _)| url.clone())
+            .collect()
+    }
+
+    /// Returns every download as the URL and the auth it was sent with.
+    ///
+    /// Use this where the credentials are the point. [`Self::downloaded`]
+    /// drops them, which keeps the common assertion short.
+    pub fn downloaded_auth(&self) -> Vec<(Url, FeedAuth)> {
         self.lock_downloaded().clone()
     }
 
@@ -54,7 +66,7 @@ impl FakeDownloader {
             .expect("the fake download reply lock is never poisoned")
     }
 
-    fn lock_downloaded(&self) -> MutexGuard<'_, Vec<Url>> {
+    fn lock_downloaded(&self) -> MutexGuard<'_, Vec<(Url, FeedAuth)>> {
         // Nothing panics while the guard is held, so the lock never poisons.
         self.downloaded
             .lock()
@@ -68,8 +80,8 @@ impl Downloader for FakeDownloader {
     ///
     /// The attempt is recorded first, so a test still sees that the caller
     /// asked for a URL it never scripted.
-    async fn download(&self, url: &Url) -> Result<Vec<u8>, DownloadError> {
-        self.lock_downloaded().push(url.clone());
+    async fn download(&self, url: &Url, auth: &FeedAuth) -> Result<Vec<u8>, DownloadError> {
+        self.lock_downloaded().push((url.clone(), auth.clone()));
 
         // The reply is cloned rather than removed, so a caller that retries
         // keeps seeing the state a test left it in instead of running dry.
@@ -92,7 +104,9 @@ fn parse(url: &str) -> Url {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadError, Downloader, FakeDownloader, parse};
+    use std::collections::BTreeMap;
+
+    use super::{DownloadError, Downloader, FakeDownloader, FeedAuth, parse};
 
     const TORRENT: &str = "https://tracker.invalid/get/1.torrent";
     const OTHER: &str = "https://other.invalid/get/2.torrent";
@@ -103,7 +117,9 @@ mod tests {
         downloads.file(TORRENT, b"d8:announce4:teste");
 
         assert_eq!(
-            downloads.download(&parse(TORRENT)).await,
+            downloads
+                .download(&parse(TORRENT), &FeedAuth::default())
+                .await,
             Ok(b"d8:announce4:teste".to_vec())
         );
     }
@@ -114,7 +130,9 @@ mod tests {
         downloads.failing(TORRENT, DownloadError::Status { code: 403 });
 
         assert_eq!(
-            downloads.download(&parse(TORRENT)).await,
+            downloads
+                .download(&parse(TORRENT), &FeedAuth::default())
+                .await,
             Err(DownloadError::Status { code: 403 })
         );
     }
@@ -125,7 +143,9 @@ mod tests {
         downloads.file(TORRENT, "bytes");
 
         assert_eq!(
-            downloads.download(&parse(OTHER)).await,
+            downloads
+                .download(&parse(OTHER), &FeedAuth::default())
+                .await,
             Err(DownloadError::Unreachable {
                 message: format!("no reply is scripted for {OTHER}"),
             })
@@ -138,14 +158,38 @@ mod tests {
         downloads.file(TORRENT, "bytes");
         downloads.failing(OTHER, DownloadError::Status { code: 404 });
 
-        let _ = downloads.download(&parse(OTHER)).await;
-        let _ = downloads.download(&parse(TORRENT)).await;
-        let _ = downloads.download(&parse(OTHER)).await;
+        let _ = downloads
+            .download(&parse(OTHER), &FeedAuth::default())
+            .await;
+        let _ = downloads
+            .download(&parse(TORRENT), &FeedAuth::default())
+            .await;
+        let _ = downloads
+            .download(&parse(OTHER), &FeedAuth::default())
+            .await;
 
         assert_eq!(
             downloads.downloaded(),
             vec![parse(OTHER), parse(TORRENT), parse(OTHER)],
             "an unscripted or failing URL still records the attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn downloaded_auth_records_the_pair() {
+        let downloads = FakeDownloader::new();
+        downloads.file(TORRENT, "bytes");
+
+        let auth = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("Cookie".to_owned(), "session=abc".to_owned())]),
+        };
+        let _ = downloads.download(&parse(TORRENT), &auth).await;
+
+        assert_eq!(
+            downloads.downloaded_auth(),
+            vec![(parse(TORRENT), auth)],
+            "the credentials reach the downloader, not only the URL"
         );
     }
 }
