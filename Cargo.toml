@@ -36,7 +36,7 @@ tokio = "1.53.1"
 topcoat = { version = "0.6.2", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-url = "2.5.4"
+url = { version = "2.5.4", features = ["serde"] }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

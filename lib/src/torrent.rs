@@ -9,11 +9,15 @@
 //! type. A test fake then produces any failure the application handles,
 //! without a live connection to fail against.
 
+use std::fmt::{self, Debug, Formatter};
+
 use async_trait::async_trait;
+use serde::Deserialize;
 use snafu::Snafu;
 use url::Url;
 
 mod qbit;
+pub mod store;
 pub(crate) mod sync;
 
 #[cfg(any(test, feature = "fake"))]
@@ -101,6 +105,71 @@ pub enum TorrentState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientInfo {
     pub version: String,
+}
+
+/// The connection the application opens to a torrent client.
+///
+/// Complete rather than partial: every field is set, so a caller opens a
+/// client from this without consulting anything else.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClientSettings {
+    pub url: Url,
+    pub username: String,
+    pub password: String,
+}
+
+/// What one file states about the connection.
+///
+/// Every field is optional, because a declaration is a fragment rather than a
+/// whole. One file in the Nix store names the address and the account, and a
+/// secret file outside it names only the password.
+#[derive(Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientDeclaration {
+    pub url: Option<Url>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+impl Default for ClientSettings {
+    /// Returns what a fresh qBittorrent Web UI listens with.
+    ///
+    /// A default that reaches an unconfigured client beats one that reaches
+    /// nothing: the connection check then reports a refused login rather than
+    /// an address the user never chose.
+    fn default() -> Self {
+        Self {
+            url: "http://127.0.0.1:8080"
+                .parse()
+                .expect("the default endpoint is a valid URL"),
+            username: "admin".to_owned(),
+            password: String::new(),
+        }
+    }
+}
+
+impl Debug for ClientSettings {
+    /// Prints the address and the account, and redacts the password.
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientSettings")
+            .field("url", &self.url.as_str())
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+impl Debug for ClientDeclaration {
+    /// Prints what the declaration names, and redacts the password's value.
+    ///
+    /// Whether a password was declared is worth seeing; what it is never is.
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientDeclaration")
+            .field("url", &self.url.as_ref().map(Url::as_str))
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Why a torrent client request did not succeed.
