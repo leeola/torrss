@@ -1,7 +1,7 @@
 use std::time::Duration;
-use std::{io, path::PathBuf, sync::Arc};
+use std::{io, io::ErrorKind, path::PathBuf, sync::Arc};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use sqlx::SqlitePool;
 use torrss::clock::SystemClock;
 use torrss::download::HttpDownloader;
@@ -10,6 +10,8 @@ use torrss::server::{self, Config};
 use torrss::services::Services;
 use torrss::store;
 use torrss::torrent::Qbit;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
 use url::Url;
 
 // `topcoat dev` spawns the built executable with no arguments and offers no
@@ -74,6 +76,38 @@ struct Cli {
         default_value_t = 900
     )]
     poll_interval: u64,
+
+    /// Log filter directives, such as `info,torrss=debug,sqlx=debug`.
+    #[arg(
+        long,
+        env = "TORRSS_LOG",
+        value_name = "DIRECTIVES",
+        default_value = "info"
+    )]
+    log: String,
+
+    /// Shape of each log line.
+    #[arg(
+        long,
+        env = "TORRSS_LOG_FORMAT",
+        value_name = "FORMAT",
+        value_enum,
+        default_value = "text"
+    )]
+    log_format: LogFormat,
+}
+
+/// How each log line is written.
+#[derive(Clone, Copy, ValueEnum)]
+enum LogFormat {
+    /// One line per event, for a person reading a terminal.
+    Text,
+
+    /// One JSON object per event, for a collector to parse.
+    ///
+    /// The object carries the stack of open spans, so a line written
+    /// inside a feed check names the check it belongs to.
+    Json,
 }
 
 impl From<Cli> for Config {
@@ -85,6 +119,44 @@ impl From<Cli> for Config {
             poll_interval: Duration::from_secs(cli.poll_interval),
         }
     }
+}
+
+/// Installs the subscriber every log line goes through.
+///
+/// Both formats write when a span closes rather than when it opens. A closed
+/// span carries its fields and the time it was busy, so one request reads as
+/// one line instead of as a pair to match up.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidInput`] when `filter` is not a valid set of
+/// directives, because that is a mistake in the command line rather than a
+/// condition the program recovers from.
+///
+/// # Panics
+///
+/// Panics when a subscriber is already installed. The subscriber is global
+/// to the process, so this runs once, from `main`.
+fn init_tracing(filter: &str, format: LogFormat) -> io::Result<()> {
+    let filter = EnvFilter::try_new(filter)
+        .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error))?;
+
+    // `init` also installs the `log` bridge, so the lines reqwest and hyper
+    // write through `log` arrive at this subscriber too.
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::CLOSE);
+
+    match format {
+        LogFormat::Text => builder.init(),
+        LogFormat::Json => builder
+            .json()
+            .with_span_list(true)
+            .with_current_span(true)
+            .init(),
+    }
+
+    Ok(())
 }
 
 /// Opens everything the application talks to the outside world through.
@@ -118,6 +190,8 @@ async fn services(cli: &Cli) -> io::Result<Services> {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
+    init_tracing(&cli.log, cli.log_format)?;
+
     let services = services(&cli).await?;
 
     server::serve(&cli.into(), services).await
