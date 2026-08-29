@@ -5,7 +5,7 @@ use reqwest::Client;
 use tracing::{debug, instrument};
 use url::Url;
 
-use super::{Feed, FeedError, FeedSource, parse, redacted};
+use super::{Feed, FeedAuth, FeedError, FeedSource, parse, redacted};
 
 /// A tracker feed read over HTTP.
 ///
@@ -45,10 +45,21 @@ impl Default for HttpFeedSource {
 #[async_trait]
 impl FeedSource for HttpFeedSource {
     #[instrument(name = "fetch_feed", level = "debug", skip_all, fields(feed.url = %redacted(url)))]
-    async fn fetch(&self, url: &Url) -> Result<Feed, FeedError> {
-        let response = self
-            .client
-            .get(url.clone())
+    async fn fetch(&self, url: &Url, auth: &FeedAuth) -> Result<Feed, FeedError> {
+        let mut request = self.client.get(url.clone());
+
+        // A malformed name or value defers to `send`, which reports it as the
+        // same `reqwest::Error` any other request failure takes, so nothing
+        // is validated here.
+        for (name, value) in &auth.headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+
+        if let Some(basic) = &auth.basic {
+            request = request.basic_auth(&basic.username, Some(&basic.password));
+        }
+
+        let response = request
             .send()
             .await
             .map_err(unreachable)?

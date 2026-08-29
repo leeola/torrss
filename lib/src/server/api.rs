@@ -107,6 +107,7 @@ mod tests {
     use url::Url;
 
     use super::report;
+    use crate::feed::FeedAuth;
     use crate::feed::registry::{FeedCheck, FeedEntry};
     use crate::store::Ingest;
 
@@ -115,6 +116,7 @@ mod tests {
             id: id.to_owned(),
             name: name.to_owned(),
             url: Url::parse(&format!("https://{id}.invalid/rss")).expect("the test URL parses"),
+            auth: FeedAuth::default(),
             check,
         }
     }

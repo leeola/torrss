@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use url::Url;
 
-use super::{Feed, FeedError, FeedItem, FeedSource};
+use super::{Feed, FeedAuth, FeedError, FeedItem, FeedSource};
 
 /// The host every [`item`] link points at.
 ///
@@ -26,7 +26,7 @@ const FAKE_HOST: &str = "https://fake.invalid";
 #[derive(Debug, Default)]
 pub struct FakeFeeds {
     replies: Mutex<HashMap<Url, VecDeque<Result<Feed, FeedError>>>>,
-    fetched: Mutex<Vec<Url>>,
+    fetched: Mutex<Vec<(Url, FeedAuth)>>,
 }
 
 impl FakeFeeds {
@@ -67,6 +67,17 @@ impl FakeFeeds {
 
     /// Returns every URL fetched so far, in the order it was fetched.
     pub fn fetched(&self) -> Vec<Url> {
+        self.lock_fetched()
+            .iter()
+            .map(|(url, _)| url.clone())
+            .collect()
+    }
+
+    /// Returns every fetch as the URL and the auth it was sent with.
+    ///
+    /// Use this where the credentials are the point. [`Self::fetched`] drops
+    /// them, which keeps the common assertion short.
+    pub fn fetched_auth(&self) -> Vec<(Url, FeedAuth)> {
         self.lock_fetched().clone()
     }
 
@@ -77,7 +88,7 @@ impl FakeFeeds {
             .expect("the fake feed reply lock is never poisoned")
     }
 
-    fn lock_fetched(&self) -> MutexGuard<'_, Vec<Url>> {
+    fn lock_fetched(&self) -> MutexGuard<'_, Vec<(Url, FeedAuth)>> {
         // Nothing panics while the guard is held, so the lock never poisons.
         self.fetched
             .lock()
@@ -87,8 +98,8 @@ impl FakeFeeds {
 
 #[async_trait]
 impl FeedSource for FakeFeeds {
-    async fn fetch(&self, url: &Url) -> Result<Feed, FeedError> {
-        self.lock_fetched().push(url.clone());
+    async fn fetch(&self, url: &Url, auth: &FeedAuth) -> Result<Feed, FeedError> {
+        self.lock_fetched().push((url.clone(), auth.clone()));
 
         let mut replies = self.lock_replies();
         let Some(queue) = replies.get_mut(url) else {
@@ -161,7 +172,9 @@ fn parse(url: &str) -> Url {
 
 #[cfg(test)]
 mod tests {
-    use super::{FakeFeeds, FeedSource, item, parse};
+    use std::collections::BTreeMap;
+
+    use super::{FakeFeeds, FeedAuth, FeedSource, item, parse};
     use crate::feed::{Feed, FeedError};
 
     const FEED: &str = "https://tracker.invalid/rss";
@@ -183,9 +196,9 @@ mod tests {
         );
 
         let url = parse(FEED);
-        let first = feeds.fetch(&url).await;
-        let second = feeds.fetch(&url).await;
-        let third = feeds.fetch(&url).await;
+        let first = feeds.fetch(&url, &FeedAuth::default()).await;
+        let second = feeds.fetch(&url, &FeedAuth::default()).await;
+        let third = feeds.fetch(&url, &FeedAuth::default()).await;
 
         assert_eq!(
             first,
@@ -210,7 +223,7 @@ mod tests {
         feeds.feed(FEED, vec![item("Known.Release.1080p")]);
 
         assert_eq!(
-            feeds.fetch(&parse(OTHER)).await,
+            feeds.fetch(&parse(OTHER), &FeedAuth::default()).await,
             Err(FeedError::Unreachable {
                 message: format!("no reply is scripted for {OTHER}"),
             })
@@ -224,7 +237,7 @@ mod tests {
         feeds.push(FEED, item("Some Show S01E02 1080p").seeders(9));
 
         assert_eq!(
-            feeds.fetch(&parse(FEED)).await,
+            feeds.fetch(&parse(FEED), &FeedAuth::default()).await,
             Ok(Feed {
                 items: vec![
                     item("Some Show S01E01 1080p").size(2048),
@@ -240,13 +253,31 @@ mod tests {
         feeds.feed(FEED, vec![item("Some.Release.1080p")]);
         feeds.failing(OTHER, FeedError::Status { code: 503 });
 
-        let _ = feeds.fetch(&parse(OTHER)).await;
-        let _ = feeds.fetch(&parse(FEED)).await;
-        let _ = feeds.fetch(&parse(OTHER)).await;
+        let _ = feeds.fetch(&parse(OTHER), &FeedAuth::default()).await;
+        let _ = feeds.fetch(&parse(FEED), &FeedAuth::default()).await;
+        let _ = feeds.fetch(&parse(OTHER), &FeedAuth::default()).await;
 
         assert_eq!(
             feeds.fetched(),
             vec![parse(OTHER), parse(FEED), parse(OTHER)]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetched_auth_records_the_pair() {
+        let feeds = FakeFeeds::new();
+        feeds.feed(FEED, vec![item("Some.Release.1080p")]);
+
+        let auth = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("X-Api-Key".to_owned(), "secret".to_owned())]),
+        };
+        let _ = feeds.fetch(&parse(FEED), &auth).await;
+
+        assert_eq!(
+            feeds.fetched_auth(),
+            vec![(parse(FEED), auth)],
+            "the credentials reach the source, not only the URL"
         );
     }
 }

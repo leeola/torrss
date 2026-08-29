@@ -18,7 +18,7 @@ use tracing::{Span, info, instrument, warn};
 use url::Url;
 
 use crate::clock::Clock;
-use crate::feed::{FeedSource, redacted};
+use crate::feed::{FeedAuth, FeedSource, redacted};
 use crate::store;
 use crate::store::Ingest;
 
@@ -33,6 +33,12 @@ pub struct FeedEntry {
     pub name: String,
 
     pub url: Url,
+
+    /// The credentials a fetch sends with this feed.
+    ///
+    /// A registration made through the admin page carries none. A feed that
+    /// needs them arrives from the configuration file or the store.
+    pub auth: FeedAuth,
 
     /// The result of the last check, or nothing until one runs.
     pub check: Option<FeedCheck>,
@@ -82,6 +88,7 @@ impl FeedRegistry {
             id: id.clone(),
             name,
             url,
+            auth: FeedAuth::default(),
             check: None,
         });
 
@@ -171,7 +178,7 @@ pub async fn check(
     Span::current().record("feed.url", display(redacted(&entry.url)));
 
     let at = clock.now();
-    let outcome = match source.fetch(&entry.url).await {
+    let outcome = match source.fetch(&entry.url, &entry.auth).await {
         Ok(feed) => store::ingest(pool, &entry.url, at, &feed.items)
             .await
             .map_err(|error| error.to_string()),
@@ -230,7 +237,7 @@ mod tests {
 
     use super::{FeedCheck, FeedEntry, FeedRegistry, check, check_all};
     use crate::clock::Clock;
-    use crate::feed::{FeedError, fake};
+    use crate::feed::{FeedAuth, FeedError, fake};
     use crate::services::Services;
     use crate::store;
     use crate::store::Ingest;
@@ -253,6 +260,7 @@ mod tests {
             id: id.to_owned(),
             name: name.to_owned(),
             url: url(feed),
+            auth: FeedAuth::default(),
             check,
         }
     }

@@ -107,7 +107,7 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::Services;
-    use crate::feed::{Feed, fake};
+    use crate::feed::{Feed, FeedAuth, fake};
 
     #[sqlx::test]
     async fn scripting_a_fake_reaches_the_services(pool: SqlitePool) {
@@ -120,7 +120,10 @@ mod tests {
         assert_eq!(
             services
                 .feeds
-                .fetch(&url.parse().expect("the test URL parses"))
+                .fetch(
+                    &url.parse().expect("the test URL parses"),
+                    &FeedAuth::default(),
+                )
                 .await,
             Ok(Feed {
                 items: vec![fake::item("Some.Release.1080p")]
