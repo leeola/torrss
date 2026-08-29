@@ -251,7 +251,7 @@ pub(crate) async fn field_row(
                 </select>
             </div>
 
-            <div class=(class!("md:col-span-4" if inheriting else "md:col-span-6"))>
+            <div class=(class!("md:col-span-3" if inheriting else "md:col-span-5"))>
                 <label class="block text-xs text-slate-500">"Pattern"</label>
                 <input
                     type="text"
@@ -277,6 +277,22 @@ pub(crate) async fn field_row(
                     type="checkbox"
                     name=(format!("{}.required", field.name))
                     checked=(field.required)
+                    disabled=(locked)
+                    class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
+                >
+            </div>
+
+            <div class="md:col-span-1 md:justify-self-center">
+                <label
+                    class="block text-xs text-slate-500"
+                    title="Part of what decides whether two releases are the same item"
+                >
+                    "Identity"
+                </label>
+                <input
+                    type="checkbox"
+                    name=(format!("{}.identity", field.name))
+                    checked=(field.identity)
                     disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
                 >

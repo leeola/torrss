@@ -42,6 +42,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"^(?<show>[\w.]+?)(?=\.S\d{2}E\d{2})",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "season",
@@ -49,6 +50,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Number,
                 pattern: r"S(?<season>\d{2})",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "episode",
@@ -56,6 +58,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Number,
                 pattern: r"E(?<episode>\d{2})",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "resolution",
@@ -63,6 +66,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<resolution>480p|720p|1080p|2160p)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "source",
@@ -70,6 +74,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<source>[A-Z]{3}\.\w+|Broadcast|Webcast|Telecast)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "audio",
@@ -77,6 +82,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"(?<audio>AAC\.(Mono|Stereo|5\.1)|PCM\.[\w.]+)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "codec",
@@ -84,6 +90,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<codec>H\.26[45]|AV1|VP9)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "publisher",
@@ -91,13 +98,15 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"-(?<publisher>[A-Za-z0-9]+)\.\w+$",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "extension",
                 part: Extension,
                 kind: Enum,
                 pattern: r"(?<extension>\.mkv|\.mp4|\.avi)$",
-                required: true,
+                required: false,
+                identity: false,
             },
         ],
         candidates: candidates::SERIES_EPISODES,
@@ -128,6 +137,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"^(?<title>[\w.]+?)(?=\.(19|20)\d{2}\.)",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "year",
@@ -135,6 +145,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Number,
                 pattern: r"\.(?<year>(19|20)\d{2})\.",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "resolution",
@@ -142,6 +153,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<resolution>720p|1080p|2160p)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "source",
@@ -149,6 +161,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<source>Studio\.Master|Remaster|Restoration|Archive)",
                 required: true,
+                identity: false,
             },
             Field {
                 name: "codec",
@@ -156,6 +169,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<codec>H\.26[45]|AV1|VP9)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "audio",
@@ -163,6 +177,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"(?<audio>PCM\.[\w.]+|AAC\.[\w.]+)",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "publisher",
@@ -170,13 +185,15 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"-(?<publisher>[A-Za-z0-9]+)\.\w+$",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "extension",
                 part: Extension,
                 kind: Enum,
                 pattern: r"(?<extension>\.mkv|\.mp4)$",
-                required: true,
+                required: false,
+                identity: false,
             },
         ],
         candidates: candidates::FEATURE_FILMS,
@@ -208,6 +225,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"^\[(?<publisher>[^\]]+)\]",
                 required: true,
+                identity: false,
             },
             Field {
                 name: "show",
@@ -215,6 +233,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"\]\s(?<show>.+?)\s-\s\d",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "episode",
@@ -222,6 +241,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Number,
                 pattern: r"\s-\s(?<episode>\d{2,3})",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "resolution",
@@ -229,6 +249,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"[(\[](?<resolution>480p|720p|1080p)[)\]]",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "checksum",
@@ -236,13 +257,15 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"\[(?<checksum>[0-9A-F]{8})\]",
                 required: false,
+                identity: false,
             },
             Field {
                 name: "extension",
                 part: Extension,
                 kind: Enum,
                 pattern: r"(?<extension>\.mkv|\.mp4)$",
-                required: true,
+                required: false,
+                identity: false,
             },
         ],
         candidates: candidates::ARCHIVE_TALKS,
@@ -275,6 +298,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"^(?<show>The\.Hollow\.Meridian)(?=\.S\d{2}E\d{2})",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "resolution",
@@ -282,6 +306,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Enum,
                 pattern: r"(?<resolution>1080p)",
                 required: true,
+                identity: false,
             },
         ],
     },
@@ -313,6 +338,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"^(?<show>Ashfall\.County)(?=\.S\d{2}E\d{2})",
                 required: true,
+                identity: true,
             },
             Field {
                 name: "publisher",
@@ -320,6 +346,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 kind: Text,
                 pattern: r"-(?<publisher>PublicWave)\.\w+$",
                 required: true,
+                identity: false,
             },
         ],
     },

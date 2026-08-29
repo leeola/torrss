@@ -372,6 +372,13 @@ pub(crate) struct Field {
     pub(crate) kind: FieldKind,
     pub(crate) pattern: &'static str,
     pub(crate) required: bool,
+
+    /// Whether this field is part of the key that decides whether two
+    /// releases are the same item.
+    ///
+    /// A different group, resolution, or encode of one episode is still that
+    /// episode, so only the fields that name what a release *is* take part.
+    pub(crate) identity: bool,
 }
 
 /// How a matched string converts before the rest of the app sees it.
