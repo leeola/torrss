@@ -8,6 +8,7 @@ use topcoat::{
 
 use crate::feed::registry::FeedRegistry;
 use crate::server::state::RulesetSwitches;
+use crate::server::trace::RequestSpan;
 use crate::services::Services;
 use crate::torrent::sync::SyncState;
 
@@ -32,6 +33,7 @@ pub(super) fn build(
         .app_context(services)
         .app_context(registry)
         .app_context(sync)
+        .layer(RequestSpan)
         .build())
 }
 
