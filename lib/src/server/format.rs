@@ -45,6 +45,16 @@ pub(super) fn size(bytes: Option<u64>) -> String {
     format!("{value:.1} {unit}")
 }
 
+/// Renders `amount` beside the noun it counts, in the form the count needs.
+///
+/// Both forms are given rather than derived, because an `s` is not always
+/// what a plural adds. The admin counts `matches`, not `matchs`.
+pub(super) fn count(amount: usize, singular: &str, plural: &str) -> String {
+    let noun = if amount == 1 { singular } else { plural };
+
+    format!("{amount} {noun}")
+}
+
 /// Renders how long ago `then` was, in the largest unit that fits whole.
 ///
 /// A time in the future reads as `just now` rather than as a negative span.
@@ -78,7 +88,7 @@ pub(super) fn age(now: DateTime<Utc>, then: Option<DateTime<Utc>>) -> String {
 mod tests {
     use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 
-    use super::{age, size};
+    use super::{age, count, size};
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0)
@@ -105,6 +115,19 @@ mod tests {
             "1024.0 TB",
             "beyond a terabyte the unit stops climbing"
         );
+    }
+
+    #[test]
+    fn count_agrees_with_its_number() {
+        assert_eq!(count(0, "item", "items"), "0 items", "none is plural");
+        assert_eq!(count(1, "item", "items"), "1 item");
+        assert_eq!(count(2, "item", "items"), "2 items");
+        assert_eq!(
+            count(1, "match", "matches"),
+            "1 match",
+            "the plural is given, not derived"
+        );
+        assert_eq!(count(3, "match", "matches"), "3 matches");
     }
 
     #[test]

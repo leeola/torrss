@@ -108,7 +108,8 @@ async fn feed(cx: &Cx) -> Result {
     view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
         <p class="mt-1 text-sm text-slate-400">
-            (items.len()) " items from " (registered.len()) " feeds."
+            (format::count(items.len(), "item", "items")) " from "
+            (format::count(registered.len(), "feed", "feeds")) "."
             if registered.is_empty() {
                 " "
                 <a
@@ -174,7 +175,7 @@ async fn feed(cx: &Cx) -> Result {
                 if selection.is_empty() {
                     "Grab selected"
                 } else {
-                    "Grab " (selection.len()) " releases"
+                    "Grab " (format::count(selection.len(), "release", "releases"))
                 }
             </button>
         </div>
