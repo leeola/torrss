@@ -5,6 +5,7 @@
 //! function with the router at link time, so those modules take effect by
 //! being compiled in rather than by being called.
 
+mod api;
 mod components;
 mod format;
 mod handlers;
