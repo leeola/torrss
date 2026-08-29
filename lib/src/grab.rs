@@ -8,11 +8,6 @@
 //! the case a reader most needs explained, so recording only successes would
 //! hide exactly what the page has to show.
 
-// FIXME: This module belongs to the crate rather than to its API. It is
-// public only because the handler that calls it does not exist yet, and a
-// `pub(crate)` item no caller reaches reads as dead code. Narrow it
-// alongside `store::grabs`, once the handler lands.
-
 use snafu::{ResultExt, Snafu};
 use sqlx::SqlitePool;
 
@@ -28,7 +23,7 @@ use crate::torrent::{AddTorrent, TorrentClient, TorrentError, TorrentSource};
 /// failed, and a reader of the message wants the failure rather than the
 /// stage.
 #[derive(Debug, Snafu)]
-pub enum GrabError {
+pub(crate) enum GrabError {
     /// The torrent file never arrived, so there was nothing to hand over.
     #[snafu(display("{source}"))]
     Download { source: DownloadError },
@@ -51,7 +46,7 @@ pub enum GrabError {
 /// The recorded outcome survives a failure, so the page shows a grab that
 /// did not work. When both the grab and the recording fail, the grab's error
 /// is the one returned: that is the failure the caller asked about.
-pub async fn grab(
+pub(crate) async fn grab(
     pool: &SqlitePool,
     downloader: &dyn Downloader,
     client: &dyn TorrentClient,

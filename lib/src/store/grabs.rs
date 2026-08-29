@@ -6,11 +6,6 @@
 //! One row per item. A grab is an attempt rather than an event, so a retry
 //! overwrites the last result instead of growing a history nothing reads.
 
-// FIXME: This module belongs to the crate rather than to its API. It is
-// public only because the grab pipeline that fills it does not exist yet,
-// and a `pub(crate)` item no caller reaches reads as dead code. Narrow it
-// once the grab handler lands.
-
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -18,15 +13,15 @@ use sqlx::{Row, SqlitePool};
 
 /// The latest attempt to grab one stored item.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Grab {
+pub(crate) struct Grab {
     /// The [`StoredItem::id`](crate::store::StoredItem::id) this attempt was
     /// made for.
-    pub item_id: i64,
+    pub(crate) item_id: i64,
 
-    pub at: DateTime<Utc>,
+    pub(crate) at: DateTime<Utc>,
 
     /// Why the attempt failed, or nothing when the client accepted it.
-    pub error: Option<String>,
+    pub(crate) error: Option<String>,
 }
 
 /// Records one attempt, replacing whatever the last one left.
@@ -34,7 +29,7 @@ pub struct Grab {
 /// The item has to exist in `feed_items`. Foreign keys are enforced, so a
 /// grab against an id nothing stored is a caller bug and fails here rather
 /// than leaving a row that names nothing.
-pub async fn record(
+pub(crate) async fn record(
     pool: &SqlitePool,
     item_id: i64,
     at: DateTime<Utc>,
@@ -57,7 +52,7 @@ pub async fn record(
 ///
 /// The whole table comes back at once, because the feed page tests every
 /// listed row against it. A query per row costs one round trip each.
-pub async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::Error> {
+pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::Error> {
     sqlx::query("SELECT item_id, grabbed_at, error FROM grabs")
         .fetch_all(pool)
         .await?

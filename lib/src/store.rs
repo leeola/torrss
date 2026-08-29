@@ -5,7 +5,7 @@
 //! the release parser reads the whole history rather than only what the last
 //! poll happened to catch.
 
-pub mod grabs;
+pub(crate) mod grabs;
 pub(crate) mod library;
 
 use chrono::{DateTime, Utc};
