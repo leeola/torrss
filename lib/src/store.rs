@@ -5,6 +5,7 @@
 //! the release parser reads the whole history rather than only what the last
 //! poll happened to catch.
 
+pub mod grabs;
 pub(crate) mod library;
 
 use chrono::{DateTime, Utc};
@@ -50,6 +51,19 @@ const SELECT: &str = "
     FROM feed_items
     WHERE ?1 IS NULL OR feed_url = ?1
     ORDER BY published IS NULL, published DESC, first_seen DESC, id DESC
+";
+
+/// Reads one stored item by its id.
+///
+/// The column list repeats rather than being shared with [`SELECT`]. A
+/// statement has to be a `&'static str`, so no predicate is built at run
+/// time. The row mapping is shared instead, which is where a column change
+/// would otherwise go wrong.
+const SELECT_ONE: &str = "
+    SELECT id, feed_url, guid, title, link, published, size, seeders,
+           first_seen, last_seen
+    FROM feed_items
+    WHERE id = ?1
 ";
 
 /// What one fetch put into the store.
@@ -130,9 +144,24 @@ pub async fn items(
         .bind(feed_url.map(Url::as_str))
         .fetch_all(pool)
         .await?
-        .into_iter()
-        .map(stored)
+        .iter()
+        .map(stored_item)
         .collect()
+}
+
+/// Returns one stored item, or nothing when no row carries `id`.
+///
+/// The grab handler receives ids from a form and turns each into the row it
+/// acts on. Reading them one at a time beats loading every row to find a
+/// handful.
+pub async fn item(pool: &SqlitePool, id: i64) -> Result<Option<StoredItem>, sqlx::Error> {
+    sqlx::query(SELECT_ONE)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .as_ref()
+        .map(stored_item)
+        .transpose()
 }
 
 /// Brings `pool` up to the current schema.
@@ -159,7 +188,7 @@ async fn count(
 /// A URL that no longer parses, or a size too large for the domain type,
 /// means the row is corrupt. That is a read failure rather than a panic, so
 /// each maps to a decode error naming the column.
-fn stored(row: SqliteRow) -> Result<StoredItem, sqlx::Error> {
+fn stored_item(row: &SqliteRow) -> Result<StoredItem, sqlx::Error> {
     let feed_url: String = row.try_get("feed_url")?;
     let link: String = row.try_get("link")?;
     let size: Option<i64> = row.try_get("size")?;
@@ -195,7 +224,7 @@ mod tests {
     use sqlx::SqlitePool;
     use url::Url;
 
-    use super::{Ingest, StoredItem, ingest, items, migrate};
+    use super::{Ingest, StoredItem, ingest, item, items, migrate};
     use crate::feed::FeedItem;
     use crate::feed::fake;
 
@@ -347,6 +376,37 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Newer", "Older", "Undated"],
             "an undated item sorts last, not first"
+        );
+    }
+
+    #[sqlx::test]
+    async fn item_unknown_id_is_none(pool: SqlitePool) {
+        ingest(&pool, &url(FEED), at(1), &[fake::item("A.Release")])
+            .await
+            .expect("ingest");
+
+        assert_eq!(
+            item(&pool, 404).await.expect("item"),
+            None,
+            "an id nothing stored reads as absent, not as an error"
+        );
+    }
+
+    #[sqlx::test]
+    async fn item_returns_the_ingested_row(pool: SqlitePool) {
+        ingest(
+            &pool,
+            &url(FEED),
+            at(1),
+            &[fake::item("A.Release").size(2048), fake::item("B.Release")],
+        )
+        .await
+        .expect("ingest");
+
+        assert_eq!(
+            item(&pool, 1).await.expect("item"),
+            Some(stored(1, FEED, fake::item("A.Release").size(2048), 1, 1)),
+            "one row by id, mapped as the listing maps it"
         );
     }
 
