@@ -5,6 +5,8 @@
 //! the release parser reads the whole history rather than only what the last
 //! poll happened to catch.
 
+pub mod library;
+
 use chrono::{DateTime, Utc};
 use sqlx::migrate::MigrateError;
 use sqlx::sqlite::SqliteRow;
