@@ -3,6 +3,7 @@ use std::time::Duration;
 use std::{io, path::PathBuf};
 
 use tokio::net::TcpListener;
+use tracing::info;
 
 use super::router;
 use crate::feed::registry;
@@ -57,7 +58,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
     // the poll below.
     let sync_state = Arc::new(SyncState::new());
 
-    // Both fallible steps run before either background task starts. Dropping
+    // Every fallible step runs before either background task starts. Dropping
     // a join handle detaches the task rather than stopping it, so an early
     // return after a spawn strands a task that then runs forever.
     let router = router::build(
@@ -67,6 +68,10 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
         Arc::clone(&sync_state),
     )?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
+
+    // The bound address rather than the configured one, so a port of 0 reads
+    // as the port the operating system chose.
+    info!(address = %listener.local_addr()?, "listening");
 
     let polling = tokio::spawn(registry::poll(
         feed_registry,
