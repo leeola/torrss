@@ -97,3 +97,56 @@ pub trait FeedSource: Send + Sync {
     /// polls decides its own interval.
     async fn fetch(&self, url: &Url) -> Result<Feed, FeedError>;
 }
+
+/// Renders `url` as the feed it names, without the credentials it carries.
+///
+/// A private tracker puts the passkey in the query, so a whole feed URL in a
+/// log line hands the account to anyone who reads the log. The host and the
+/// path identify the feed; nothing else in the URL does.
+///
+/// A URL with no host renders as the path alone. A feed URL always has one,
+/// but a redaction that panics on the exception is worse than one that
+/// returns less.
+pub(crate) fn redacted(url: &Url) -> String {
+    match url.host_str() {
+        Some(host) => format!("{host}{}", url.path()),
+        None => url.path().to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::redacted;
+
+    fn url(raw: &str) -> Url {
+        Url::parse(raw).expect("the test URL parses")
+    }
+
+    #[test]
+    fn redacted_drops_the_query() {
+        assert_eq!(
+            redacted(&url("https://t.example/rss?passkey=abc")),
+            "t.example/rss",
+            "the passkey rides in the query, so the query goes"
+        );
+    }
+
+    #[test]
+    fn redacted_keeps_the_path_that_names_the_feed() {
+        assert_eq!(
+            redacted(&url("https://t.example:8443/torrents/rss#top")),
+            "t.example/torrents/rss",
+            "the port and the fragment name nothing a reader needs"
+        );
+    }
+
+    #[test]
+    fn redacted_hostless_url_is_the_path() {
+        assert_eq!(
+            redacted(&url("file:///var/feeds/local.xml")),
+            "/var/feeds/local.xml"
+        );
+    }
+}

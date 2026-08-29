@@ -2,9 +2,10 @@
 
 use async_trait::async_trait;
 use reqwest::Client;
+use tracing::{debug, instrument};
 use url::Url;
 
-use super::{Feed, FeedError, FeedSource, parse};
+use super::{Feed, FeedError, FeedSource, parse, redacted};
 
 /// A tracker feed read over HTTP.
 ///
@@ -43,6 +44,7 @@ impl Default for HttpFeedSource {
 
 #[async_trait]
 impl FeedSource for HttpFeedSource {
+    #[instrument(name = "fetch_feed", level = "debug", skip_all, fields(feed.url = %redacted(url)))]
     async fn fetch(&self, url: &Url) -> Result<Feed, FeedError> {
         let response = self
             .client
@@ -53,7 +55,12 @@ impl FeedSource for HttpFeedSource {
             .error_for_status()
             .map_err(status)?;
 
+        // Named `code` rather than `status`, which is the fallible mapping
+        // three lines above and would shadow it for the rest of the body.
+        let code = response.status().as_u16();
         let body = response.bytes().await.map_err(unreachable)?;
+
+        debug!(http.status = code, bytes = body.len(), "fetched");
 
         parse::parse(&body)
     }
