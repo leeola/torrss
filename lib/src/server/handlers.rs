@@ -660,7 +660,8 @@ struct MatchView {
     /// [`Diff::slug`] of the only state to list, or absent for every state.
     diff: Option<String>,
 
-    /// Comma-separated [`Candidate::id`] values held at the top of the list.
+    /// Comma-separated [`mock::Candidate::id`] values held at the top of the
+    /// list.
     pinned: Option<String>,
 
     /// Comma-separated [`mock::Field::name`] values flipped between inherited
