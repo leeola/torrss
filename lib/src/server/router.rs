@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{io, path::Path};
 
 use topcoat::{
@@ -5,6 +6,7 @@ use topcoat::{
     router::{Router, RouterBuilderDiscoverExt},
 };
 
+use crate::feed::registry::FeedRegistry;
 use crate::server::state::RulesetSwitches;
 use crate::services::Services;
 
@@ -13,13 +15,20 @@ use crate::services::Services;
 /// Discovery collects the annotated functions across the whole binary at link
 /// time, so a route appears here by existing rather than by being listed.
 ///
-/// `services` reaches a handler through the app context, keyed by its type.
-pub(super) fn build(assets: Option<&Path>, services: Services) -> io::Result<Router> {
+/// `services` and `registry` each reach a handler through the app context,
+/// keyed by their type. The registry arrives already shared, because the poll
+/// task holds the same one.
+pub(super) fn build(
+    assets: Option<&Path>,
+    services: Services,
+    registry: Arc<FeedRegistry>,
+) -> io::Result<Router> {
     Ok(Router::builder()
         .discover()
         .assets(load_assets(assets)?)
         .app_context(RulesetSwitches::new())
         .app_context(services)
+        .app_context(registry)
         .build())
 }
 

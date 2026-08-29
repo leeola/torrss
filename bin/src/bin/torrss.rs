@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{io, path::PathBuf, sync::Arc};
 
 use clap::Parser;
@@ -63,6 +64,15 @@ struct Cli {
         default_value = ""
     )]
     qbit_password: String,
+
+    /// Seconds to wait between two passes over every feed.
+    #[arg(
+        long,
+        env = "TORRSS_POLL_INTERVAL",
+        value_name = "SECONDS",
+        default_value_t = 900
+    )]
+    poll_interval: u64,
 }
 
 impl From<Cli> for Config {
@@ -71,6 +81,7 @@ impl From<Cli> for Config {
             host: cli.host,
             port: cli.port,
             assets: cli.assets,
+            poll_interval: Duration::from_secs(cli.poll_interval),
         }
     }
 }
