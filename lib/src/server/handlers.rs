@@ -15,7 +15,7 @@ use topcoat::{
 use url::Url;
 
 use crate::{
-    feed::registry::FeedRegistry,
+    feed::registry::{self, FeedRegistry},
     mock::{self, Diff, RULESETS},
     server::{
         components, format,
@@ -347,6 +347,103 @@ async fn feeds(cx: &Cx) -> Result {
             </button>
         </form>
     }
+}
+
+#[page("/admin/clients")]
+async fn clients(cx: &Cx) -> Result {
+    let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
+    let now = app_context::<Services>(cx).clock.now();
+
+    view! {
+        <h1 class="text-2xl font-semibold tracking-tight">"Clients"</h1>
+        <p class="mt-1 text-sm text-slate-400">
+            "How each feed answered when it was last checked."
+        </p>
+
+        if entries.is_empty() {
+            <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No client is configured. "
+                <a
+                    href="/admin/feeds"
+                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                >
+                    "Add a feed."
+                </a>
+            </p>
+        } else {
+            <ul class="mt-6 flex flex-col gap-2">
+                for entry in &entries {
+                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-sm text-slate-200">(&entry.name)</span>
+                                components::check_badge(check: entry.check.as_ref())
+                            </div>
+
+                            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
+                                (entry.url.as_str())
+                            </p>
+
+                            <p class="mt-1 text-xs text-slate-500">
+                                match &entry.check {
+                                    None => "never checked",
+                                    Some(check) => match &check.outcome {
+                                        Ok(ingest) => {
+                                            (format::count(ingest.items, "item", "items"))
+                                            ", " (ingest.added) " new, checked "
+                                            (format::age(now, Some(check.at)))
+                                        },
+                                        Err(error) => {
+                                            "failed: " (error) ", checked "
+                                            (format::age(now, Some(check.at)))
+                                        },
+                                    },
+                                }
+                            </p>
+                        </div>
+
+                        components::action_button(
+                            action: format!(
+                                "/admin/feeds/{}/check?back=/admin/clients",
+                                entry.id,
+                            ),
+                            label: "Test",
+                        )
+                    </li>
+                }
+            </ul>
+        }
+    }
+}
+
+/// Checks one feed now, then returns to `back`.
+///
+/// A feed that fails to answer still counts as checked, so this reports a
+/// missing feed rather than a failed fetch. The recorded outcome is what
+/// carries the failure to the page.
+#[route(POST "/admin/feeds/{feed_id}/check")]
+async fn check_feed(cx: &Cx) -> Result<&'static str> {
+    let back = query_params::<SwitchReturn>(cx)?
+        .back
+        .clone()
+        .unwrap_or_else(|| "/admin/clients".to_owned());
+
+    let services = app_context::<Services>(cx);
+
+    let checked = registry::check(
+        app_context::<Arc<FeedRegistry>>(cx),
+        &services.db,
+        services.feeds.as_ref(),
+        services.clock.as_ref(),
+        path_param::<FeedId>(cx),
+    )
+    .await;
+
+    if !checked {
+        return Err(not_found().into());
+    }
+
+    Err(redirect(back).into())
 }
 
 /// What the add form posts.

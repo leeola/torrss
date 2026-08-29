@@ -4,6 +4,7 @@ use topcoat::{
 };
 
 use super::format;
+use crate::feed::registry::FeedCheck;
 use crate::mock::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
 
@@ -395,6 +396,31 @@ pub(crate) async fn ruleset_card(ruleset: &'static Ruleset, nested: bool, enable
                 </div>
             </a>
         </li>
+    }
+}
+
+/// Reports how a feed's last check went.
+///
+/// A feed with no check yet reads as neither good nor bad, because nothing
+/// has been tried. That is a different state from a check that failed, and
+/// the colors keep them apart at a glance.
+#[component]
+pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result {
+    view! {
+        <span class=(class!(
+            "rounded-full px-2 py-0.5 text-xs",
+            match check.map(|check| check.outcome.is_ok()) {
+                Some(true) => "bg-emerald-500/15 text-emerald-300",
+                Some(false) => "bg-rose-500/15 text-rose-300",
+                None => "bg-slate-700/40 text-slate-400",
+            },
+        ))>
+            match check.map(|check| check.outcome.is_ok()) {
+                Some(true) => "ok",
+                Some(false) => "failed",
+                None => "unchecked",
+            }
+        </span>
     }
 }
 

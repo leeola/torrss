@@ -48,6 +48,11 @@ async fn site_header(cx: &Cx) -> Result {
                         label: "Rulesets",
                         current: path == "/admin" || path.starts_with("/admin/rulesets"),
                     )
+                    nav_link(
+                        href: "/admin/clients",
+                        label: "Clients",
+                        current: path == "/admin/clients",
+                    )
                     nav_link(href: "/admin/feeds", label: "Feeds", current: path == "/admin/feeds")
                 </nav>
             </div>
