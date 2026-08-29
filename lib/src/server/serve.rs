@@ -8,6 +8,8 @@ use super::router;
 use crate::feed::registry;
 use crate::feed::registry::FeedRegistry;
 use crate::services::Services;
+use crate::torrent::sync;
+use crate::torrent::sync::SyncState;
 
 /// Host the listener binds to when the caller names none.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -27,19 +29,22 @@ pub struct Config {
     /// directory here to serve a bundle from a deployment-specific location.
     pub assets: Option<PathBuf>,
 
-    /// Pause between two passes over every registered feed.
+    /// Pause between two passes, for the feed poll and the library sync
+    /// alike.
     ///
     /// Measured from the end of one pass to the start of the next, so a slow
-    /// tracker delays the next pass rather than stacking passes on top of
-    /// each other.
+    /// tracker or client delays its own next pass rather than stacking passes
+    /// on top of each other. The two loops run independently, so neither
+    /// waits on the other.
     pub poll_interval: Duration,
 }
 
 /// Serves the web application until the process receives Ctrl+C or `SIGTERM`.
 ///
-/// Polls every registered feed in the background for as long as the listener
-/// runs, and stops polling before returning. In-flight requests get the
-/// shutdown timeout of the router service to finish.
+/// Polls every registered feed and syncs the torrent client's library in the
+/// background for as long as the listener runs, and stops both before
+/// returning. In-flight requests get the shutdown timeout of the router
+/// service to finish.
 ///
 /// # Errors
 ///
@@ -48,26 +53,40 @@ pub struct Config {
 pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
     let feed_registry = Arc::new(FeedRegistry::new());
 
-    // Both fallible steps run before the poll task starts. Dropping a join
-    // handle detaches the task rather than stopping it, so an early return
-    // between the spawn and the abort strands a task that then polls forever.
+    // Named `sync_state` because the module `sync` has to stay in scope for
+    // the poll below.
+    let sync_state = Arc::new(SyncState::new());
+
+    // Both fallible steps run before either background task starts. Dropping
+    // a join handle detaches the task rather than stopping it, so an early
+    // return after a spawn strands a task that then runs forever.
     let router = router::build(
         config.assets.as_deref(),
         services.clone(),
         Arc::clone(&feed_registry),
+        Arc::clone(&sync_state),
     )?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
 
     let polling = tokio::spawn(registry::poll(
         feed_registry,
+        services.db.clone(),
+        Arc::clone(&services.feeds),
+        Arc::clone(&services.clock),
+        config.poll_interval,
+    ));
+
+    let syncing = tokio::spawn(sync::poll(
+        sync_state,
         services.db,
-        services.feeds,
+        services.torrents,
         services.clock,
         config.poll_interval,
     ));
 
     let served = topcoat::serve(listener, router).await;
     polling.abort();
+    syncing.abort();
 
     served
 }

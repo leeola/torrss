@@ -65,7 +65,7 @@ struct Cli {
     )]
     qbit_password: String,
 
-    /// Seconds to wait between two passes over every feed.
+    /// Seconds to wait between two passes of the feed poll and the library sync.
     #[arg(
         long,
         env = "TORRSS_POLL_INTERVAL",

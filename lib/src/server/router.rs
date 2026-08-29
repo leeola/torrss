@@ -9,19 +9,21 @@ use topcoat::{
 use crate::feed::registry::FeedRegistry;
 use crate::server::state::RulesetSwitches;
 use crate::services::Services;
+use crate::torrent::sync::SyncState;
 
 /// Builds the router from every discovered page, layout, and layer.
 ///
 /// Discovery collects the annotated functions across the whole binary at link
 /// time, so a route appears here by existing rather than by being listed.
 ///
-/// `services` and `registry` each reach a handler through the app context,
-/// keyed by their type. The registry arrives already shared, because the poll
-/// task holds the same one.
+/// `services`, `registry`, and `sync` each reach a handler through the app
+/// context, keyed by their type. The registry and the sync state arrive already
+/// shared, because the two poll tasks hold the same ones.
 pub(super) fn build(
     assets: Option<&Path>,
     services: Services,
     registry: Arc<FeedRegistry>,
+    sync: Arc<SyncState>,
 ) -> io::Result<Router> {
     Ok(Router::builder()
         .discover()
@@ -29,6 +31,7 @@ pub(super) fn build(
         .app_context(RulesetSwitches::new())
         .app_context(services)
         .app_context(registry)
+        .app_context(sync)
         .build())
 }
 

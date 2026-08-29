@@ -10,13 +10,14 @@ use topcoat::{
         error::{RouterErrorExt, bad_request, not_found, redirect},
         page, path_param, query_params, route,
     },
-    view::view,
+    view::{class, view},
 };
 use url::Url;
 
 use crate::{
     feed::registry::{self, FeedRegistry},
     mock::{self, Diff, RULESETS},
+    rules::ENGINE,
     server::{
         components, format,
         query::{self, IdList},
@@ -24,6 +25,7 @@ use crate::{
     },
     services::Services,
     store::{self, StoredItem},
+    torrent::sync::{self, SyncState},
 };
 
 path_param!(ruleset_id);
@@ -391,17 +393,72 @@ async fn feeds(cx: &Cx) -> Result {
 #[page("/admin/clients")]
 async fn clients(cx: &Cx) -> Result {
     let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
-    let now = app_context::<Services>(cx).clock.now();
+    let services = app_context::<Services>(cx);
+    let now = services.clock.now();
+    let client = services.torrents.check().await;
+    let synced = app_context::<Arc<SyncState>>(cx).last();
 
     view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Clients"</h1>
+        <p class="mt-1 text-sm text-slate-400">
+            "What this application talks to, and how each one last answered."
+        </p>
+
+        <h2 class="mt-6 text-sm font-semibold text-slate-300">"Torrent client"</h2>
+
+        <div class="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+            <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-sm text-slate-200">"qBittorrent"</span>
+                    <span class=(class!(
+                        "rounded-full px-2 py-0.5 text-xs",
+                        "bg-emerald-500/15 text-emerald-300" if client.is_ok()
+                            else "bg-rose-500/15 text-rose-300",
+                    ))>
+                        if client.is_ok() { "ok" } else { "failed" }
+                    </span>
+                </div>
+
+                <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
+                    match &client {
+                        Ok(info) => (&info.version),
+                        Err(error) => (error.to_string()),
+                    }
+                </p>
+
+                <p class="mt-1 text-xs text-slate-500">
+                    match &synced {
+                        None => "never synced",
+                        Some(status) => match &status.outcome {
+                            Ok(report) => {
+                                (report.matched) " of "
+                                (format::count(report.torrents, "torrent", "torrents"))
+                                " matched a ruleset, synced "
+                                (format::age(now, Some(status.at)))
+                            },
+                            Err(error) => {
+                                "sync failed: " (error) ", "
+                                (format::age(now, Some(status.at)))
+                            },
+                        },
+                    }
+                </p>
+            </div>
+
+            components::action_button(
+                action: "/admin/torrents/sync?back=/admin/clients",
+                label: "Sync now",
+            )
+        </div>
+
+        <h2 class="mt-8 text-sm font-semibold text-slate-300">"Feeds"</h2>
         <p class="mt-1 text-sm text-slate-400">
             "How each feed answered when it was last checked."
         </p>
 
         if entries.is_empty() {
-            <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No client is configured. "
+            <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No feed is registered. "
                 <a
                     href="/admin/feeds"
                     class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
@@ -410,7 +467,7 @@ async fn clients(cx: &Cx) -> Result {
                 </a>
             </p>
         } else {
-            <ul class="mt-6 flex flex-col gap-2">
+            <ul class="mt-2 flex flex-col gap-2">
                 for entry in &entries {
                     <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
                         <div class="min-w-0">
@@ -453,6 +510,35 @@ async fn clients(cx: &Cx) -> Result {
             </ul>
         }
     }
+}
+
+/// Syncs the library from the torrent client now, then returns to `back`.
+///
+/// This runs the same pass the sync task runs, so a reader who just added a
+/// torrent by hand sees it counted without waiting out the interval.
+///
+/// A pass that overlaps the sync task is harmless. Each pass rewrites the
+/// whole table in one transaction, so two passes converge on the snapshot
+/// the client reported last.
+#[route(POST "/admin/torrents/sync")]
+async fn sync_library(cx: &Cx) -> Result<&'static str> {
+    let back = query_params::<SwitchReturn>(cx)?
+        .back
+        .clone()
+        .unwrap_or_else(|| "/admin/clients".to_owned());
+
+    let services = app_context::<Services>(cx);
+
+    sync::sync(
+        app_context::<Arc<SyncState>>(cx),
+        &services.db,
+        services.torrents.as_ref(),
+        services.clock.as_ref(),
+        &ENGINE,
+    )
+    .await;
+
+    Err(redirect(back).into())
 }
 
 /// Checks one feed now, then returns to `back`.
