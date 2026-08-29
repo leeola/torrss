@@ -10,9 +10,11 @@
 
 use snafu::{ResultExt, Snafu};
 use sqlx::SqlitePool;
+use tracing::{debug, info, instrument, warn};
 
 use crate::clock::Clock;
 use crate::download::{DownloadError, Downloader};
+use crate::rules::ENGINE;
 use crate::store::StoredItem;
 use crate::store::grabs;
 use crate::torrent::{AddTorrent, TorrentClient, TorrentError, TorrentSource};
@@ -46,6 +48,7 @@ pub(crate) enum GrabError {
 /// The recorded outcome survives a failure, so the page shows a grab that
 /// did not work. When both the grab and the recording fail, the grab's error
 /// is the one returned: that is the failure the caller asked about.
+#[instrument(name = "grab", skip_all, fields(item.id = item.id))]
 pub(crate) async fn grab(
     pool: &SqlitePool,
     downloader: &dyn Downloader,
@@ -53,6 +56,12 @@ pub(crate) async fn grab(
     clock: &dyn Clock,
     item: &StoredItem,
 ) -> Result<(), GrabError> {
+    let rulesets = ENGINE.claimants(&item.item.title);
+
+    for id in &rulesets {
+        debug!(ruleset.id = id, "ruleset passed");
+    }
+
     let submitted = submit(downloader, client, item).await;
 
     let recorded = grabs::record(
@@ -60,10 +69,15 @@ pub(crate) async fn grab(
         item.id,
         clock.now(),
         submitted.as_ref().err().map(ToString::to_string).as_deref(),
-        &[],
+        &rulesets,
     )
     .await
     .context(StoreSnafu);
+
+    match &submitted {
+        Ok(()) => info!("grabbed"),
+        Err(error) => warn!(error = %error, "grab failed"),
+    }
 
     submitted.and(recorded)
 }
@@ -241,7 +255,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the download answered with status 403".to_owned()),
-                    rulesets: Vec::new(),
+                    rulesets: vec!["series-episodes".to_owned()],
                 }
             )]),
             "a failed attempt is recorded, with the reason"
@@ -277,7 +291,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the torrent client rejected the request: duplicate".to_owned()),
-                    rulesets: Vec::new(),
+                    rulesets: vec!["series-episodes".to_owned()],
                 }
             )]),
             "the client's own words are what the page shows"
@@ -307,9 +321,80 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
-                    rulesets: Vec::new(),
+                    rulesets: vec!["series-episodes".to_owned()],
                 }
             )])
+        );
+    }
+
+    #[sqlx::test]
+    async fn grab_records_every_claimant_most_specific_first(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let item = stored(
+            &services.db,
+            fake::item("The.Hollow.Meridian.S04E06.1080p.Broadcast-PublicWave.mkv").magnet(MAGNET),
+        )
+        .await;
+
+        grab(
+            &services.db,
+            services.downloads.as_ref(),
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &item,
+        )
+        .await
+        .expect("grab");
+
+        assert_eq!(
+            grabs::all(&services.db).await.expect("grabs"),
+            HashMap::from([(
+                item.id,
+                Grab {
+                    item_id: item.id,
+                    at: fakes.clock.now(),
+                    error: None,
+                    rulesets: vec![
+                        "series-hollow-meridian".to_owned(),
+                        "series-episodes".to_owned(),
+                    ],
+                }
+            )]),
+            "the child ranks ahead of the base it narrows"
+        );
+    }
+
+    #[sqlx::test]
+    async fn grab_of_unclaimed_title_records_no_ruleset(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let item = stored(
+            &services.db,
+            fake::item("just some words with no structure at all").magnet(MAGNET),
+        )
+        .await;
+
+        grab(
+            &services.db,
+            services.downloads.as_ref(),
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &item,
+        )
+        .await
+        .expect("grab");
+
+        assert_eq!(
+            grabs::all(&services.db).await.expect("grabs"),
+            HashMap::from([(
+                item.id,
+                Grab {
+                    item_id: item.id,
+                    at: fakes.clock.now(),
+                    error: None,
+                    rulesets: Vec::new(),
+                }
+            )]),
+            "a title no ruleset claims still grabs, and records nothing"
         );
     }
 }
