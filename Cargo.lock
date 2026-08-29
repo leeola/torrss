@@ -3852,6 +3852,7 @@ dependencies = [
  "chrono",
  "feed-rs",
  "qbit-rs",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

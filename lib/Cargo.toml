@@ -17,6 +17,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 feed-rs = { workspace = true }
 qbit-rs = { workspace = true }
+regex = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 snafu = { workspace = true }
