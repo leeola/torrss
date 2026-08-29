@@ -3,7 +3,8 @@ use topcoat::{
     view::{class, component, view},
 };
 
-use crate::mock::{Candidate, FieldKind, FieldSource, Release, ResolvedField, Ruleset, Segment};
+use crate::mock::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
+use crate::store::StoredItem;
 
 /// Renders a filename with every claimed run tinted by its part.
 ///
@@ -124,16 +125,22 @@ pub(crate) async fn diff_filter(
     }
 }
 
-/// One feed result, prefixed by the control that selects it.
+/// One stored feed item, prefixed by the control that selects it.
+///
+/// The title renders as plain monospace rather than tinted by part. Nothing
+/// has parsed it yet, so there are no claimed runs to color.
 #[component]
-pub(crate) async fn release_row(
-    release: &'static Release,
+pub(crate) async fn item_row(
+    item: &StoredItem,
+    #[into] feed_name: String,
+    #[into] size: String,
+    #[into] age: String,
     #[into] toggle_href: String,
     selected: bool,
 ) -> Result {
     view! {
         <li
-            id=(format!("release-{}", release.id))
+            id=(format!("item-{}", item.id))
             class=(class!(
                 "flex items-start gap-3 rounded-lg border px-4 py-3 scroll-mt-24 transition-colors",
                 "border-sky-400/50 bg-sky-400/5" if selected
@@ -143,19 +150,19 @@ pub(crate) async fn release_row(
             checkbox(href: toggle_href, checked: selected, label: "Select this release")
 
             <div class="min-w-0 flex-1">
-                filename(segments: release.segments, ruleset: release.ruleset)
+                <span class="font-mono text-sm break-all">(&item.item.title)</span>
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    <a
-                        href=(format!("/admin/rulesets/{}", release.ruleset))
-                        class="text-slate-400 underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
-                    >
-                        (release.ruleset)
-                    </a>
-                    <span>(release.feed)</span>
-                    <span>(release.size)</span>
-                    <span>(release.seeders) " seeders"</span>
-                    <span>(release.age)</span>
+                    <span>(feed_name)</span>
+                    <span>(size)</span>
+                    <span>
+                        if let Some(seeders) = item.item.seeders {
+                            (seeders) " seeders"
+                        } else {
+                            "seeders unknown"
+                        }
+                    </span>
+                    <span>(age)</span>
                 </div>
             </div>
         </li>

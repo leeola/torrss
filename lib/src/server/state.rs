@@ -6,9 +6,6 @@ use crate::mock::RULESETS;
 
 /// Which rulesets currently run.
 ///
-/// A disabled ruleset stops filtering feed results, so this value decides what
-/// the feed lists, not only what the admin page reports.
-///
 /// The set lives in memory. A restart returns every ruleset to the value
 /// [`crate::mock::Ruleset::enabled`] declares.
 pub(crate) struct RulesetSwitches {
@@ -43,15 +40,6 @@ impl RulesetSwitches {
 
         enabled.insert(id);
         true
-    }
-
-    /// Counts the rulesets that are switched off.
-    pub(crate) fn disabled_count(&self) -> usize {
-        let enabled = self.lock();
-        RULESETS
-            .iter()
-            .filter(|ruleset| !enabled.contains(ruleset.id))
-            .count()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<&'static str>> {

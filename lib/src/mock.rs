@@ -122,20 +122,13 @@ pub(crate) struct Segment {
     pub(crate) part: Option<Part>,
 }
 
-/// One feed item, after a ruleset parsed its filename.
+/// One release a mock ruleset claimed.
+///
+/// This exists to give [`Ruleset::match_count`] something to count. The feed
+/// page renders stored items, so nothing here describes a filename any more.
 pub(crate) struct Release {
-    /// Stable key that names the release in the selection list.
-    pub(crate) id: &'static str,
-
-    pub(crate) segments: &'static [Segment],
-
-    /// [`Ruleset::id`] of the ruleset that claimed this filename.
+    /// [`Ruleset::id`] of the ruleset that claimed it.
     pub(crate) ruleset: &'static str,
-
-    pub(crate) feed: &'static str,
-    pub(crate) size: &'static str,
-    pub(crate) seeders: u32,
-    pub(crate) age: &'static str,
 }
 
 /// A set of field rules that together parse one family of filenames.
@@ -407,11 +400,4 @@ impl FieldKind {
 /// Finds the ruleset named by `id`.
 pub(crate) fn ruleset(id: &str) -> Option<&'static Ruleset> {
     RULESETS.iter().find(|ruleset| ruleset.id == id)
-}
-
-/// Releases the named ruleset claimed, or every release for [`None`].
-pub(crate) fn releases(ruleset: Option<&str>) -> impl Iterator<Item = &'static Release> {
-    RELEASES
-        .iter()
-        .filter(move |release| ruleset.is_none_or(|id| release.ruleset == id))
 }

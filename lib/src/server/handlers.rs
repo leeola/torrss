@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use topcoat::{
     Result,
     context::Cx,
@@ -10,29 +12,33 @@ use topcoat::{
 };
 
 use crate::{
+    feed::registry::FeedRegistry,
     mock::{self, Diff, RULESETS},
     server::{
-        components,
+        components, format,
         query::{self, IdList},
         state::RulesetSwitches,
     },
+    services::Services,
+    store::{self, StoredItem},
 };
 
 path_param!(ruleset_id);
 
-/// Controls which feed results show and which of them are selected.
+/// Controls which stored items show and which of them are selected.
 #[query_params(error = bad_request)]
 struct FeedView {
-    /// [`mock::Ruleset::id`] of the only ruleset to list, or absent for all.
-    ruleset: Option<String>,
+    /// [`FeedEntry::id`](crate::feed::registry::FeedEntry::id) of the only
+    /// feed to list, or absent for all.
+    feed: Option<String>,
 
-    /// Comma-separated [`mock::Release::id`] values marked to grab.
+    /// Comma-separated [`StoredItem::id`] values marked to grab.
     selected: Option<String>,
 }
 
 impl FeedView {
     fn active(&self) -> Option<&str> {
-        self.ruleset.as_deref().filter(|id| !id.is_empty())
+        self.feed.as_deref().filter(|id| !id.is_empty())
     }
 
     fn selection(&self) -> IdList<'_> {
@@ -40,16 +46,29 @@ impl FeedView {
     }
 }
 
-/// Builds a feed URL carrying the ruleset filter and the selection.
-fn feed_url(ruleset: Option<&str>, selected: &str, anchor: &str) -> String {
+/// Builds a feed URL carrying the feed filter and the selection.
+///
+/// The parameter is `filter` rather than `feed`, because the `#[page]`
+/// attribute below puts a unit struct named `feed` in this scope.
+fn feed_url(filter: Option<&str>, selected: &str, anchor: &str) -> String {
     query::url(
         "/",
-        &[
-            ("ruleset", ruleset.unwrap_or_default()),
-            ("selected", selected),
-        ],
+        &[("feed", filter.unwrap_or_default()), ("selected", selected)],
         anchor,
     )
+}
+
+/// Names the feed a stored row came from.
+///
+/// A row outlives its registration, because the registry empties on a restart
+/// while the rows do not. The host, then the whole URL, stands in so the row
+/// still reads as something rather than as a blank column.
+fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
+    registry.name_of(&item.feed_url).unwrap_or_else(|| {
+        item.feed_url
+            .host_str()
+            .map_or_else(|| item.feed_url.to_string(), str::to_owned)
+    })
 }
 
 #[page("/")]
@@ -58,37 +77,39 @@ async fn feed(cx: &Cx) -> Result {
     let active = view.active();
     let selection = view.selection();
 
-    // A disabled ruleset filters nothing, so its releases never reach the feed.
-    let switches = app_context::<RulesetSwitches>(cx);
-    let releases: Vec<_> = mock::releases(active)
-        .filter(|release| switches.is_enabled(release.ruleset))
-        .collect();
+    let registry = app_context::<Arc<FeedRegistry>>(cx);
+    let services = app_context::<Services>(cx);
+    let now = services.clock.now();
+    let feeds = registry.entries();
 
-    // Selecting every listed release is one link, so the target is the whole
+    // A bookmark outlives the registration it names, because a restart empties
+    // the registry while the rows stay. An id that names nothing lists nothing.
+    // Falling back to every feed instead reads as that feed's whole contents.
+    let chosen = active.and_then(|id| registry.get(id));
+    let items = if active.is_some() && chosen.is_none() {
+        Vec::new()
+    } else {
+        store::items(&services.db, chosen.as_ref().map(|entry| &entry.url)).await?
+    };
+
+    let ids: Vec<String> = items.iter().map(|item| item.id.to_string()).collect();
+
+    // Selecting every listed item is one link, so the target is the whole
     // listed set rather than a toggle of what is already selected.
-    let all_listed = releases
-        .iter()
-        .map(|release| release.id)
-        .collect::<Vec<_>>()
-        .join(",");
-
-    let selected_here = releases
-        .iter()
-        .filter(|release| selection.contains(release.id))
-        .count();
+    let all_listed = ids.join(",");
+    let selected_here = ids.iter().filter(|id| selection.contains(id)).count();
 
     view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
         <p class="mt-1 text-sm text-slate-400">
-            (releases.len()) " releases matched by the enabled rulesets."
-            let disabled = switches.disabled_count();
-            if disabled > 0 {
+            (items.len()) " items from " (feeds.len()) " feeds."
+            if feeds.is_empty() {
                 " "
                 <a
-                    href="/admin"
+                    href="/admin/feeds"
                     class="underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
                 >
-                    (disabled) " disabled rulesets are filtering nothing."
+                    "Add a feed to get started."
                 </a>
             }
         </p>
@@ -99,11 +120,11 @@ async fn feed(cx: &Cx) -> Result {
                 label: "All",
                 current: active.is_none(),
             )
-            for ruleset in RULESETS.iter().filter(|ruleset| switches.is_enabled(ruleset.id)) {
+            for entry in &feeds {
                 components::filter_chip(
-                    href: feed_url(Some(ruleset.id), selection.as_str(), "#results"),
-                    label: ruleset.name,
-                    current: active == Some(ruleset.id),
+                    href: feed_url(Some(&entry.id), selection.as_str(), "#results"),
+                    label: entry.name.as_str(),
+                    current: active == Some(entry.id.as_str()),
                 )
             }
         </nav>
@@ -116,10 +137,10 @@ async fn feed(cx: &Cx) -> Result {
                 components::checkbox(
                     href: feed_url(
                         active,
-                        if selected_here == releases.len() { "" } else { all_listed.as_str() },
+                        if selected_here == items.len() { "" } else { all_listed.as_str() },
                         "#results",
                     ),
-                    checked: selected_here == releases.len() && !releases.is_empty(),
+                    checked: selected_here == items.len() && !items.is_empty(),
                     label: "Select every listed release",
                 )
                 <span class="text-sm text-slate-300">
@@ -152,21 +173,24 @@ async fn feed(cx: &Cx) -> Result {
             </button>
         </div>
 
-        if releases.is_empty() {
+        if items.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No release matched this ruleset."
+                "No item in this feed yet."
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
-                for release in releases {
-                    components::release_row(
-                        release: release,
+                for (item, id) in items.iter().zip(&ids) {
+                    components::item_row(
+                        item: item,
+                        feed_name: feed_name(registry, item),
+                        size: format::size(item.item.size),
+                        age: format::age(now, item.item.published),
                         toggle_href: feed_url(
                             active,
-                            &selection.toggled(release.id),
-                            &format!("#release-{}", release.id),
+                            &selection.toggled(id),
+                            &format!("#item-{id}"),
                         ),
-                        selected: selection.contains(release.id),
+                        selected: selection.contains(id),
                     )
                 }
             </ul>

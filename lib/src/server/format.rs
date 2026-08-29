@@ -8,11 +8,6 @@
 //! branch. A feed states neither a size nor a date reliably, so the pages
 //! always have something to print.
 
-// FIXME: These belong to the server module rather than to the crate's API.
-// They are public only because the pages that call them do not exist yet, and
-// a `pub(super)` function no caller reaches reads as dead code. Narrow the
-// module and both functions once a handler renders through them.
-
 use chrono::{DateTime, Utc};
 
 /// The steps above a plain byte count, each 1024 of the one before.
@@ -26,7 +21,7 @@ const AGE_UNITS: [(i64, &str); 3] = [(86_400, "day"), (3_600, "hour"), (60, "min
 /// A count below a kilobyte reads exactly, because a torrent that small is
 /// an oddity worth seeing precisely. Anything larger rounds to one decimal,
 /// which is as much as a listing has room for.
-pub fn size(bytes: Option<u64>) -> String {
+pub(super) fn size(bytes: Option<u64>) -> String {
     let Some(bytes) = bytes else {
         return "size unknown".to_owned();
     };
@@ -55,7 +50,7 @@ pub fn size(bytes: Option<u64>) -> String {
 /// A time in the future reads as `just now` rather than as a negative span.
 /// A tracker with a skewed clock publishes dates slightly ahead, and a
 /// listing that says `in -3 minutes` is worse than a small rounding.
-pub fn age(now: DateTime<Utc>, then: Option<DateTime<Utc>>) -> String {
+pub(super) fn age(now: DateTime<Utc>, then: Option<DateTime<Utc>>) -> String {
     let Some(then) = then else {
         return "undated".to_owned();
     };
