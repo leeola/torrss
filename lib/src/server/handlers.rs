@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
+use serde::Deserialize;
 use topcoat::{
     Result,
     context::Cx,
     context::app_context,
     router::{
-        error::{RouterErrorExt, redirect},
+        content::Form,
+        error::{RouterErrorExt, bad_request, not_found, redirect},
         page, path_param, query_params, route,
     },
     view::view,
 };
+use url::Url;
 
 use crate::{
     feed::registry::FeedRegistry,
@@ -24,6 +27,7 @@ use crate::{
 };
 
 path_param!(ruleset_id);
+path_param!(feed_id);
 
 /// Controls which stored items show and which of them are selected.
 #[query_params(error = bad_request)]
@@ -80,7 +84,9 @@ async fn feed(cx: &Cx) -> Result {
     let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
-    let feeds = registry.entries();
+    // Named `registered` rather than `feeds`, because the `#[page]` attribute
+    // on the admin list below puts a unit struct named `feeds` in this scope.
+    let registered = registry.entries();
 
     // A bookmark outlives the registration it names, because a restart empties
     // the registry while the rows stay. An id that names nothing lists nothing.
@@ -102,8 +108,8 @@ async fn feed(cx: &Cx) -> Result {
     view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
         <p class="mt-1 text-sm text-slate-400">
-            (items.len()) " items from " (feeds.len()) " feeds."
-            if feeds.is_empty() {
+            (items.len()) " items from " (registered.len()) " feeds."
+            if registered.is_empty() {
                 " "
                 <a
                     href="/admin/feeds"
@@ -120,7 +126,7 @@ async fn feed(cx: &Cx) -> Result {
                 label: "All",
                 current: active.is_none(),
             )
-            for entry in &feeds {
+            for entry in &registered {
                 components::filter_chip(
                     href: feed_url(Some(&entry.id), selection.as_str(), "#results"),
                     label: entry.name.as_str(),
@@ -269,6 +275,117 @@ async fn admin(cx: &Cx) -> Result {
             }
         </ul>
     }
+}
+
+#[page("/admin/feeds")]
+async fn feeds(cx: &Cx) -> Result {
+    let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
+
+    view! {
+        <h1 class="text-2xl font-semibold tracking-tight">"Feeds"</h1>
+        <p class="mt-1 text-sm text-slate-400">
+            "Every registered feed is polled on the configured interval."
+        </p>
+
+        if entries.is_empty() {
+            <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No feed is registered."
+            </p>
+        } else {
+            <ul class="mt-6 flex flex-col gap-2">
+                for entry in &entries {
+                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                        <div class="min-w-0">
+                            <p class="text-sm text-slate-200">(&entry.name)</p>
+                            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
+                                (entry.url.as_str())
+                            </p>
+                        </div>
+
+                        components::action_button(
+                            action: format!("/admin/feeds/{}/remove", entry.id),
+                            label: "Remove",
+                        )
+                    </li>
+                }
+            </ul>
+        }
+
+        <form
+            method="post"
+            action="/admin/feeds"
+            class="mt-6 flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4"
+        >
+            <div>
+                <label for="name" class="block text-xs text-slate-500">"Name"</label>
+                <input
+                    id="name"
+                    type="text"
+                    name="name"
+                    placeholder="Public Wave series"
+                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                >
+            </div>
+
+            <div>
+                <label for="url" class="block text-xs text-slate-500">"Feed URL"</label>
+                <input
+                    id="url"
+                    type="text"
+                    name="url"
+                    placeholder="https://tracker.example/rss"
+                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                >
+            </div>
+
+            <button
+                type="submit"
+                class="cursor-pointer self-start rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300"
+            >
+                "Add feed"
+            </button>
+        </form>
+    }
+}
+
+/// What the add form posts.
+#[derive(Deserialize)]
+struct NewFeed {
+    name: String,
+    url: String,
+}
+
+/// Registers a feed, then returns to the list.
+///
+/// A blank name falls back to the URL host, then to the whole URL, so a
+/// registration always has something to show in a chip and a row.
+#[route(POST "/admin/feeds")]
+async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<&'static str> {
+    let url = Url::parse(input.url.trim()).map_err(|_| bad_request("the feed URL is not valid"))?;
+
+    let name = match input.name.trim() {
+        "" => url
+            .host_str()
+            .map_or_else(|| url.to_string(), str::to_owned),
+        named => named.to_owned(),
+    };
+
+    app_context::<Arc<FeedRegistry>>(cx).add(name, url);
+
+    Err(redirect("/admin/feeds").into())
+}
+
+/// Removes a feed, then returns to the list.
+///
+/// The stored items outlive the registration, because they record what a
+/// tracker announced rather than who watched for it.
+#[route(POST "/admin/feeds/{feed_id}/remove")]
+async fn remove_feed(cx: &Cx) -> Result<&'static str> {
+    if !app_context::<Arc<FeedRegistry>>(cx).remove(path_param::<FeedId>(cx)) {
+        return Err(not_found().into());
+    }
+
+    Err(redirect("/admin/feeds").into())
 }
 
 /// Controls the candidate list under the editor.

@@ -328,6 +328,24 @@ pub(crate) async fn status_toggle(enabled: bool, #[into] action: String) -> Resu
         </form>
     }
 }
+/// A button that posts to `action`, for a write with nothing to configure.
+///
+/// The form wraps a single button because the write needs no input beyond the
+/// action itself. A link lets a crawler or a prefetch trigger the write.
+#[component]
+pub(crate) async fn action_button(#[into] action: String, label: &str) -> Result {
+    view! {
+        <form method="post" action=(action) class="contents">
+            <button
+                type="submit"
+                class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+            >
+                (label)
+            </button>
+        </form>
+    }
+}
+
 /// One ruleset on the admin index.
 ///
 /// A `nested` card is a child, indented under the base it narrows.
