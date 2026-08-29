@@ -167,17 +167,28 @@ async fn feed(cx: &Cx) -> Result {
                 }
             </div>
 
-            <button
-                type="button"
-                disabled=(selection.is_empty())
-                class="rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
-            >
-                if selection.is_empty() {
-                    "Grab selected"
-                } else {
-                    "Grab " (format::count(selection.len(), "release", "releases"))
-                }
-            </button>
+            <div class="flex items-center gap-2">
+                components::action_button(
+                    action: query::url(
+                        "/feeds/check",
+                        &[("back", feed_url(active, selection.as_str(), "#results").as_str())],
+                        "",
+                    ),
+                    label: "Fetch now",
+                )
+
+                <button
+                    type="button"
+                    disabled=(selection.is_empty())
+                    class="rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                >
+                    if selection.is_empty() {
+                        "Grab selected"
+                    } else {
+                        "Grab " (format::count(selection.len(), "release", "releases"))
+                    }
+                </button>
+            </div>
         </div>
 
         if items.is_empty() {
@@ -224,6 +235,34 @@ async fn set_enabled(cx: &Cx) -> Result<&'static str> {
         .unwrap_or_else(|| "/admin".to_owned());
 
     app_context::<RulesetSwitches>(cx).toggle(ruleset.id);
+
+    Err(redirect(back).into())
+}
+
+/// Checks every registered feed now, then returns to `back`.
+///
+/// This runs the same pass the poll task runs, so a reader who just added a
+/// feed sees its items without waiting out the interval.
+///
+/// A pass that overlaps the poll task is harmless. Ingest upserts inside a
+/// transaction keyed on the feed and the item's guid, so two passes converge
+/// on the same rows rather than doubling them.
+#[route(POST "/feeds/check")]
+async fn check_feeds(cx: &Cx) -> Result<&'static str> {
+    let back = query_params::<SwitchReturn>(cx)?
+        .back
+        .clone()
+        .unwrap_or_else(|| "/".to_owned());
+
+    let services = app_context::<Services>(cx);
+
+    registry::check_all(
+        app_context::<Arc<FeedRegistry>>(cx),
+        &services.db,
+        services.feeds.as_ref(),
+        services.clock.as_ref(),
+    )
+    .await;
 
     Err(redirect(back).into())
 }
