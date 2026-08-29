@@ -25,6 +25,7 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 topcoat = { workspace = true, features = ["default", "tailwind"] }
 tokio = { workspace = true, features = ["net", "rt", "time"] }
+toml = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 

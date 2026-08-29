@@ -3859,6 +3859,7 @@ dependencies = [
  "snafu",
  "sqlx",
  "tokio",
+ "toml",
  "topcoat",
  "tracing",
  "tracing-subscriber",
@@ -3875,7 +3876,6 @@ dependencies = [
  "torrss",
  "tracing",
  "tracing-subscriber",
- "url",
 ]
 
 [[package]]

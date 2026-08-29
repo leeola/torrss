@@ -1,20 +1,21 @@
 use std::panic;
 use std::time::Duration;
-use std::{io, io::ErrorKind, path::PathBuf, sync::Arc};
+use std::{fs, io, io::ErrorKind, path::Path, path::PathBuf, sync::Arc};
 
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use sqlx::SqlitePool;
 use torrss::clock::SystemClock;
+use torrss::config::ConfigFile;
 use torrss::download::HttpDownloader;
 use torrss::feed::HttpFeedSource;
 use torrss::server::{self, Config};
 use torrss::services::Services;
 use torrss::store;
 use torrss::torrent::Qbit;
+use torrss::torrent::store::ClientStore;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
-use url::Url;
 
 // `topcoat dev` spawns the built executable with no arguments and offers no
 // way to supply any, so serving is what a bare invocation does. The options
@@ -43,32 +44,18 @@ struct Cli {
     )]
     db: PathBuf,
 
-    /// qBittorrent web interface address.
+    /// TOML file declaring feeds and the qBittorrent connection.
+    ///
+    /// Repeatable, and later files win field by field, so a file outside the
+    /// Nix store supplies a password to a connection a store-side file
+    /// names. The environment variable names one file.
     #[arg(
         long,
-        env = "QBIT_URL",
-        value_name = "URL",
-        default_value = "http://127.0.0.1:8080"
+        env = "TORRSS_CONFIG",
+        value_name = "FILE",
+        action = ArgAction::Append
     )]
-    qbit_url: Url,
-
-    /// qBittorrent account name.
-    #[arg(
-        long,
-        env = "QBIT_USERNAME",
-        value_name = "NAME",
-        default_value = "admin"
-    )]
-    qbit_username: String,
-
-    /// qBittorrent account password.
-    #[arg(
-        long,
-        env = "QBIT_PASSWORD",
-        value_name = "PASSWORD",
-        default_value = ""
-    )]
-    qbit_password: String,
+    config: Vec<PathBuf>,
 
     /// Seconds to wait between two passes of the feed poll and the library sync.
     #[arg(
@@ -200,17 +187,34 @@ async fn services(cli: &Cli) -> io::Result<Services> {
 
     store::migrate(&db).await.map_err(io::Error::other)?;
 
+    for path in &cli.config {
+        // The message names the file. A complaint about an unknown key or a
+        // bad URL says nothing when several files are in play.
+        apply_config(&db, path)
+            .await
+            .map_err(|error| io::Error::other(format!("{}: {error}", path.display())))?;
+    }
+
+    let client = ClientStore::new(db.clone())
+        .load()
+        .await
+        .map_err(io::Error::other)?;
+
     Ok(Services {
         feeds: Arc::new(HttpFeedSource::new()),
         downloads: Arc::new(HttpDownloader::new()),
-        torrents: Arc::new(Qbit::new(
-            cli.qbit_url.clone(),
-            &cli.qbit_username,
-            &cli.qbit_password,
-        )),
+        torrents: Arc::new(Qbit::new(client.url, &client.username, &client.password)),
         clock: Arc::new(SystemClock),
         db,
     })
+}
+
+/// Reads one configuration file and writes its declarations into the stores.
+async fn apply_config(pool: &SqlitePool, path: &Path) -> io::Result<()> {
+    let text = fs::read_to_string(path)?;
+    let config = ConfigFile::parse(&text).map_err(io::Error::other)?;
+
+    config.apply(pool).await.map_err(io::Error::other)
 }
 
 #[tokio::main]

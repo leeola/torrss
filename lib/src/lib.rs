@@ -1,4 +1,5 @@
 pub mod clock;
+pub mod config;
 pub mod download;
 pub mod feed;
 pub(crate) mod grab;
