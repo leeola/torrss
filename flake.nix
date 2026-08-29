@@ -7,6 +7,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       rust-overlay,
       flake-utils,
@@ -138,5 +139,12 @@
           NIX_CC_WRAPPER_SUPPRESS_TARGET_WARNING = "1";
         };
       }
-    );
+    )
+    //
+      {
+        # `eachDefaultSystem` yields per-system outputs, and a NixOS module is
+        # not one of those, so the module attaches outside that call.
+        nixosModules.torrss = import ./nix/module.nix self;
+        nixosModules.default = self.nixosModules.torrss;
+      };
 }
