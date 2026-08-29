@@ -579,8 +579,8 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                 <div>
                     <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
                     <p class="mt-1 text-sm text-slate-400">
-                        (ruleset.candidates.len())
-                        " candidates from " (ruleset.feeds.join(", ")) ", against the edited rules."
+                        (format::count(ruleset.candidates.len(), "candidate", "candidates"))
+                        " from " (ruleset.feeds.join(", ")) ", against the edited rules."
                     </p>
                 </div>
                 <p class="text-xs text-slate-500">

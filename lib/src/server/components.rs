@@ -3,6 +3,7 @@ use topcoat::{
     view::{class, component, view},
 };
 
+use super::format;
 use crate::mock::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
 
@@ -157,7 +158,7 @@ pub(crate) async fn item_row(
                     <span>(size)</span>
                     <span>
                         if let Some(seeders) = item.item.seeders {
-                            (seeders) " seeders"
+                            (format::count(seeders as usize, "seeder", "seeders"))
                         } else {
                             "seeders unknown"
                         }
@@ -385,11 +386,11 @@ pub(crate) async fn ruleset_card(ruleset: &'static Ruleset, nested: bool, enable
                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                     match ruleset.parent() {
                         Some(parent) => <span>
-                            (ruleset.fields.len()) " replaced of " (parent.fields.len()) " fields"
+                            (ruleset.fields.len()) " replaced of " (format::count(parent.fields.len(), "field", "fields"))
                         </span>,
-                        None => <span>(ruleset.fields.len()) " fields"</span>,
+                        None => <span>(format::count(ruleset.fields.len(), "field", "fields"))</span>,
                     }
-                    <span>(ruleset.match_count()) " matches"</span>
+                    <span>(format::count(ruleset.match_count(), "match", "matches"))</span>
                     <span>(ruleset.feeds.join(", "))</span>
                 </div>
             </a>
