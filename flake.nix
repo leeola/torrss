@@ -23,32 +23,97 @@
           extensions = [ "rust-analysis" ];
         };
 
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rust-toolchain;
+          rustc = rust-toolchain;
+        };
+
         # `topcoat dev` ships in a separate crate from the framework, and the
         # CLI warns and refuses to drive a workspace whose resolved `topcoat`
         # version falls outside its own semver compatibility range. Keep this
         # version in step with `topcoat` in `[workspace.dependencies]`.
-        topcoat-cli =
-          let
-            rustPlatform = pkgs.makeRustPlatform {
-              cargo = rust-toolchain;
-              rustc = rust-toolchain;
-            };
-          in
-          rustPlatform.buildRustPackage rec {
-            pname = "topcoat-cli";
-            version = "0.6.2";
+        topcoat-cli = rustPlatform.buildRustPackage rec {
+          pname = "topcoat-cli";
+          version = "0.6.2";
 
-            src = pkgs.fetchCrate {
-              inherit pname version;
-              hash = "sha256-+6DKc2yjKwju64iokWV1EUXf62GGj1W32kp7E7WVKdM=";
-            };
-
-            cargoHash = "sha256-CDnvF0CMkpjIK0dDhuxIfpm0PnyEjFvbIjWhgSfFk1w=";
-
-            doCheck = false;
+          src = pkgs.fetchCrate {
+            inherit pname version;
+            hash = "sha256-+6DKc2yjKwju64iokWV1EUXf62GGj1W32kp7E7WVKdM=";
           };
+
+          cargoHash = "sha256-CDnvF0CMkpjIK0dDhuxIfpm0PnyEjFvbIjWhgSfFk1w=";
+
+          doCheck = false;
+        };
+
+        torrss = rustPlatform.buildRustPackage {
+          pname = "torrss";
+          version = (pkgs.lib.importTOML ./bin/Cargo.toml).package.version;
+
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              ./LICENSE
+              ./bin
+              ./lib
+            ];
+          };
+
+          # The lock file resolves to crates.io alone, so there is no git
+          # source needing `outputHashes` and no vendor hash to bump.
+          cargoLock.lockFile = ./Cargo.lock;
+
+          nativeBuildInputs = [
+            # `lib/build.rs` runs the `tailwindcss` executable from PATH.
+            pkgs.tailwindcss_4
+            topcoat-cli
+            pkgs.makeWrapper
+          ];
+
+          # `topcoat asset bundle` runs its own `cargo build` with every
+          # `CARGO*` variable removed and no `--target`, so the hook's
+          # env-only settings never reach it. Repeating them in config keeps
+          # the inner build, and its `OUT_DIR`, identical to the hook's.
+          postConfigure = ''
+            mkdir -p .cargo
+            cat >> .cargo/config.toml <<EOF
+
+            [build]
+            target = "${pkgs.stdenv.hostPlatform.rust.rustcTarget}"
+
+            [net]
+            offline = true
+
+            [profile.release]
+            strip = false
+            EOF
+          '';
+
+          # `runHook postBuild` runs before the install hook copies the
+          # release directory, so the bundle is scanned from the very binary
+          # that gets installed.
+          postBuild = "topcoat asset bundle --release --out assets";
+
+          # `AssetBundle::load()` looks only beside the executable, and
+          # `share/` keeps data out of `bin/`, so the wrapper points the
+          # binary at the bundle. `--set-default` leaves a user's own
+          # `--assets` in force.
+          postInstall = ''
+            mkdir -p $out/share/torrss
+            cp -r assets $out/share/torrss/assets
+            wrapProgram $out/bin/torrss \
+              --set-default TORRSS_ASSETS $out/share/torrss/assets
+          '';
+        };
       in
       {
+        packages = {
+          default = torrss;
+          inherit torrss;
+        };
+
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
             pkg-config

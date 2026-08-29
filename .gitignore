@@ -4,3 +4,6 @@ target
 .stoatignore
 .cargo
 torrss.db*
+
+# `nix build` links its output here.
+result
