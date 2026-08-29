@@ -127,16 +127,41 @@ pub(crate) async fn diff_filter(
     }
 }
 
+/// What the page worked out about one listed release.
+///
+/// The values arrive rendered rather than raw. The clock, the feed registry,
+/// and the rulesets all live outside this module, so the page resolves them
+/// and this carries the answers.
+pub(crate) struct ItemDetails {
+    /// Every ruleset that claims the title, most specific first.
+    ///
+    /// A base and the child that narrows it both claim the same release.
+    /// Listing only the winner makes the base read as a ruleset that never
+    /// fires.
+    pub rulesets: Vec<&'static Ruleset>,
+
+    /// Whether the library already holds this release's identity.
+    pub have: bool,
+
+    /// What the feed the row came from is called.
+    pub feed_name: String,
+
+    pub size: String,
+    pub age: String,
+}
+
 /// One stored feed item, prefixed by the control that selects it.
 ///
-/// The title renders as plain monospace rather than tinted by part. Nothing
-/// has parsed it yet, so there are no claimed runs to color.
+/// A release the library already holds dims rather than disappears, because
+/// a reader still has to see that the feed carries it.
+///
+/// The title renders as plain monospace rather than tinted by part. Tinting
+/// needs the segments the ruleset editor works from, which are checked-in
+/// data rather than anything the engine produces from a real title.
 #[component]
 pub(crate) async fn item_row(
     item: &StoredItem,
-    #[into] feed_name: String,
-    #[into] size: String,
-    #[into] age: String,
+    details: &ItemDetails,
     #[into] toggle_href: String,
     selected: bool,
 ) -> Result {
@@ -147,16 +172,36 @@ pub(crate) async fn item_row(
                 "flex items-start gap-3 rounded-lg border px-4 py-3 scroll-mt-24 transition-colors",
                 "border-sky-400/50 bg-sky-400/5" if selected
                     else "border-slate-800 bg-slate-900/40 hover:border-slate-700",
+                "opacity-60" if details.have,
             ))
         >
             checkbox(href: toggle_href, checked: selected, label: "Select this release")
 
             <div class="min-w-0 flex-1">
-                <span class="font-mono text-sm break-all">(&item.item.title)</span>
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-mono text-sm break-all">(&item.item.title)</span>
+                    if details.have {
+                        <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-300">
+                            "have"
+                        </span>
+                    }
+                </div>
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    <span>(feed_name)</span>
-                    <span>(size)</span>
+                    if details.rulesets.is_empty() {
+                        <span class="text-slate-600">"unmatched"</span>
+                    } else {
+                        for ruleset in &details.rulesets {
+                            <a
+                                href=(format!("/admin/rulesets/{}", ruleset.id))
+                                class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                            >
+                                (ruleset.name)
+                            </a>
+                        }
+                    }
+                    <span>(&details.feed_name)</span>
+                    <span>(&details.size)</span>
                     <span>
                         if let Some(seeders) = item.item.seeders {
                             (format::count(seeders as usize, "seeder", "seeders"))
@@ -164,7 +209,7 @@ pub(crate) async fn item_row(
                             "seeders unknown"
                         }
                     </span>
-                    <span>(age)</span>
+                    <span>(&details.age)</span>
                 </div>
             </div>
         </li>

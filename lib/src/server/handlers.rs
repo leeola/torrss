@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use topcoat::{
     Result,
@@ -19,12 +21,13 @@ use crate::{
     mock::{self, Diff, RULESETS},
     rules::ENGINE,
     server::{
-        components, format,
+        components::{self, ItemDetails},
+        format,
         query::{self, IdList},
         state::RulesetSwitches,
     },
     services::Services,
-    store::{self, StoredItem},
+    store::{self, StoredItem, library},
     torrent::sync::{self, SyncState},
 };
 
@@ -77,6 +80,34 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
     })
 }
 
+/// Builds everything the feed page shows about one release.
+///
+/// The claimants and the identity come from two passes over the same
+/// rulesets. A listing runs to tens of rows, so the second pass costs less
+/// than threading one result through two shapes.
+fn item_details(
+    registry: &FeedRegistry,
+    owned: &HashSet<String>,
+    now: DateTime<Utc>,
+    item: &StoredItem,
+) -> ItemDetails {
+    let title = &item.item.title;
+
+    ItemDetails {
+        rulesets: ENGINE
+            .claimants(title)
+            .into_iter()
+            .filter_map(mock::ruleset)
+            .collect(),
+        have: ENGINE
+            .parse(title)
+            .is_some_and(|parsed| owned.contains(&parsed.identity.to_string())),
+        feed_name: feed_name(registry, item),
+        size: format::size(item.item.size),
+        age: format::age(now, item.item.published),
+    }
+}
+
 #[page("/")]
 async fn feed(cx: &Cx) -> Result {
     let view = query_params::<FeedView>(cx)?;
@@ -102,6 +133,13 @@ async fn feed(cx: &Cx) -> Result {
 
     let ids: Vec<String> = items.iter().map(|item| item.id.to_string()).collect();
 
+    let owned = library::identities(&services.db).await?;
+    let details: Vec<ItemDetails> = items
+        .iter()
+        .map(|item| item_details(registry, &owned, now, item))
+        .collect();
+    let have_count = details.iter().filter(|entry| entry.have).count();
+
     // Selecting every listed item is one link, so the target is the whole
     // listed set rather than a toggle of what is already selected.
     let all_listed = ids.join(",");
@@ -111,7 +149,11 @@ async fn feed(cx: &Cx) -> Result {
         <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
         <p class="mt-1 text-sm text-slate-400">
             (format::count(items.len(), "item", "items")) " from "
-            (format::count(registered.len(), "feed", "feeds")) "."
+            (format::count(registered.len(), "feed", "feeds"))
+            if have_count > 0 {
+                ", " (have_count) " already in the library"
+            }
+            "."
             if registered.is_empty() {
                 " "
                 <a
@@ -199,12 +241,10 @@ async fn feed(cx: &Cx) -> Result {
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
-                for (item, id) in items.iter().zip(&ids) {
+                for ((item, id), shown) in items.iter().zip(&ids).zip(&details) {
                     components::item_row(
                         item: item,
-                        feed_name: feed_name(registry, item),
-                        size: format::size(item.item.size),
-                        age: format::age(now, item.item.published),
+                        details: shown,
                         toggle_href: feed_url(
                             active,
                             &selection.toggled(id),
