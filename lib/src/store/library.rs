@@ -125,9 +125,13 @@ mod tests {
         .await
         .expect("first sync");
 
-        replace(&pool, at(2), &[owned("series|show|4|7", "t2", "Show.S04E07")])
-            .await
-            .expect("second sync");
+        replace(
+            &pool,
+            at(2),
+            &[owned("series|show|4|7", "t2", "Show.S04E07")],
+        )
+        .await
+        .expect("second sync");
 
         assert_eq!(
             identities(&pool).await.expect("identities"),
