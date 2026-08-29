@@ -6,6 +6,7 @@
 //! being compiled in rather than by being called.
 
 mod components;
+pub mod format;
 mod handlers;
 mod query;
 mod router;
