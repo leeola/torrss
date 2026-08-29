@@ -9,6 +9,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::clock::Clock;
+use crate::download::Downloader;
 use crate::feed::FeedSource;
 use crate::torrent::TorrentClient;
 
@@ -20,6 +21,7 @@ use crate::torrent::TorrentClient;
 #[derive(Clone)]
 pub struct Services {
     pub feeds: Arc<dyn FeedSource>,
+    pub downloads: Arc<dyn Downloader>,
     pub torrents: Arc<dyn TorrentClient>,
     pub clock: Arc<dyn Clock>,
     pub db: SqlitePool,
@@ -37,6 +39,7 @@ mod fake {
 
     use super::Services;
     use crate::clock::FakeClock;
+    use crate::download::FakeDownloader;
     use crate::feed::FakeFeeds;
     use crate::torrent::FakeTorrents;
 
@@ -48,6 +51,7 @@ mod fake {
     /// test reads.
     pub struct Fakes {
         pub feeds: Arc<FakeFeeds>,
+        pub downloads: Arc<FakeDownloader>,
         pub torrents: Arc<FakeTorrents>,
         pub clock: Arc<FakeClock>,
     }
@@ -64,6 +68,7 @@ mod fake {
         /// of its own and removes it once the test passes.
         pub fn fake(db: SqlitePool) -> (Self, Fakes) {
             let feeds = Arc::new(FakeFeeds::new());
+            let downloads = Arc::new(FakeDownloader::new());
             let torrents = Arc::new(FakeTorrents::new());
             let clock = Arc::new(FakeClock::at(start()));
 
@@ -72,6 +77,7 @@ mod fake {
             // method form is what keeps both structs pointed at one value.
             let services = Self {
                 feeds: feeds.clone(),
+                downloads: downloads.clone(),
                 torrents: torrents.clone(),
                 clock: clock.clone(),
                 db,
@@ -81,6 +87,7 @@ mod fake {
                 services,
                 Fakes {
                     feeds,
+                    downloads,
                     torrents,
                     clock,
                 },

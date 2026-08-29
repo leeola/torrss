@@ -16,8 +16,12 @@ use async_trait::async_trait;
 use snafu::Snafu;
 use url::Url;
 
+mod http;
+
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
+
+pub use http::HttpDownloader;
 
 #[cfg(any(test, feature = "fake"))]
 pub use fake::FakeDownloader;

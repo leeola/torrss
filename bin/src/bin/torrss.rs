@@ -4,6 +4,7 @@ use std::{io, path::PathBuf, sync::Arc};
 use clap::Parser;
 use sqlx::SqlitePool;
 use torrss::clock::SystemClock;
+use torrss::download::HttpDownloader;
 use torrss::feed::HttpFeedSource;
 use torrss::server::{self, Config};
 use torrss::services::Services;
@@ -103,6 +104,7 @@ async fn services(cli: &Cli) -> io::Result<Services> {
 
     Ok(Services {
         feeds: Arc::new(HttpFeedSource::new()),
+        downloads: Arc::new(HttpDownloader::new()),
         torrents: Arc::new(Qbit::new(
             cli.qbit_url.clone(),
             &cli.qbit_username,
