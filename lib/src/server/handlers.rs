@@ -111,6 +111,7 @@ fn item_details(
         grab: grabs.get(&item.id).map(|grab| Grabbed {
             error: grab.error.clone(),
             age: format::age(now, Some(grab.at)),
+            rulesets: grab.rulesets.clone(),
         }),
     }
 }

@@ -5,7 +5,7 @@ use topcoat::{
 
 use super::format;
 use crate::feed::registry::FeedCheck;
-use crate::mock::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
+use crate::mock::{self, Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
 
 /// Renders a filename with every claimed run tinted by its part.
@@ -164,6 +164,14 @@ pub(crate) struct Grabbed {
 
     /// How long ago the attempt was made.
     pub age: String,
+
+    /// The ids of the rulesets that claimed the release when it was
+    /// grabbed, most specific first.
+    ///
+    /// Kept apart from [`ItemDetails::rulesets`], which says what claims the
+    /// title now. The two agree while the rulesets are static, and they part
+    /// the moment a rule changes.
+    pub rulesets: Vec<String>,
 }
 
 /// One stored feed item, prefixed by the control that selects it.
@@ -240,9 +248,32 @@ pub(crate) async fn item_row(
                     </span>
                     <span>(&details.age)</span>
                 </div>
+
+                if let Some(grabbed) = &details.grab {
+                    <p class="mt-1 text-xs text-slate-500">
+                        if grabbed.rulesets.is_empty() {
+                            "passed no ruleset"
+                        } else {
+                            "passed " (passed(&grabbed.rulesets))
+                        }
+                    </p>
+                }
             </div>
         </li>
     }
+}
+
+/// Names the rulesets a grab passed, in the order they were recorded.
+///
+/// A ruleset removed since the grab shows by its id instead of its name. The
+/// record is of what ran, and hiding a line because a rule no longer exists
+/// loses exactly the case a reader opened the page to look into.
+fn passed(rulesets: &[String]) -> String {
+    rulesets
+        .iter()
+        .map(|id| mock::ruleset(id).map_or(id.as_str(), |ruleset| ruleset.name))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A checkbox that toggles by navigation rather than by script.
@@ -528,5 +559,22 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
         ))>
             if enabled { "enabled" } else { "disabled" }
         </span>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::passed;
+
+    #[test]
+    fn passed_names_declared_rulesets_and_keeps_the_rest_by_id() {
+        assert_eq!(
+            passed(&[
+                "series-hollow-meridian".to_owned(),
+                "removed-since-the-grab".to_owned(),
+            ]),
+            "The Hollow Meridian, removed-since-the-grab",
+            "a ruleset no longer declared still shows, by the id that was recorded"
+        );
     }
 }
