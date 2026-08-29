@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -18,15 +18,17 @@ use url::Url;
 
 use crate::{
     feed::registry::{self, FeedRegistry},
+    grab,
     mock::{self, Diff, RULESETS},
     rules::ENGINE,
     server::{
-        components::{self, ItemDetails},
+        components::{self, Grabbed, ItemDetails},
         format,
         query::{self, IdList},
         state::RulesetSwitches,
     },
     services::Services,
+    store::grabs::{self, Grab},
     store::{self, StoredItem, library},
     torrent::sync::{self, SyncState},
 };
@@ -88,6 +90,7 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
 fn item_details(
     registry: &FeedRegistry,
     owned: &HashSet<String>,
+    grabs: &HashMap<i64, Grab>,
     now: DateTime<Utc>,
     item: &StoredItem,
 ) -> ItemDetails {
@@ -105,6 +108,10 @@ fn item_details(
         feed_name: feed_name(registry, item),
         size: format::size(item.item.size),
         age: format::age(now, item.item.published),
+        grab: grabs.get(&item.id).map(|grab| Grabbed {
+            error: grab.error.clone(),
+            age: format::age(now, Some(grab.at)),
+        }),
     }
 }
 
@@ -134,9 +141,10 @@ async fn feed(cx: &Cx) -> Result {
     let ids: Vec<String> = items.iter().map(|item| item.id.to_string()).collect();
 
     let owned = library::identities(&services.db).await?;
+    let grabbed = grabs::all(&services.db).await?;
     let details: Vec<ItemDetails> = items
         .iter()
-        .map(|item| item_details(registry, &owned, now, item))
+        .map(|item| item_details(registry, &owned, &grabbed, now, item))
         .collect();
     let have_count = details.iter().filter(|entry| entry.have).count();
 
@@ -221,17 +229,21 @@ async fn feed(cx: &Cx) -> Result {
                     label: "Fetch now",
                 )
 
-                <button
-                    type="button"
-                    disabled=(selection.is_empty())
-                    class="rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
-                >
-                    if selection.is_empty() {
-                        "Grab selected"
-                    } else {
-                        "Grab " (format::count(selection.len(), "release", "releases"))
-                    }
-                </button>
+                <form method="post" action="/grab" class="contents">
+                    <input type="hidden" name="selected" value=(selection.as_str())>
+                    <input type="hidden" name="feed" value=(active.unwrap_or_default())>
+                    <button
+                        type="submit"
+                        disabled=(selection.is_empty())
+                        class="rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                    >
+                        if selection.is_empty() {
+                            "Grab selected"
+                        } else {
+                            "Grab " (format::count(selection.len(), "release", "releases"))
+                        }
+                    </button>
+                </form>
             </div>
         </div>
 
@@ -256,6 +268,69 @@ async fn feed(cx: &Cx) -> Result {
             </ul>
         }
     }
+}
+
+/// What the feed page's grab form posts.
+#[derive(Deserialize)]
+struct GrabForm {
+    /// The selection, in the comma-separated form the page carries it in.
+    selected: String,
+
+    /// The feed filter to return to, empty for every feed.
+    feed: Option<String>,
+}
+
+/// Grabs every selected item, then returns to the listing with the
+/// selection cleared.
+///
+/// One failure never stops the rest. Each grab records its own outcome, so
+/// the loop discards the result and the reader learns which release failed
+/// from its badge rather than from a page that refuses to render.
+///
+/// The library is resynced once at the end rather than once per item. A sync
+/// lists the client's whole queue, so a call per release would repeat that
+/// listing for the same answer. Doing it before the redirect means the
+/// listing already shows what was just grabbed.
+#[route(POST "/grab")]
+async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<&'static str> {
+    let services = app_context::<Services>(cx);
+
+    for entry in IdList::new(Some(&input.selected)).entries() {
+        // A selection is whatever arrived in the URL, so an entry that is
+        // not an id, or names a row since removed, is skipped rather than
+        // failing the whole submission.
+        let Ok(id) = entry.parse::<i64>() else {
+            continue;
+        };
+        let Some(item) = store::item(&services.db, id).await? else {
+            continue;
+        };
+
+        let _ = grab::grab(
+            &services.db,
+            services.downloads.as_ref(),
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &item,
+        )
+        .await;
+    }
+
+    sync::sync(
+        app_context::<Arc<SyncState>>(cx),
+        &services.db,
+        services.torrents.as_ref(),
+        services.clock.as_ref(),
+        &ENGINE,
+    )
+    .await;
+
+    Err(redirect(feed_url(
+        input.feed.as_deref().filter(|id| !id.is_empty()),
+        "",
+        "#results",
+    ))
+    .into())
 }
 
 /// Where a switch returns the reader after it flips a ruleset.

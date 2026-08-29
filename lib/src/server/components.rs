@@ -148,6 +148,22 @@ pub(crate) struct ItemDetails {
 
     pub size: String,
     pub age: String,
+
+    /// How the last grab of this release went, or nothing when none was
+    /// tried.
+    pub grab: Option<Grabbed>,
+}
+
+/// What became of the last grab of one release.
+///
+/// The age arrives rendered, because the row has no clock. That matches
+/// [`ItemDetails::age`], which is rendered for the same reason.
+pub(crate) struct Grabbed {
+    /// Why the grab failed, or nothing when the client accepted it.
+    pub error: Option<String>,
+
+    /// How long ago the attempt was made.
+    pub age: String,
 }
 
 /// One stored feed item, prefixed by the control that selects it.
@@ -184,6 +200,19 @@ pub(crate) async fn item_row(
                         <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-300">
                             "have"
                         </span>
+                    }
+                    match &details.grab {
+                        Some(grabbed) => match &grabbed.error {
+                            None => <span
+                                title=(&grabbed.age)
+                                class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300"
+                            >"grabbed"</span>,
+                            Some(error) => <span
+                                title=(error)
+                                class="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300"
+                            >"grab failed"</span>,
+                        },
+                        None => "",
                     }
                 </div>
 
