@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod download;
 pub mod feed;
+pub mod grab;
 pub(crate) mod rules;
 pub mod server;
 pub mod services;
