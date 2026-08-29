@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
+use tracing::{info, instrument, warn};
 
 use crate::clock::Clock;
 use crate::rules::{ENGINE, Engine};
@@ -86,6 +87,7 @@ impl SyncState {
 /// The clock is read once, at the start. The same instant stamps the written
 /// rows and the recorded status, so a page never shows the two disagreeing by
 /// the length of a sync.
+#[instrument(name = "sync_library", skip_all)]
 pub(crate) async fn sync(
     state: &SyncState,
     pool: &SqlitePool,
@@ -115,6 +117,17 @@ pub(crate) async fn sync(
         Err(error) => Err(error.to_string()),
     };
 
+    // Logged by reference, so the line and the stored status carry one
+    // rendering of the error rather than two.
+    match &outcome {
+        Ok(report) => info!(
+            torrents = report.torrents,
+            matched = report.matched,
+            "synced"
+        ),
+        Err(error) => warn!(error = %error, "sync failed"),
+    }
+
     let status = SyncStatus { at, outcome };
     *state.lock() = Some(status.clone());
 
@@ -130,6 +143,7 @@ pub(crate) async fn sync(
 /// This runs as its own task rather than beside the feed poll. The two have
 /// no reason to share a rate, and one slow client would otherwise hold up
 /// every feed check behind it.
+#[instrument(name = "sync_poll", skip_all, fields(interval_secs = interval.as_secs()))]
 pub(crate) async fn poll(
     state: Arc<SyncState>,
     pool: SqlitePool,
