@@ -60,6 +60,7 @@ pub(crate) async fn grab(
         item.id,
         clock.now(),
         submitted.as_ref().err().map(ToString::to_string).as_deref(),
+        &[],
     )
     .await
     .context(StoreSnafu);
@@ -240,6 +241,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the download answered with status 403".to_owned()),
+                    rulesets: Vec::new(),
                 }
             )]),
             "a failed attempt is recorded, with the reason"
@@ -275,6 +277,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the torrent client rejected the request: duplicate".to_owned()),
+                    rulesets: Vec::new(),
                 }
             )]),
             "the client's own words are what the page shows"
@@ -304,6 +307,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
+                    rulesets: Vec::new(),
                 }
             )])
         );
