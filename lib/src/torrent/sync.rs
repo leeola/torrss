@@ -9,11 +9,6 @@
 //! plenty this application never grabbed, and a row with no identity answers
 //! no question the feed page asks.
 
-// FIXME: This module belongs to the crate rather than to its API. It is
-// public only because the poll task that drives it does not exist yet, and a
-// `pub(crate)` item no caller reaches reads as dead code. Narrow it alongside
-// `rules` and `store::library`.
-
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -31,7 +26,7 @@ use crate::torrent::{Torrent, TorrentClient};
 /// This mirrors the feed registry: it lives in the app context, and a handler
 /// reads it there rather than through an argument.
 #[derive(Debug, Default)]
-pub struct SyncState {
+pub(crate) struct SyncState {
     last: Mutex<Option<SyncStatus>>,
 }
 
@@ -41,9 +36,9 @@ pub struct SyncState {
 /// pages show only the text, so nothing is gained by keeping the two error
 /// types apart this far out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyncStatus {
-    pub at: DateTime<Utc>,
-    pub outcome: Result<SyncReport, String>,
+pub(crate) struct SyncStatus {
+    pub(crate) at: DateTime<Utc>,
+    pub(crate) outcome: Result<SyncReport, String>,
 }
 
 /// How much of the client's queue the rulesets claimed.
@@ -52,22 +47,22 @@ pub struct SyncStatus {
 /// client full of torrents with nothing matched means the rulesets are wrong,
 /// not that the client is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyncReport {
+pub(crate) struct SyncReport {
     /// How many torrents the client holds.
-    pub torrents: usize,
+    pub(crate) torrents: usize,
 
     /// How many of them a ruleset claimed. Two torrents sometimes share one
     /// identity, so this counts torrents rather than rows written.
-    pub matched: usize,
+    pub(crate) matched: usize,
 }
 
 impl SyncState {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Returns the last sync's status, or nothing until one runs.
-    pub fn last(&self) -> Option<SyncStatus> {
+    pub(crate) fn last(&self) -> Option<SyncStatus> {
         self.lock().clone()
     }
 
@@ -91,7 +86,7 @@ impl SyncState {
 /// The clock is read once, at the start. The same instant stamps the written
 /// rows and the recorded status, so a page never shows the two disagreeing by
 /// the length of a sync.
-pub async fn sync(
+pub(crate) async fn sync(
     state: &SyncState,
     pool: &SqlitePool,
     client: &dyn TorrentClient,
@@ -135,7 +130,7 @@ pub async fn sync(
 /// This runs as its own task rather than beside the feed poll. The two have
 /// no reason to share a rate, and one slow client would otherwise hold up
 /// every feed check behind it.
-pub async fn poll(
+pub(crate) async fn poll(
     state: Arc<SyncState>,
     pool: SqlitePool,
     client: Arc<dyn TorrentClient>,

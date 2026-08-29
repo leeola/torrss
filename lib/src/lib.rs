@@ -1,6 +1,6 @@
 pub mod clock;
 pub mod feed;
-pub mod rules;
+pub(crate) mod rules;
 pub mod server;
 pub mod services;
 pub mod store;

@@ -8,11 +8,6 @@
 //! stream of changes, so a torrent removed in the client is known only by
 //! its absence from the next snapshot.
 
-// FIXME: This module belongs to the crate rather than to its API. It is
-// public only because the library sync that fills it does not exist yet, and
-// a `pub(crate)` item no caller reaches reads as dead code. Narrow it
-// alongside `rules`, once the sync lands.
-
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
@@ -22,18 +17,18 @@ use crate::torrent::TorrentId;
 
 /// One release the client holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Owned {
+pub(crate) struct Owned {
     /// The rendered [`Identity`](crate::rules::Identity), which is the key.
-    pub identity: String,
+    pub(crate) identity: String,
 
     /// The root ruleset the identity came from, kept so a reader sees which
     /// rules claimed the torrent without parsing the key apart.
-    pub ruleset: String,
+    pub(crate) ruleset: String,
 
-    pub torrent_id: TorrentId,
+    pub(crate) torrent_id: TorrentId,
 
     /// What the client calls the torrent, for a listing that names it.
-    pub name: String,
+    pub(crate) name: String,
 }
 
 /// Rewrites the whole library from one sync.
@@ -44,7 +39,7 @@ pub struct Owned {
 /// Two torrents sometimes parse to one identity, such as the same episode
 /// grabbed twice in different qualities. The later one wins rather than
 /// failing the sync, because one odd pair is no reason to lose the rest.
-pub async fn replace(
+pub(crate) async fn replace(
     pool: &SqlitePool,
     synced_at: DateTime<Utc>,
     owned: &[Owned],
@@ -75,7 +70,7 @@ pub async fn replace(
 ///
 /// The whole set comes back at once, because the feed page tests every
 /// listed item against it. A query per item costs one round trip per row.
-pub async fn identities(pool: &SqlitePool) -> Result<HashSet<String>, sqlx::Error> {
+pub(crate) async fn identities(pool: &SqlitePool) -> Result<HashSet<String>, sqlx::Error> {
     let rows: Vec<String> = sqlx::query_scalar("SELECT identity FROM library")
         .fetch_all(pool)
         .await?;

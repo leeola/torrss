@@ -8,11 +8,6 @@
 //! identity. Normalizing them keeps punctuation and case from turning one
 //! episode into two.
 
-// FIXME: This module belongs to the crate rather than to its API. It is
-// public only because the library sync and the feed page that call it do not
-// exist yet, and a `pub(crate)` item no caller reaches reads as dead code.
-// Narrow the module and its items once either one lands.
-
 use std::cmp::Reverse;
 use std::fmt::{self, Display};
 use std::sync::LazyLock;
@@ -28,20 +23,20 @@ use crate::mock::{self, Field, FieldKind, Ruleset};
 /// Panics when a pattern fails to compile. The patterns are checked in beside
 /// the code, so a bad one is a programming error rather than a condition a
 /// caller handles.
-pub static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
+pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
     Engine::from_rulesets(mock::RULESETS).expect("every mock pattern is a valid regex")
 });
 
 /// What one ruleset made of a release name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Parsed {
+pub(crate) struct Parsed {
     /// The ruleset that claimed the name, which is the most specific one.
-    pub ruleset: &'static str,
+    pub(crate) ruleset: &'static str,
 
     /// Every field that matched, in the ruleset's own order.
-    pub values: Vec<(&'static str, String)>,
+    pub(crate) values: Vec<(&'static str, String)>,
 
-    pub identity: Identity,
+    pub(crate) identity: Identity,
 }
 
 /// What makes two releases the same thing.
@@ -51,11 +46,11 @@ pub struct Parsed {
 /// episode claimed by the base and the same episode claimed by a child are
 /// one release, not two.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Identity {
-    pub ruleset: String,
+pub(crate) struct Identity {
+    pub(crate) ruleset: String,
 
     /// The normalized value of each identity field, in the ruleset's order.
-    pub key: Vec<String>,
+    pub(crate) key: Vec<String>,
 }
 
 impl Display for Identity {
@@ -72,7 +67,7 @@ impl Display for Identity {
 }
 
 /// Every ruleset, compiled and ordered most specific first.
-pub struct Engine {
+pub(crate) struct Engine {
     rulesets: Vec<Compiled>,
 }
 
@@ -117,7 +112,7 @@ impl Engine {
     }
 
     /// Lists every ruleset that claims `title`, most specific first.
-    pub fn claimants(&self, title: &str) -> Vec<&'static str> {
+    pub(crate) fn claimants(&self, title: &str) -> Vec<&'static str> {
         self.rulesets
             .iter()
             .filter(|ruleset| captures(ruleset, title).is_some())
@@ -126,7 +121,7 @@ impl Engine {
     }
 
     /// Parses `title` with the most specific ruleset that claims it.
-    pub fn parse(&self, title: &str) -> Option<Parsed> {
+    pub(crate) fn parse(&self, title: &str) -> Option<Parsed> {
         self.rulesets.iter().find_map(|ruleset| {
             let values = captures(ruleset, title)?;
 
