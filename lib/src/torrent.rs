@@ -14,6 +14,7 @@ use snafu::Snafu;
 use url::Url;
 
 mod qbit;
+pub mod sync;
 
 #[cfg(any(test, feature = "fake"))]
 mod fake;

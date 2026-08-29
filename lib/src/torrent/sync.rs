@@ -1,0 +1,341 @@
+//! Recording which releases the torrent client already holds.
+//!
+//! A sync is where the three halves of the question meet. The client lists
+//! what it holds, the rulesets turn each name into an identity, and the
+//! library table takes the result. The feed page then answers "do I have
+//! this" from one query.
+//!
+//! A name no ruleset claims is skipped rather than stored. A client holds
+//! plenty this application never grabbed, and a row with no identity answers
+//! no question the feed page asks.
+
+// FIXME: This module belongs to the crate rather than to its API. It is
+// public only because the poll task that drives it does not exist yet, and a
+// `pub(crate)` item no caller reaches reads as dead code. Narrow it alongside
+// `rules` and `store::library`.
+
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use sqlx::SqlitePool;
+
+use crate::clock::Clock;
+use crate::rules::{ENGINE, Engine};
+use crate::store::library;
+use crate::store::library::Owned;
+use crate::torrent::{Torrent, TorrentClient};
+
+/// The result of the last library sync.
+///
+/// This mirrors the feed registry: it lives in the app context, and a handler
+/// reads it there rather than through an argument.
+#[derive(Debug, Default)]
+pub struct SyncState {
+    last: Mutex<Option<SyncStatus>>,
+}
+
+/// What one sync produced.
+///
+/// A client failure and a store failure both end a sync the same way, and the
+/// pages show only the text, so nothing is gained by keeping the two error
+/// types apart this far out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncStatus {
+    pub at: DateTime<Utc>,
+    pub outcome: Result<SyncReport, String>,
+}
+
+/// How much of the client's queue the rulesets claimed.
+///
+/// The gap between the two counts is what a user reads to judge the rules. A
+/// client full of torrents with nothing matched means the rulesets are wrong,
+/// not that the client is empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncReport {
+    /// How many torrents the client holds.
+    pub torrents: usize,
+
+    /// How many of them a ruleset claimed. Two torrents sometimes share one
+    /// identity, so this counts torrents rather than rows written.
+    pub matched: usize,
+}
+
+impl SyncState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the last sync's status, or nothing until one runs.
+    pub fn last(&self) -> Option<SyncStatus> {
+        self.lock().clone()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Option<SyncStatus>> {
+        // Nothing panics while the guard is held, so the lock never poisons.
+        self.last
+            .lock()
+            .expect("the sync state lock is never poisoned")
+    }
+}
+
+/// Rebuilds the library from what the client holds, and records the outcome.
+///
+/// Returns the status it stored, so a handler that asked for the sync renders
+/// the result without reading the state back.
+///
+/// A client that fails to answer leaves the previous library alone. Stale
+/// rows are the better wrong answer, because an empty library marks every
+/// release as missing and invites grabbing the lot a second time.
+///
+/// The clock is read once, at the start. The same instant stamps the written
+/// rows and the recorded status, so a page never shows the two disagreeing by
+/// the length of a sync.
+pub async fn sync(
+    state: &SyncState,
+    pool: &SqlitePool,
+    client: &dyn TorrentClient,
+    clock: &dyn Clock,
+    engine: &Engine,
+) -> SyncStatus {
+    let at = clock.now();
+
+    let outcome = match client.list().await {
+        Ok(torrents) => {
+            let owned = torrents
+                .iter()
+                .filter_map(|torrent| identify(torrent, engine))
+                .collect::<Vec<_>>();
+
+            let report = SyncReport {
+                torrents: torrents.len(),
+                matched: owned.len(),
+            };
+
+            library::replace(pool, at, &owned)
+                .await
+                .map(|()| report)
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    };
+
+    let status = SyncStatus { at, outcome };
+    *state.lock() = Some(status.clone());
+
+    status
+}
+
+/// Syncs the library forever, pausing `interval` between passes.
+///
+/// The pause runs after a pass rather than on a fixed schedule, so a slow
+/// client delays the next pass instead of stacking passes on top of each
+/// other.
+///
+/// This runs as its own task rather than beside the feed poll. The two have
+/// no reason to share a rate, and one slow client would otherwise hold up
+/// every feed check behind it.
+pub async fn poll(
+    state: Arc<SyncState>,
+    pool: SqlitePool,
+    client: Arc<dyn TorrentClient>,
+    clock: Arc<dyn Clock>,
+    interval: Duration,
+) {
+    loop {
+        sync(&state, &pool, client.as_ref(), clock.as_ref(), &ENGINE).await;
+        clock.sleep(interval).await;
+    }
+}
+
+/// Returns what the library stores for `torrent`, or nothing when no ruleset
+/// claims its name.
+fn identify(torrent: &Torrent, engine: &Engine) -> Option<Owned> {
+    let parsed = engine.parse(&torrent.name)?;
+
+    Some(Owned {
+        identity: parsed.identity.to_string(),
+        ruleset: parsed.identity.ruleset,
+        torrent_id: torrent.id.clone(),
+        name: torrent.name.clone(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use sqlx::SqlitePool;
+
+    use super::{SyncReport, SyncState, SyncStatus, sync};
+    use crate::clock::Clock;
+    use crate::rules::ENGINE;
+    use crate::services::Services;
+    use crate::store::library;
+    use crate::torrent::{TorrentClient, TorrentError};
+
+    const HOLLOW: &str =
+        "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
+    const NEXT_EPISODE: &str =
+        "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
+    const FILM: &str = "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
+    const UNCLAIMED: &str = "just some words with no structure at all";
+
+    const HOLLOW_KEY: &str = "series-episodes|the hollow meridian|4|6";
+    const NEXT_KEY: &str = "series-episodes|the hollow meridian|4|7";
+    const FILM_KEY: &str = "feature-films|coastal drift|2024";
+
+    fn set(identities: &[&str]) -> HashSet<String> {
+        identities.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    #[sqlx::test]
+    async fn sync_stores_one_identity_per_parsed_name(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = SyncState::new();
+        fakes.torrents.seed(HOLLOW);
+        fakes.torrents.seed(FILM);
+
+        let status = sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert_eq!(
+            status,
+            SyncStatus {
+                at: fakes.clock.now(),
+                outcome: Ok(SyncReport {
+                    torrents: 2,
+                    matched: 2
+                }),
+            }
+        );
+        assert_eq!(
+            state.last(),
+            Some(status),
+            "the returned status is the recorded one"
+        );
+        assert_eq!(
+            library::identities(&services.db).await.expect("identities"),
+            set(&[HOLLOW_KEY, FILM_KEY]),
+            "each name reaches the library under its own identity"
+        );
+    }
+
+    #[sqlx::test]
+    async fn sync_skips_names_no_ruleset_claims(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = SyncState::new();
+        fakes.torrents.seed(HOLLOW);
+        fakes.torrents.seed(UNCLAIMED);
+
+        let status = sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert_eq!(
+            status.outcome,
+            Ok(SyncReport {
+                torrents: 2,
+                matched: 1
+            }),
+            "an unclaimed torrent counts against the total, not the match"
+        );
+        assert_eq!(
+            library::identities(&services.db).await.expect("identities"),
+            set(&[HOLLOW_KEY]),
+            "an unclaimed name stores no row"
+        );
+    }
+
+    #[sqlx::test]
+    async fn sync_records_client_error_and_keeps_library(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = SyncState::new();
+        fakes.torrents.seed(HOLLOW);
+
+        sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        fakes.torrents.fail_next(TorrentError::Unauthorized);
+        let status = sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert_eq!(
+            status.outcome,
+            Err("the torrent client rejected the credentials".to_owned())
+        );
+        assert_eq!(
+            library::identities(&services.db).await.expect("identities"),
+            set(&[HOLLOW_KEY]),
+            "a client that cannot answer leaves the last snapshot standing"
+        );
+    }
+
+    #[sqlx::test]
+    async fn sync_replaces_previous_snapshot(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = SyncState::new();
+        let removed = fakes.torrents.seed(HOLLOW);
+
+        sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        fakes
+            .torrents
+            .remove(&removed, false)
+            .await
+            .expect("remove the seeded torrent");
+        fakes.torrents.seed(NEXT_EPISODE);
+
+        let status = sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert_eq!(
+            status.outcome,
+            Ok(SyncReport {
+                torrents: 1,
+                matched: 1
+            })
+        );
+        assert_eq!(
+            library::identities(&services.db).await.expect("identities"),
+            set(&[NEXT_KEY]),
+            "a torrent gone from the client drops out of the library"
+        );
+    }
+}
