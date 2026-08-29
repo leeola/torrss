@@ -13,10 +13,12 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
+use tracing::field::{Empty, display};
+use tracing::{Span, info, instrument, warn};
 use url::Url;
 
 use crate::clock::Clock;
-use crate::feed::FeedSource;
+use crate::feed::{FeedSource, redacted};
 use crate::store;
 use crate::store::Ingest;
 
@@ -150,6 +152,7 @@ impl FeedRegistry {
 /// The clock is read once, at the start. The same instant stamps the stored
 /// rows and the recorded check, so a listing's age and the admin page's
 /// last-checked time never disagree by the length of a fetch.
+#[instrument(name = "check_feed", skip_all, fields(feed.id = %id, feed.url = Empty))]
 pub async fn check(
     registry: &FeedRegistry,
     pool: &SqlitePool,
@@ -163,6 +166,10 @@ pub async fn check(
         return false;
     };
 
+    // Recorded through `display` so `feed.url` reads the same here as it does
+    // in the fetch span nested below, which sets it with `%`.
+    Span::current().record("feed.url", display(redacted(&entry.url)));
+
     let at = clock.now();
     let outcome = match source.fetch(&entry.url).await {
         Ok(feed) => store::ingest(pool, &entry.url, at, &feed.items)
@@ -170,6 +177,13 @@ pub async fn check(
             .map_err(|error| error.to_string()),
         Err(error) => Err(error.to_string()),
     };
+
+    // Logged by reference, so the line and the stored check carry one
+    // rendering of the error rather than two.
+    match &outcome {
+        Ok(ingest) => info!(items = ingest.items, added = ingest.added, "checked"),
+        Err(error) => warn!(error = %error, "check failed"),
+    }
 
     registry.record(id, FeedCheck { at, outcome })
 }
@@ -194,6 +208,7 @@ pub async fn check_all(
 /// The pause runs after a pass rather than on a fixed schedule, so a slow
 /// tracker delays the next pass instead of stacking passes on top of each
 /// other.
+#[instrument(name = "poll", skip_all, fields(interval_secs = interval.as_secs()))]
 pub async fn poll(
     registry: Arc<FeedRegistry>,
     pool: SqlitePool,
