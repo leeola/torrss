@@ -1,3 +1,4 @@
+use std::panic;
 use std::time::Duration;
 use std::{io, io::ErrorKind, path::PathBuf, sync::Arc};
 
@@ -10,6 +11,7 @@ use torrss::server::{self, Config};
 use torrss::services::Services;
 use torrss::store;
 use torrss::torrent::Qbit;
+use tracing::error;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use url::Url;
@@ -159,6 +161,30 @@ fn init_tracing(filter: &str, format: LogFormat) -> io::Result<()> {
     Ok(())
 }
 
+/// Sends every panic to the log instead of to stderr.
+///
+/// topcoat turns a handler panic into a 500 and drops the payload, so without
+/// this the message reaches only stderr, outside the one stream an operator
+/// reads.
+///
+/// The hook runs on the panicking thread while its spans are still entered,
+/// so a panic inside a request carries that request's fields.
+///
+/// This replaces the default hook, and with it the backtrace that
+/// `RUST_BACKTRACE` prints. The location takes its place, which names the
+/// file and line without the frames.
+fn log_panics() {
+    panic::set_hook(Box::new(|info| {
+        let location = info.location().map(ToString::to_string).unwrap_or_default();
+
+        error!(
+            panic.message = info.payload_as_str().unwrap_or("non-string payload"),
+            panic.location = %location,
+            "panic"
+        );
+    }));
+}
+
 /// Opens everything the application talks to the outside world through.
 ///
 /// `mode=rwc` creates the database file and the migration builds its schema,
@@ -191,6 +217,7 @@ async fn services(cli: &Cli) -> io::Result<Services> {
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
     init_tracing(&cli.log, cli.log_format)?;
+    log_panics();
 
     let services = services(&cli).await?;
 
