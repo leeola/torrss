@@ -9,7 +9,7 @@ use topcoat::{
     context::app_context,
     router::{
         content::Form,
-        error::{RouterErrorExt, bad_request, not_found, redirect},
+        error::{RouterErrorExt, bad_request, internal_server_error, not_found, redirect},
         page, path_param, query_params, route,
     },
     view::{class, view},
@@ -709,7 +709,12 @@ async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<&'static str> {
         named => named.to_owned(),
     };
 
-    app_context::<Arc<FeedRegistry>>(cx).add(name, url);
+    // The form never carries credentials, so it passes none and the feed
+    // keeps whatever a configuration file gave it.
+    app_context::<Arc<FeedRegistry>>(cx)
+        .add(name, url, None)
+        .await
+        .map_err(internal_server_error)?;
 
     Err(redirect("/admin/feeds").into())
 }
@@ -720,7 +725,11 @@ async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<&'static str> {
 /// tracker announced rather than who watched for it.
 #[route(POST "/admin/feeds/{feed_id}/remove")]
 async fn remove_feed(cx: &Cx) -> Result<&'static str> {
-    if !app_context::<Arc<FeedRegistry>>(cx).remove(path_param::<FeedId>(cx)) {
+    if !app_context::<Arc<FeedRegistry>>(cx)
+        .remove(path_param::<FeedId>(cx))
+        .await
+        .map_err(internal_server_error)?
+    {
         return Err(not_found().into());
     }
 

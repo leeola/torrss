@@ -8,6 +8,7 @@ use tracing::info;
 use super::router;
 use crate::feed::registry;
 use crate::feed::registry::FeedRegistry;
+use crate::feed::store::FeedStore;
 use crate::services::Services;
 use crate::torrent::sync;
 use crate::torrent::sync::SyncState;
@@ -52,7 +53,11 @@ pub struct Config {
 /// Returns an error if the asset bundle is missing or unreadable, if binding
 /// the listener fails, or if accepting a connection fails.
 pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
-    let feed_registry = Arc::new(FeedRegistry::new());
+    let feed_registry = Arc::new(
+        FeedRegistry::load(FeedStore::new(services.db.clone()))
+            .await
+            .map_err(io::Error::other)?,
+    );
 
     // Named `sync_state` because the module `sync` has to stay in scope for
     // the poll below.

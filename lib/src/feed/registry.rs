@@ -1,11 +1,15 @@
 //! The set of feeds the application currently watches.
 //!
-//! A registration lives in memory and a restart empties it. The items a feed
-//! returned do not live here at all, only in the `feed_items` table, so what
-//! a restart costs is the list of feeds rather than any history.
+//! A registration persists in the `feeds` table, so a feed outlives the
+//! process that registered it. What each entry knows about its last check
+//! lives in memory alone, and a restart clears it: a check is a fact about a
+//! run rather than about a feed.
 //!
-//! This mirrors [`RulesetSwitches`](crate::server) in both respects: it sits
-//! in the app context, and a handler reads it there rather than through an
+//! The items a feed returned do not live here at all, only in the
+//! `feed_items` table, so nothing a restart drops is lost.
+//!
+//! This mirrors [`RulesetSwitches`](crate::server) in one respect: it sits in
+//! the app context, and a handler reads it there rather than through an
 //! argument.
 
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -18,6 +22,7 @@ use tracing::{Span, info, instrument, warn};
 use url::Url;
 
 use crate::clock::Clock;
+use crate::feed::store::FeedStore;
 use crate::feed::{FeedAuth, FeedSource, redacted};
 use crate::store;
 use crate::store::Ingest;
@@ -57,51 +62,115 @@ pub struct FeedCheck {
 }
 
 /// The registered feeds, in the order they were added.
-#[derive(Debug, Default)]
 pub struct FeedRegistry {
+    store: FeedStore,
     inner: Mutex<Inner>,
 }
 
 #[derive(Debug, Default)]
 struct Inner {
     feeds: Vec<FeedEntry>,
-
-    /// Counts every id ever issued, so a removal never frees one for reuse.
-    ///
-    /// Numbering from the current length instead hands a removed feed's id to
-    /// the next one added, and a check then records against the wrong feed.
-    next_id: u32,
 }
 
 impl FeedRegistry {
-    pub fn new() -> Self {
-        Self::default()
+    /// Reads every stored feed into a registry.
+    ///
+    /// Each entry starts with no check. A check records what one run of this
+    /// process saw, so it belongs to the run rather than to the feed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's error when the feeds cannot be read.
+    pub async fn load(store: FeedStore) -> Result<Self, sqlx::Error> {
+        let feeds = store
+            .list()
+            .await?
+            .into_iter()
+            .map(|feed| FeedEntry {
+                id: feed.id.to_string(),
+                name: feed.name,
+                url: feed.url,
+                auth: feed.auth,
+                check: None,
+            })
+            .collect();
+
+        Ok(Self {
+            store,
+            inner: Mutex::new(Inner { feeds }),
+        })
     }
 
-    /// Registers `url` under `name` and returns the new id.
-    pub fn add(&self, name: String, url: Url) -> String {
+    /// Registers `url` under `name` and returns the feed's id.
+    ///
+    /// A URL already registered keeps its id and takes the new name. Its
+    /// credentials change only when `auth` carries some, which mirrors what
+    /// the table does and is what lets the admin form re-register a feed
+    /// without clearing what a configuration file gave it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's error when the write fails. Nothing is added to
+    /// the registry in that case.
+    pub async fn add(
+        &self,
+        name: String,
+        url: Url,
+        auth: Option<FeedAuth>,
+    ) -> Result<String, sqlx::Error> {
+        // The store answers before the lock is taken. A `MutexGuard` is not
+        // `Send`, so one held across an await makes the whole handler future
+        // not `Send`, which the router will not take.
+        let id = self
+            .store
+            .upsert(&name, &url, auth.as_ref())
+            .await?
+            .to_string();
+
         let mut inner = self.lock();
-        inner.next_id += 1;
-        let id = format!("f{}", inner.next_id);
 
-        inner.feeds.push(FeedEntry {
-            id: id.clone(),
-            name,
-            url,
-            auth: FeedAuth::default(),
-            check: None,
-        });
+        match inner.feeds.iter_mut().find(|feed| feed.id == id) {
+            Some(feed) => {
+                feed.name = name;
+                feed.url = url;
 
-        id
+                if let Some(auth) = auth {
+                    feed.auth = auth;
+                }
+            }
+            None => inner.feeds.push(FeedEntry {
+                id: id.clone(),
+                name,
+                url,
+                auth: auth.unwrap_or_default(),
+                check: None,
+            }),
+        }
+
+        Ok(id)
     }
 
     /// Removes the feed `id`, and reports whether one was there.
-    pub fn remove(&self, id: &str) -> bool {
-        let mut inner = self.lock();
-        let before = inner.feeds.len();
-        inner.feeds.retain(|feed| feed.id != id);
+    ///
+    /// An id the table never issued names no feed, so a value that is not a
+    /// row id reports the same absence a missing row does.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's error when the delete fails. The entry stays in
+    /// the registry in that case, so the two never disagree.
+    pub async fn remove(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let Ok(row) = id.parse::<i64>() else {
+            return Ok(false);
+        };
 
-        inner.feeds.len() != before
+        if !self.store.remove(row).await? {
+            return Ok(false);
+        }
+
+        self.lock().feeds.retain(|feed| feed.id != id);
+
+        Ok(true)
     }
 
     pub fn get(&self, id: &str) -> Option<FeedEntry> {
@@ -231,12 +300,15 @@ pub async fn poll(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use chrono::{DateTime, TimeZone, Utc};
     use sqlx::SqlitePool;
     use url::Url;
 
     use super::{FeedCheck, FeedEntry, FeedRegistry, check, check_all};
     use crate::clock::Clock;
+    use crate::feed::store::FeedStore;
     use crate::feed::{FeedAuth, FeedError, fake};
     use crate::services::Services;
     use crate::store;
@@ -255,6 +327,13 @@ mod tests {
             .expect("the test date is unambiguous")
     }
 
+    /// Builds a registry over `pool`, which `#[sqlx::test]` has migrated.
+    async fn registry(pool: &SqlitePool) -> FeedRegistry {
+        FeedRegistry::load(FeedStore::new(pool.clone()))
+            .await
+            .expect("an empty feeds table loads")
+    }
+
     fn entry(id: &str, name: &str, feed: &str, check: Option<FeedCheck>) -> FeedEntry {
         FeedEntry {
             id: id.to_owned(),
@@ -265,60 +344,87 @@ mod tests {
         }
     }
 
-    #[test]
-    fn add_assigns_sequential_ids() {
-        let registry = FeedRegistry::new();
+    #[sqlx::test]
+    async fn add_assigns_sequential_ids(pool: SqlitePool) {
+        let registry = registry(&pool).await;
 
-        assert_eq!(registry.add("Tracker".to_owned(), url(FEED)), "f1");
-        assert_eq!(registry.add("Other".to_owned(), url(OTHER)), "f2");
+        assert_eq!(
+            registry
+                .add("Tracker".to_owned(), url(FEED), None)
+                .await
+                .expect("add"),
+            "1"
+        );
+        assert_eq!(
+            registry
+                .add("Other".to_owned(), url(OTHER), None)
+                .await
+                .expect("add"),
+            "2"
+        );
         assert_eq!(
             registry.entries(),
             vec![
-                entry("f1", "Tracker", FEED, None),
-                entry("f2", "Other", OTHER, None),
+                entry("1", "Tracker", FEED, None),
+                entry("2", "Other", OTHER, None),
             ],
             "insertion order, with no check yet"
         );
         assert_eq!(
-            registry.get("f2"),
-            Some(entry("f2", "Other", OTHER, None)),
+            registry.get("2"),
+            Some(entry("2", "Other", OTHER, None)),
             "one feed by id"
         );
-        assert_eq!(registry.get("f404"), None, "an unknown id finds nothing");
+        assert_eq!(registry.get("404"), None, "an unknown id finds nothing");
     }
 
-    #[test]
-    fn removed_id_is_never_reused() {
-        let registry = FeedRegistry::new();
-        registry.add("Tracker".to_owned(), url(FEED));
+    #[sqlx::test]
+    async fn removed_id_is_never_reused(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
 
-        assert!(registry.remove("f1"), "the feed was there");
-        registry.add("Other".to_owned(), url(OTHER));
+        assert!(
+            registry.remove("1").await.expect("remove"),
+            "the feed was there"
+        );
+        registry
+            .add("Other".to_owned(), url(OTHER), None)
+            .await
+            .expect("add");
 
         assert_eq!(
             registry.entries(),
-            vec![entry("f2", "Other", OTHER, None)],
+            vec![entry("2", "Other", OTHER, None)],
             "the second feed gets a fresh id"
         );
     }
 
-    #[test]
-    fn remove_unknown_is_false() {
-        let registry = FeedRegistry::new();
-        registry.add("Tracker".to_owned(), url(FEED));
+    #[sqlx::test]
+    async fn remove_unknown_is_false(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
 
-        assert!(!registry.remove("f404"));
+        assert!(!registry.remove("404").await.expect("remove"));
         assert_eq!(
             registry.entries(),
-            vec![entry("f1", "Tracker", FEED, None)],
+            vec![entry("1", "Tracker", FEED, None)],
             "an unknown id removes nothing"
         );
     }
 
-    #[test]
-    fn record_replaces_previous_check() {
-        let registry = FeedRegistry::new();
-        let id = registry.add("Tracker".to_owned(), url(FEED));
+    #[sqlx::test]
+    async fn record_replaces_previous_check(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
 
         let failed = FeedCheck {
             at: at(1),
@@ -333,17 +439,17 @@ mod tests {
         assert!(registry.record(&id, succeeded.clone()));
         assert_eq!(
             registry.entries(),
-            vec![entry("f1", "Tracker", FEED, Some(succeeded))],
+            vec![entry("1", "Tracker", FEED, Some(succeeded))],
             "only the last check is kept"
         );
     }
 
-    #[test]
-    fn record_unknown_is_false() {
-        let registry = FeedRegistry::new();
+    #[sqlx::test]
+    async fn record_unknown_is_false(pool: SqlitePool) {
+        let registry = registry(&pool).await;
 
         assert!(!registry.record(
-            "f404",
+            "404",
             FeedCheck {
                 at: at(1),
                 outcome: Ok(Ingest { items: 0, added: 0 }),
@@ -352,10 +458,13 @@ mod tests {
         assert_eq!(registry.entries(), Vec::new());
     }
 
-    #[test]
-    fn name_of_unknown_url_is_none() {
-        let registry = FeedRegistry::new();
-        registry.add("Tracker".to_owned(), url(FEED));
+    #[sqlx::test]
+    async fn name_of_unknown_url_is_none(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
 
         assert_eq!(registry.name_of(&url(FEED)), Some("Tracker".to_owned()));
         assert_eq!(registry.name_of(&url(OTHER)), None);
@@ -364,7 +473,7 @@ mod tests {
     #[sqlx::test]
     async fn check_unknown_id_is_false(pool: SqlitePool) {
         let (services, _fakes) = Services::fake(pool);
-        let registry = FeedRegistry::new();
+        let registry = registry(&services.db).await;
 
         assert!(
             !check(
@@ -372,7 +481,7 @@ mod tests {
                 &services.db,
                 services.feeds.as_ref(),
                 services.clock.as_ref(),
-                "f404",
+                "404",
             )
             .await
         );
@@ -382,8 +491,11 @@ mod tests {
     #[sqlx::test]
     async fn check_ingests_items_and_records_counts(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let registry = FeedRegistry::new();
-        let id = registry.add("Tracker".to_owned(), url(FEED));
+        let registry = registry(&services.db).await;
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
         let at = fakes.clock.now();
         fakes
             .feeds
@@ -403,7 +515,7 @@ mod tests {
         assert_eq!(
             registry.entries(),
             vec![entry(
-                "f1",
+                "1",
                 "Tracker",
                 FEED,
                 Some(FeedCheck {
@@ -429,8 +541,11 @@ mod tests {
     #[sqlx::test]
     async fn check_records_fetch_error_text(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let registry = FeedRegistry::new();
-        let id = registry.add("Tracker".to_owned(), url(FEED));
+        let registry = registry(&services.db).await;
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
         let at = fakes.clock.now();
         fakes.feeds.failing(FEED, FeedError::Status { code: 503 });
 
@@ -449,7 +564,7 @@ mod tests {
         assert_eq!(
             registry.entries(),
             vec![entry(
-                "f1",
+                "1",
                 "Tracker",
                 FEED,
                 Some(FeedCheck {
@@ -468,9 +583,15 @@ mod tests {
     #[sqlx::test]
     async fn check_all_fetches_every_feed_in_order(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let registry = FeedRegistry::new();
-        registry.add("Tracker".to_owned(), url(FEED));
-        registry.add("Other".to_owned(), url(OTHER));
+        let registry = registry(&services.db).await;
+        registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
+        registry
+            .add("Other".to_owned(), url(OTHER), None)
+            .await
+            .expect("add");
         fakes.feeds.feed(FEED, vec![fake::item("A.Release")]);
         fakes.feeds.feed(OTHER, vec![fake::item("B.Release")]);
 
@@ -490,6 +611,110 @@ mod tests {
         assert!(
             registry.entries().iter().all(|entry| entry.check.is_some()),
             "every feed was checked"
+        );
+    }
+
+    #[sqlx::test]
+    async fn add_same_url_updates_name_in_place(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        let first = registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
+        let again = registry
+            .add("Renamed".to_owned(), url(FEED), None)
+            .await
+            .expect("re-register");
+
+        assert_eq!(first, again, "one URL is one feed");
+        assert_eq!(
+            registry.entries(),
+            vec![entry("1", "Renamed", FEED, None)],
+            "the entry is renamed rather than duplicated"
+        );
+    }
+
+    #[sqlx::test]
+    async fn add_without_auth_keeps_existing_auth(pool: SqlitePool) {
+        let registry = registry(&pool).await;
+        let declared = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("X-Api-Key".to_owned(), "declared".to_owned())]),
+        };
+
+        registry
+            .add("Tracker".to_owned(), url(FEED), Some(declared.clone()))
+            .await
+            .expect("add with auth");
+        registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("re-register from the form");
+
+        assert_eq!(
+            registry.get("1").map(|feed| feed.auth),
+            Some(declared),
+            "the form carries no credentials and erases none"
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_sends_the_entry_auth(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = registry(&services.db).await;
+        let auth = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("X-Api-Key".to_owned(), "secret".to_owned())]),
+        };
+
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), Some(auth.clone()))
+            .await
+            .expect("add");
+        fakes.feeds.feed(FEED, vec![fake::item("A.Release")]);
+
+        check(
+            &registry,
+            &services.db,
+            services.feeds.as_ref(),
+            services.clock.as_ref(),
+            &id,
+        )
+        .await;
+
+        assert_eq!(
+            fakes.feeds.fetched_auth(),
+            vec![(url(FEED), auth)],
+            "the credentials on the entry reach the fetch"
+        );
+    }
+
+    #[sqlx::test]
+    async fn load_restores_persisted_feeds(pool: SqlitePool) {
+        let first = registry(&pool).await;
+        first
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
+        first
+            .add("Other".to_owned(), url(OTHER), None)
+            .await
+            .expect("add");
+
+        let restarted = registry(&pool).await;
+
+        assert_eq!(
+            restarted.entries(),
+            first.entries(),
+            "a second registry over one database sees the same feeds"
+        );
+        assert_eq!(
+            restarted.entries(),
+            vec![
+                entry("1", "Tracker", FEED, None),
+                entry("2", "Other", OTHER, None),
+            ],
+            "and each keeps its id, its name, and no check"
         );
     }
 }
