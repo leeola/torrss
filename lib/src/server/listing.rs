@@ -1,0 +1,211 @@
+//! Why a stored title does or does not belong on the wanted list.
+//!
+//! A feed announces everything a tracker carries. A reader wants the small
+//! part of that they do not already have and still watch for. This module
+//! answers which part that is, and names the reason for every title it turns
+//! away, so a page reports what it hid rather than dropping rows in silence.
+
+use std::collections::HashSet;
+
+use crate::rules::{Engine, Parsed};
+
+/// Where one title stands against the rulesets and the library.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Standing {
+    /// Claimed by an enabled ruleset and absent from the library.
+    Wanted(Parsed),
+
+    /// The library already holds this identity, so another copy adds nothing.
+    Owned(Parsed),
+
+    /// The claimant is switched off.
+    Disabled(Parsed),
+
+    /// No ruleset claims the title, so nothing is known about it.
+    Unmatched,
+}
+
+impl Standing {
+    /// What the claimant made of the title, or nothing when none claimed it.
+    pub(super) fn parsed(&self) -> Option<&Parsed> {
+        match self {
+            Self::Wanted(parsed) | Self::Owned(parsed) | Self::Disabled(parsed) => Some(parsed),
+            Self::Unmatched => None,
+        }
+    }
+
+    pub(super) fn is_wanted(&self) -> bool {
+        matches!(self, Self::Wanted(_))
+    }
+
+    /// Names why the row is not wanted, or nothing when it is.
+    ///
+    /// This is the badge text a hidden row carries, so a reader who asks to
+    /// see everything learns why each extra row is there.
+    pub(super) fn hidden_label(&self) -> Option<&'static str> {
+        match self {
+            Self::Wanted(_) => None,
+            Self::Owned(_) => Some("owned"),
+            Self::Disabled(_) => Some("disabled"),
+            Self::Unmatched => Some("unmatched"),
+        }
+    }
+}
+
+/// Decides where `title` stands.
+///
+/// Interest follows the most specific claimant alone. A disabled child hides
+/// its show even while its base stays enabled, because the child is what
+/// describes this release and an enabled base never rescues it.
+pub(super) fn standing(
+    engine: &Engine,
+    enabled: &HashSet<&'static str>,
+    owned: &HashSet<String>,
+    title: &str,
+) -> Standing {
+    let Some(parsed) = engine.parse(title) else {
+        return Standing::Unmatched;
+    };
+
+    if !enabled.contains(parsed.ruleset) {
+        return Standing::Disabled(parsed);
+    }
+
+    if owned.contains(&parsed.identity.to_string()) {
+        return Standing::Owned(parsed);
+    }
+
+    Standing::Wanted(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{Standing, standing};
+    use crate::rules::ENGINE;
+
+    const HOLLOW_1080: &str =
+        "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
+    const HOLLOW_720: &str =
+        "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
+    const NONSENSE: &str = "just some words with no structure at all";
+
+    fn parsed(title: &str) -> Standing {
+        Standing::Wanted(ENGINE.parse(title).expect("claimed"))
+    }
+
+    fn owned_of(title: &str) -> HashSet<String> {
+        HashSet::from([ENGINE.parse(title).expect("claimed").identity.to_string()])
+    }
+
+    #[test]
+    fn enabled_claimant_and_empty_library_is_wanted() {
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &HashSet::new(),
+                HOLLOW_1080,
+            ),
+            parsed(HOLLOW_1080),
+        );
+    }
+
+    #[test]
+    fn identity_in_the_library_is_owned() {
+        let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &owned_of(HOLLOW_1080),
+                HOLLOW_1080,
+            ),
+            Standing::Owned(expected),
+        );
+    }
+
+    #[test]
+    fn disabled_child_hides_what_its_enabled_base_claims() {
+        let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &HashSet::from(["series-episodes"]),
+                &HashSet::new(),
+                HOLLOW_1080,
+            ),
+            Standing::Disabled(expected),
+            "the child claims this title, so an enabled base changes nothing"
+        );
+    }
+
+    #[test]
+    fn enabled_base_wants_what_its_child_refuses() {
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &HashSet::from(["series-episodes"]),
+                &HashSet::new(),
+                HOLLOW_720,
+            ),
+            parsed(HOLLOW_720),
+            "the child requires 1080p, so the base is the most specific claimant"
+        );
+    }
+
+    #[test]
+    fn title_no_ruleset_claims_is_unmatched() {
+        assert_eq!(
+            standing(&ENGINE, &HashSet::new(), &HashSet::new(), NONSENSE),
+            Standing::Unmatched,
+        );
+    }
+
+    #[test]
+    fn every_claimed_standing_carries_its_parse() {
+        let claimed = ENGINE.parse(HOLLOW_1080).expect("claimed");
+
+        for standing in [
+            Standing::Wanted(claimed.clone()),
+            Standing::Owned(claimed.clone()),
+            Standing::Disabled(claimed.clone()),
+        ] {
+            assert_eq!(standing.parsed(), Some(&claimed));
+        }
+
+        assert_eq!(Standing::Unmatched.parsed(), None);
+    }
+
+    #[test]
+    fn only_wanted_is_wanted_and_carries_no_label() {
+        let claimed = ENGINE.parse(HOLLOW_1080).expect("claimed");
+
+        let labels: Vec<(bool, Option<&str>)> = [
+            Standing::Wanted(claimed.clone()),
+            Standing::Owned(claimed.clone()),
+            Standing::Disabled(claimed),
+            Standing::Unmatched,
+        ]
+        .iter()
+        .map(|standing| (standing.is_wanted(), standing.hidden_label()))
+        .collect();
+
+        assert_eq!(
+            labels,
+            [
+                (true, None),
+                (false, Some("owned")),
+                (false, Some("disabled")),
+                (false, Some("unmatched")),
+            ],
+        );
+    }
+}

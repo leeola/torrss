@@ -9,6 +9,7 @@ mod api;
 mod components;
 mod format;
 mod handlers;
+mod listing;
 mod query;
 mod router;
 mod serve;

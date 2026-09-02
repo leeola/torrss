@@ -30,6 +30,15 @@ impl RulesetSwitches {
         self.lock().contains(id)
     }
 
+    /// Copies the enabled set, so a caller reads the switches once.
+    ///
+    /// A listing asks about every row it renders. Answering each through
+    /// [`Self::is_enabled`] would take the lock once per row for a set that
+    /// cannot change mid-render anyway.
+    pub(crate) fn snapshot(&self) -> HashSet<&'static str> {
+        self.lock().clone()
+    }
+
     /// Flips one ruleset and returns the state it lands in.
     pub(crate) fn toggle(&self, id: &'static str) -> bool {
         let mut enabled = self.lock();
@@ -47,5 +56,28 @@ impl RulesetSwitches {
         self.enabled
             .lock()
             .expect("the ruleset switch lock is never poisoned")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::RulesetSwitches;
+
+    #[test]
+    fn snapshot_reflects_a_toggle() {
+        let switches = RulesetSwitches::new();
+        switches.toggle("archive-talks");
+
+        assert_eq!(
+            switches.snapshot(),
+            HashSet::from([
+                "series-episodes",
+                "feature-films",
+                "series-hollow-meridian",
+                "archive-talks",
+            ]),
+        );
     }
 }
