@@ -130,7 +130,7 @@ pub(super) fn standing(
 mod tests {
     use std::collections::HashSet;
 
-    use super::{ParsedValue, Standing, parsed_values, standing};
+    use super::{Standing, parsed_values, standing};
     use crate::rules::ENGINE;
 
     const HOLLOW_1080: &str =
@@ -238,7 +238,7 @@ mod tests {
 
         let read: Vec<(&str, String, bool)> = parsed_values(&parsed)
             .into_iter()
-            .map(|ParsedValue { name, value, identity, .. }| (name, value, identity))
+            .map(|value| (value.name, value.value, value.identity))
             .collect();
 
         assert_eq!(
