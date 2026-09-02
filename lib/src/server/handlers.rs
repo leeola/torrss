@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -26,6 +26,7 @@ use crate::{
     server::{
         components::{self, Grabbed, ItemDetails},
         format,
+        listing::{self, Standing},
         query::{self, IdList},
         state::RulesetSwitches,
     },
@@ -47,6 +48,9 @@ struct FeedView {
 
     /// Comma-separated [`StoredItem::id`] values marked to grab.
     selected: Option<String>,
+
+    /// `1` to list every stored item, or absent for the wanted ones alone.
+    all: Option<String>,
 }
 
 impl FeedView {
@@ -57,16 +61,24 @@ impl FeedView {
     fn selection(&self) -> IdList<'_> {
         IdList::new(self.selected.as_deref())
     }
+
+    fn show_all(&self) -> bool {
+        self.all.as_deref() == Some("1")
+    }
 }
 
-/// Builds a feed URL carrying the feed filter and the selection.
+/// Builds a feed URL carrying the feed filter, the selection, and the mode.
 ///
 /// The parameter is `filter` rather than `feed`, because the `#[page]`
 /// attribute below puts a unit struct named `feed` in this scope.
-fn feed_url(filter: Option<&str>, selected: &str, anchor: &str) -> String {
+fn feed_url(filter: Option<&str>, selected: &str, all: bool, anchor: &str) -> String {
     query::url(
         "/",
-        &[("feed", filter.unwrap_or_default()), ("selected", selected)],
+        &[
+            ("feed", filter.unwrap_or_default()),
+            ("selected", selected),
+            ("all", if all { "1" } else { "" }),
+        ],
         anchor,
     )
 }
@@ -86,12 +98,13 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
 
 /// Builds everything the feed page shows about one release.
 ///
-/// The claimants and the identity come from two passes over the same
-/// rulesets. A listing runs to tens of rows, so the second pass costs less
-/// than threading one result through two shapes.
+/// The standing arrives decided, because the page needs it before this to
+/// work out which rows to list at all. The claimant list is a second pass
+/// over the same rulesets: a listing runs to tens of rows, so repeating the
+/// match costs less than threading one result through two shapes.
 fn item_details(
     registry: &FeedRegistry,
-    owned: &HashSet<String>,
+    standing: &Standing,
     grabs: &HashMap<i64, Grab>,
     now: DateTime<Utc>,
     item: &StoredItem,
@@ -104,9 +117,7 @@ fn item_details(
             .into_iter()
             .filter_map(mock::ruleset)
             .collect(),
-        have: ENGINE
-            .parse(title)
-            .is_some_and(|parsed| owned.contains(&parsed.identity.to_string())),
+        hidden: standing.hidden_label(),
         feed_name: feed_name(registry, item),
         size: format::size(item.item.size),
         age: format::age(now, item.item.published),
@@ -123,6 +134,7 @@ async fn feed(cx: &Cx) -> Result {
     let view = query_params::<FeedView>(cx)?;
     let active = view.active();
     let selection = view.selection();
+    let show_all = view.show_all();
 
     let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
@@ -141,30 +153,73 @@ async fn feed(cx: &Cx) -> Result {
         store::items(&services.db, chosen.as_ref().map(|entry| &entry.url)).await?
     };
 
-    let ids: Vec<String> = items.iter().map(|item| item.id.to_string()).collect();
-
     let owned = library::identities(&services.db).await?;
-    let grabbed = grabs::all(&services.db).await?;
-    let details: Vec<ItemDetails> = items
+    let enabled = app_context::<RulesetSwitches>(cx).snapshot();
+
+    let standings: Vec<Standing> = items
         .iter()
-        .map(|item| item_details(registry, &owned, &grabbed, now, item))
+        .map(|item| listing::standing(&ENGINE, &enabled, &owned, &item.item.title))
         .collect();
-    let have_count = details.iter().filter(|entry| entry.have).count();
+
+    let owned_count = standings
+        .iter()
+        .filter(|standing| matches!(standing, Standing::Owned(_)))
+        .count();
+    let disabled_count = standings
+        .iter()
+        .filter(|standing| matches!(standing, Standing::Disabled(_)))
+        .count();
+    let unmatched_count = standings
+        .iter()
+        .filter(|standing| matches!(standing, Standing::Unmatched))
+        .count();
+    let hidden_count = owned_count + disabled_count + unmatched_count;
+
+    // The selection, the select-all link, and the grab form all work from
+    // the listed rows, so hidden rows leave the set entirely rather than
+    // staying selectable behind a filter.
+    let mut listed: Vec<(&StoredItem, Standing)> = items.iter().zip(standings).collect();
+    if !show_all {
+        listed.retain(|(_, standing)| standing.is_wanted());
+    }
+
+    let ids: Vec<String> = listed.iter().map(|(item, _)| item.id.to_string()).collect();
+
+    let grabbed = grabs::all(&services.db).await?;
+    let details: Vec<ItemDetails> = listed
+        .iter()
+        .map(|(item, standing)| item_details(registry, standing, &grabbed, now, item))
+        .collect();
 
     // Selecting every listed item is one link, so the target is the whole
     // listed set rather than a toggle of what is already selected.
     let all_listed = ids.join(",");
     let selected_here = ids.iter().filter(|id| selection.contains(id)).count();
+    let all_selected = selected_here == ids.len() && !ids.is_empty();
 
     view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
         <p class="mt-1 text-sm text-slate-400">
-            (format::count(items.len(), "item", "items")) " from "
-            (format::count(registered.len(), "feed", "feeds"))
-            if have_count > 0 {
-                ", " (have_count) " already in the library"
+            if show_all {
+                (format::count(ids.len(), "item", "items"))
+            } else {
+                (format::count(ids.len(), "wanted release", "wanted releases"))
+            }
+            " from " (format::count(registered.len(), "feed", "feeds"))
+            if hidden_count > 0 {
+                if show_all { ", " } else { ", hidden: " }
+                (owned_count) " owned, "
+                (disabled_count) " disabled, "
+                (unmatched_count) " unmatched"
             }
             "."
+            " "
+            <a
+                href=(feed_url(active, selection.as_str(), !show_all, "#results"))
+                class="underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
+            >
+                if show_all { "Show wanted only" } else { "Show all" }
+            </a>
             if registered.is_empty() {
                 " "
                 <a
@@ -178,13 +233,13 @@ async fn feed(cx: &Cx) -> Result {
 
         <nav class="mt-6 flex flex-wrap gap-2">
             components::filter_chip(
-                href: feed_url(None, selection.as_str(), "#results"),
+                href: feed_url(None, selection.as_str(), show_all, "#results"),
                 label: "All",
                 current: active.is_none(),
             )
             for entry in &registered {
                 components::filter_chip(
-                    href: feed_url(Some(&entry.id), selection.as_str(), "#results"),
+                    href: feed_url(Some(&entry.id), selection.as_str(), show_all, "#results"),
                     label: entry.name.as_str(),
                     current: active == Some(entry.id.as_str()),
                 )
@@ -199,10 +254,11 @@ async fn feed(cx: &Cx) -> Result {
                 components::checkbox(
                     href: feed_url(
                         active,
-                        if selected_here == items.len() { "" } else { all_listed.as_str() },
+                        if all_selected { "" } else { all_listed.as_str() },
+                        show_all,
                         "#results",
                     ),
-                    checked: selected_here == items.len() && !items.is_empty(),
+                    checked: all_selected,
                     label: "Select every listed release",
                 )
                 <span class="text-sm text-slate-300">
@@ -214,7 +270,7 @@ async fn feed(cx: &Cx) -> Result {
                 </span>
                 if !selection.is_empty() {
                     <a
-                        href=(feed_url(active, "", "#results"))
+                        href=(feed_url(active, "", show_all, "#results"))
                         class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                     >
                         "Clear"
@@ -226,7 +282,7 @@ async fn feed(cx: &Cx) -> Result {
                 components::action_button(
                     action: query::url(
                         "/feeds/check",
-                        &[("back", feed_url(active, selection.as_str(), "#results").as_str())],
+                        &[("back", feed_url(active, selection.as_str(), show_all, "#results").as_str())],
                         "",
                     ),
                     label: "Fetch now",
@@ -235,6 +291,7 @@ async fn feed(cx: &Cx) -> Result {
                 <form method="post" action="/grab" class="contents">
                     <input type="hidden" name="selected" value=(selection.as_str())>
                     <input type="hidden" name="feed" value=(active.unwrap_or_default())>
+                    <input type="hidden" name="all" value=(if show_all { "1" } else { "" })>
                     <button
                         type="submit"
                         disabled=(selection.is_empty())
@@ -250,19 +307,20 @@ async fn feed(cx: &Cx) -> Result {
             </div>
         </div>
 
-        if items.is_empty() {
+        if listed.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No item in this feed yet."
+                if show_all { "No item in this feed yet." } else { "No wanted release yet." }
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
-                for ((item, id), shown) in items.iter().zip(&ids).zip(&details) {
+                for ((item, _), (id, shown)) in listed.iter().zip(ids.iter().zip(&details)) {
                     components::item_row(
                         item: item,
                         details: shown,
                         toggle_href: feed_url(
                             active,
                             &selection.toggled(id),
+                            show_all,
                             &format!("#item-{id}"),
                         ),
                         selected: selection.contains(id),
@@ -281,6 +339,9 @@ struct GrabForm {
 
     /// The feed filter to return to, empty for every feed.
     feed: Option<String>,
+
+    /// `1` when the grab came from the show-all view, so it returns there.
+    all: Option<String>,
 }
 
 /// Grabs every selected item, then returns to the listing with the
@@ -338,6 +399,7 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
     Ok(see_other(feed_url(
         input.feed.as_deref().filter(|id| !id.is_empty()),
         "",
+        input.all.as_deref() == Some("1"),
         "#results",
     )))
 }

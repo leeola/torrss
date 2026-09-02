@@ -140,8 +140,12 @@ pub(crate) struct ItemDetails {
     /// fires.
     pub rulesets: Vec<&'static Ruleset>,
 
-    /// Whether the library already holds this release's identity.
-    pub have: bool,
+    /// Names why the row is not wanted, or nothing when it is.
+    ///
+    /// The reason is what a reader who asked to see everything came for: a
+    /// row they cannot act on still owes them an explanation of why it sits
+    /// there.
+    pub hidden: Option<&'static str>,
 
     /// What the feed the row came from is called.
     pub feed_name: String,
@@ -176,8 +180,8 @@ pub(crate) struct Grabbed {
 
 /// One stored feed item, prefixed by the control that selects it.
 ///
-/// A release the library already holds dims rather than disappears, because
-/// a reader still has to see that the feed carries it.
+/// A row the page did not want dims rather than disappears, because a reader
+/// who asked to see everything still has to tell it from what they want.
 ///
 /// The title renders as plain monospace rather than tinted by part. Tinting
 /// needs the segments the ruleset editor works from, which are checked-in
@@ -196,7 +200,7 @@ pub(crate) async fn item_row(
                 "flex items-start gap-3 rounded-lg border px-4 py-3 scroll-mt-24 transition-colors",
                 "border-sky-400/50 bg-sky-400/5" if selected
                     else "border-slate-800 bg-slate-900/40 hover:border-slate-700",
-                "opacity-60" if details.have,
+                "opacity-60" if details.hidden.is_some(),
             ))
         >
             checkbox(href: toggle_href, checked: selected, label: "Select this release")
@@ -204,9 +208,9 @@ pub(crate) async fn item_row(
             <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="font-mono text-sm break-all">(&item.item.title)</span>
-                    if details.have {
-                        <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-300">
-                            "have"
+                    if let Some(label) = details.hidden {
+                        <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                            (label)
                         </span>
                     }
                     match &details.grab {
