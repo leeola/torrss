@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::clock::Clock;
 use crate::feed::store::FeedStore;
-use crate::feed::{FeedAuth, FeedSource, redacted};
+use crate::feed::{Feed, FeedAuth, FeedError, FeedSource, redacted};
 use crate::store;
 use crate::store::Ingest;
 
@@ -276,6 +276,39 @@ pub async fn check(
     registry.record(id, FeedCheck { at, outcome })
 }
 
+/// Fetches one feed and returns what it carries, storing and recording
+/// nothing.
+///
+/// This backs the Test button on the feeds page, so a reader sees what a
+/// tracker hands back before a poll has run, or without running one.
+///
+/// Returns `None` when `id` names no feed, which the handler answers as a
+/// 404. A fetch that fails comes back as the `Err`, never as a recorded
+/// check, so the clients page keeps showing the last real poll.
+#[instrument(name = "preview_feed", skip_all, fields(feed.id = %id, feed.url = Empty))]
+pub async fn preview(
+    registry: &FeedRegistry,
+    source: &dyn FeedSource,
+    id: &str,
+) -> Option<Result<Feed, FeedError>> {
+    // Reading the entry out clones and releases the lock, so no page render
+    // waits behind the fetch.
+    let entry = registry.get(id)?;
+
+    Span::current().record("feed.url", display(redacted(&entry.url)));
+
+    let outcome = source.fetch(&entry.url, &entry.auth).await;
+
+    // Both outcomes are `info`, because nothing retries a preview. The
+    // reader sees a failure on the page they asked from.
+    match &outcome {
+        Ok(feed) => info!(items = feed.items.len(), "previewed"),
+        Err(error) => info!(error = %error, "preview failed"),
+    }
+
+    Some(outcome)
+}
+
 /// Checks every registered feed, in the order they were added.
 ///
 /// One feed's failure never stops the pass, because each check records its
@@ -318,10 +351,10 @@ mod tests {
     use sqlx::SqlitePool;
     use url::Url;
 
-    use super::{FeedCheck, FeedEntry, FeedRegistry, check, check_all};
+    use super::{FeedCheck, FeedEntry, FeedRegistry, check, check_all, preview};
     use crate::clock::Clock;
     use crate::feed::store::FeedStore;
-    use crate::feed::{FeedAuth, FeedError, fake};
+    use crate::feed::{Feed, FeedAuth, FeedError, fake};
     use crate::services::Services;
     use crate::store;
     use crate::store::Ingest;
@@ -748,6 +781,78 @@ mod tests {
                 entry("2", "Other", OTHER, None),
             ],
             "and each keeps its id, its name, and no check"
+        );
+    }
+    #[sqlx::test]
+    async fn preview_unknown_id_is_none(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = registry(&services.db).await;
+
+        assert_eq!(
+            preview(&registry, services.feeds.as_ref(), "404").await,
+            None
+        );
+        assert_eq!(fakes.feeds.fetched(), Vec::new(), "nothing was fetched");
+    }
+
+    #[sqlx::test]
+    async fn preview_returns_items_and_stores_nothing(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = registry(&services.db).await;
+        let auth = FeedAuth {
+            basic: None,
+            headers: BTreeMap::from([("X-Api-Key".to_owned(), "secret".to_owned())]),
+        };
+
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), Some(auth.clone()))
+            .await
+            .expect("add");
+        fakes
+            .feeds
+            .feed(FEED, vec![fake::item("A.Release"), fake::item("B.Release")]);
+
+        assert_eq!(
+            preview(&registry, services.feeds.as_ref(), &id).await,
+            Some(Ok(Feed {
+                items: vec![fake::item("A.Release"), fake::item("B.Release")],
+            })),
+        );
+        assert_eq!(
+            fakes.feeds.fetched_auth(),
+            vec![(url(FEED), auth)],
+            "the credentials on the entry reach the fetch"
+        );
+        assert_eq!(
+            store::items(&services.db, None).await.expect("items"),
+            Vec::new(),
+            "a preview stores nothing"
+        );
+        assert_eq!(
+            registry.get(&id).map(|feed| feed.check),
+            Some(None),
+            "a preview records no check"
+        );
+    }
+
+    #[sqlx::test]
+    async fn preview_passes_the_fetch_error_through(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = registry(&services.db).await;
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
+        fakes.feeds.failing(FEED, FeedError::Status { code: 503 });
+
+        assert_eq!(
+            preview(&registry, services.feeds.as_ref(), &id).await,
+            Some(Err(FeedError::Status { code: 503 })),
+        );
+        assert_eq!(
+            registry.get(&id).map(|feed| feed.check),
+            Some(None),
+            "a failed preview records no check either"
         );
     }
 }
