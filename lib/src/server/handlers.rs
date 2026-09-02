@@ -117,6 +117,7 @@ fn item_details(
             .into_iter()
             .filter_map(mock::ruleset)
             .collect(),
+        values: standing.parsed().map(listing::parsed_values).unwrap_or_default(),
         hidden: standing.hidden_label(),
         feed_name: feed_name(registry, item),
         size: format::size(item.item.size),

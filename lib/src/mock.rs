@@ -18,7 +18,7 @@ pub(crate) use rulesets::RULESETS;
 ///
 /// The variant picks both the label and the highlight color, so a reader sees
 /// at a glance which part of a filename a rule claimed.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Part {
     Show,
     Movie,

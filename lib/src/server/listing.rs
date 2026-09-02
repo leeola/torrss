@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use crate::mock::{self, Part};
 use crate::rules::{Engine, Parsed};
 
 /// Where one title stands against the rulesets and the library.
@@ -52,6 +53,53 @@ impl Standing {
     }
 }
 
+/// One value the claiming ruleset read out of a title.
+///
+/// The part and the identity flag come from the field that captured the
+/// value, so a row can tint each value and mark the ones that decide
+/// sameness apart from the ones that only describe the release.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ParsedValue {
+    pub(super) name: &'static str,
+    pub(super) value: String,
+    pub(super) part: Part,
+
+    /// Whether this value takes part in the key that decides whether two
+    /// releases are the same item.
+    pub(super) identity: bool,
+}
+
+/// Resolves what a parse captured back to the fields that captured it.
+///
+/// The order is the ruleset's own field order, which is the order the parts
+/// appear in a well-formed name. A captured name with no matching field is
+/// dropped: the engine compiles from this same list, so none is expected.
+pub(super) fn parsed_values(parsed: &Parsed) -> Vec<ParsedValue> {
+    let Some(ruleset) = mock::ruleset(parsed.ruleset) else {
+        return Vec::new();
+    };
+
+    let fields = ruleset.resolved_fields(&[]);
+
+    parsed
+        .values
+        .iter()
+        .filter_map(|(name, raw)| {
+            let field = fields
+                .iter()
+                .find(|resolved| resolved.field.name == *name)?
+                .field;
+
+            Some(ParsedValue {
+                name: field.name,
+                value: raw.clone(),
+                part: field.part,
+                identity: field.identity,
+            })
+        })
+        .collect()
+}
+
 /// Decides where `title` stands.
 ///
 /// Interest follows the most specific claimant alone. A disabled child hides
@@ -82,7 +130,7 @@ pub(super) fn standing(
 mod tests {
     use std::collections::HashSet;
 
-    use super::{Standing, standing};
+    use super::{ParsedValue, Standing, parsed_values, standing};
     use crate::rules::ENGINE;
 
     const HOLLOW_1080: &str =
@@ -182,6 +230,31 @@ mod tests {
         }
 
         assert_eq!(Standing::Unmatched.parsed(), None);
+    }
+
+    #[test]
+    fn a_parse_resolves_to_its_fields_in_order() {
+        let parsed = ENGINE.parse(HOLLOW_1080).expect("claimed");
+
+        let read: Vec<(&str, String, bool)> = parsed_values(&parsed)
+            .into_iter()
+            .map(|ParsedValue { name, value, identity, .. }| (name, value, identity))
+            .collect();
+
+        assert_eq!(
+            read,
+            [
+                ("show", "The.Hollow.Meridian".to_owned(), true),
+                ("season", "04".to_owned(), true),
+                ("episode", "06".to_owned(), true),
+                ("resolution", "1080p".to_owned(), false),
+                ("source", "Broadcast".to_owned(), false),
+                ("audio", "AAC.Stereo".to_owned(), false),
+                ("codec", "H.264".to_owned(), false),
+                ("publisher", "PublicWave".to_owned(), false),
+                ("extension", ".mkv".to_owned(), false),
+            ],
+        );
     }
 
     #[test]

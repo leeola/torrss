@@ -4,6 +4,7 @@ use topcoat::{
 };
 
 use super::format;
+use super::listing::ParsedValue;
 use crate::feed::registry::FeedCheck;
 use crate::mock::{self, Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
@@ -140,6 +141,12 @@ pub(crate) struct ItemDetails {
     /// fires.
     pub rulesets: Vec<&'static Ruleset>,
 
+    /// What the claiming ruleset read out of the title, in its field order.
+    ///
+    /// Empty when no ruleset claims the row. This is what a reader checks
+    /// when a rule misfires: which run of the name became which part.
+    pub values: Vec<ParsedValue>,
+
     /// Names why the row is not wanted, or nothing when it is.
     ///
     /// The reason is what a reader who asked to see everything came for: a
@@ -227,6 +234,27 @@ pub(crate) async fn item_row(
                         None => "",
                     }
                 </div>
+
+                if !details.values.is_empty() {
+                    <div class="mt-1.5 flex flex-wrap gap-1">
+                        for value in &details.values {
+                            <span
+                                title=(if value.identity {
+                                    format!("{} (identity)", value.name)
+                                } else {
+                                    value.name.to_owned()
+                                })
+                                class=(class!(
+                                    "rounded-sm px-1.5 py-0.5 font-mono text-xs",
+                                    value.part.classes(),
+                                    "ring-1 ring-current/40" if value.identity else "opacity-70",
+                                ))
+                            >
+                                (&value.value)
+                            </span>
+                        }
+                    </div>
+                }
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                     if details.rulesets.is_empty() {
