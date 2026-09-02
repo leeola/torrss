@@ -501,6 +501,22 @@ pub(crate) async fn action_button(#[into] action: String, label: &str) -> Result
     }
 }
 
+/// A link styled like [`action_button`], for a read that runs on navigation.
+///
+/// A form is right for a write and wrong for a read. A POST prompts the
+/// reader to resubmit on reload, and a link does not.
+#[component]
+pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
+    view! {
+        <a
+            href=(href)
+            class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+        >
+            (label)
+        </a>
+    }
+}
+
 /// One ruleset on the admin index.
 ///
 /// A `nested` card is a child, indented under the base it narrows.

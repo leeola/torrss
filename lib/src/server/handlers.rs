@@ -534,10 +534,16 @@ async fn feeds(cx: &Cx) -> Result {
                             </p>
                         </div>
 
-                        components::action_button(
-                            action: format!("/admin/feeds/{}/remove", entry.id),
-                            label: "Remove",
-                        )
+                        <div class="flex items-center gap-2">
+                            components::link_button(
+                                href: format!("/admin/feeds/{}/test", entry.id),
+                                label: "Test",
+                            )
+                            components::action_button(
+                                action: format!("/admin/feeds/{}/remove", entry.id),
+                                label: "Remove",
+                            )
+                        </div>
                     </li>
                 }
             </ul>
@@ -759,6 +765,91 @@ async fn check_feed(cx: &Cx) -> Result<SeeOther> {
     }
 
     Ok(see_other(back))
+}
+
+/// Fetches one feed now and shows what it carries.
+///
+/// This stores nothing and records no check, so `feed_items` and the clients
+/// page read the same after a test as before it. A fetch that fails renders
+/// on the page rather than as an error status, because the request itself
+/// succeeded: the tracker is what did not answer.
+///
+/// An id that names no feed is a 404.
+#[page("/admin/feeds/{feed_id}/test")]
+async fn test_feed(cx: &Cx) -> Result {
+    let registry = app_context::<Arc<FeedRegistry>>(cx);
+    let services = app_context::<Services>(cx);
+    let id = path_param::<FeedId>(cx);
+
+    let entry = registry.get(id).ok_or_not_found()?;
+    let now = services.clock.now();
+
+    let outcome = registry::preview(registry, services.feeds.as_ref(), id)
+        .await
+        .ok_or_not_found()?;
+
+    view! {
+        <nav class="text-sm text-slate-500">
+            <a href="/admin/feeds" class="hover:text-slate-300">"Feeds"</a>
+            " / "
+            <span class="text-slate-300">(&entry.name)</span>
+        </nav>
+
+        <h1 class="mt-3 text-2xl font-semibold tracking-tight">(&entry.name)</h1>
+        <p class="mt-1 font-mono text-xs break-all text-slate-500">(entry.url.as_str())</p>
+        <p class="mt-1 text-sm text-slate-400">"Fetched just now. Nothing here was stored."</p>
+
+        // Bound as `fetched` rather than `feed`, because the `#[page]` attribute
+        // on the feed page puts a unit struct named `feed` in this scope, and
+        // an arm naming it matches that struct instead of binding.
+        match &outcome {
+            Err(error) => <p class="mt-6 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
+                "failed: " (error.to_string())
+            </p>,
+            Ok(fetched) => <div>
+                <p class="mt-6 text-sm text-slate-300">
+                    (format::count(fetched.items.len(), "item", "items"))
+                </p>
+
+                if fetched.items.is_empty() {
+                    <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                        "The feed answered with no item."
+                    </p>
+                } else {
+                    <ul class="mt-4 flex flex-col gap-2">
+                        for item in &fetched.items {
+                            <li class="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                                <span class="font-mono text-sm break-all">(&item.title)</span>
+
+                                <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                                    <span>
+                                        if item.link.scheme() == "magnet" {
+                                            "magnet"
+                                        } else {
+                                            "torrent file"
+                                        }
+                                    </span>
+                                    <span>(format::size(item.size))</span>
+                                    <span>
+                                        if let Some(seeders) = item.seeders {
+                                            (format::count(seeders as usize, "seeder", "seeders"))
+                                        } else {
+                                            "seeders unknown"
+                                        }
+                                    </span>
+                                    <span>(format::age(now, item.published))</span>
+                                </div>
+
+                                <p class="mt-1 font-mono text-xs break-all text-slate-500">
+                                    (item.link.as_str())
+                                </p>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>,
+        }
+    }
 }
 
 /// What the add form posts.
