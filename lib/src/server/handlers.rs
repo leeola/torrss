@@ -9,7 +9,9 @@ use topcoat::{
     context::app_context,
     router::{
         content::Form,
-        error::{RouterErrorExt, bad_request, internal_server_error, not_found, redirect},
+        error::{
+            RouterErrorExt, SeeOther, bad_request, internal_server_error, not_found, see_other,
+        },
         page, path_param, query_params, route,
     },
     view::{class, view},
@@ -293,7 +295,7 @@ struct GrabForm {
 /// listing for the same answer. Doing it before the redirect means the
 /// listing already shows what was just grabbed.
 #[route(POST "/grab")]
-async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<&'static str> {
+async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther> {
     let services = app_context::<Services>(cx);
 
     for entry in IdList::new(Some(&input.selected)).entries() {
@@ -333,12 +335,11 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<&'static 
     )
     .await;
 
-    Err(redirect(feed_url(
+    Ok(see_other(feed_url(
         input.feed.as_deref().filter(|id| !id.is_empty()),
         "",
         "#results",
-    ))
-    .into())
+    )))
 }
 
 /// Where a switch returns the reader after it flips a ruleset.
@@ -352,7 +353,7 @@ struct SwitchReturn {
 /// This posts rather than links because it writes shared state. It redirects
 /// instead of rendering, so a reload never repeats the flip.
 #[route(POST "/admin/rulesets/{ruleset_id}/enabled")]
-async fn set_enabled(cx: &Cx) -> Result<&'static str> {
+async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
     let ruleset = mock::ruleset(path_param::<RulesetId>(cx)).ok_or_not_found()?;
     let back = query_params::<SwitchReturn>(cx)?
         .back
@@ -361,7 +362,7 @@ async fn set_enabled(cx: &Cx) -> Result<&'static str> {
 
     app_context::<RulesetSwitches>(cx).toggle(ruleset.id);
 
-    Err(redirect(back).into())
+    Ok(see_other(back))
 }
 
 /// Checks every registered feed now, then returns to `back`.
@@ -373,7 +374,7 @@ async fn set_enabled(cx: &Cx) -> Result<&'static str> {
 /// transaction keyed on the feed and the item's guid, so two passes converge
 /// on the same rows rather than doubling them.
 #[route(POST "/feeds/check")]
-async fn check_feeds(cx: &Cx) -> Result<&'static str> {
+async fn check_feeds(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
@@ -389,7 +390,7 @@ async fn check_feeds(cx: &Cx) -> Result<&'static str> {
     )
     .await;
 
-    Err(redirect(back).into())
+    Ok(see_other(back))
 }
 
 /// Builds the action a ruleset's switch posts to.
@@ -644,7 +645,7 @@ async fn clients(cx: &Cx) -> Result {
 /// whole table in one transaction, so two passes converge on the snapshot
 /// the client reported last.
 #[route(POST "/admin/torrents/sync")]
-async fn sync_library(cx: &Cx) -> Result<&'static str> {
+async fn sync_library(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
@@ -661,7 +662,7 @@ async fn sync_library(cx: &Cx) -> Result<&'static str> {
     )
     .await;
 
-    Err(redirect(back).into())
+    Ok(see_other(back))
 }
 
 /// Checks one feed now, then returns to `back`.
@@ -670,7 +671,7 @@ async fn sync_library(cx: &Cx) -> Result<&'static str> {
 /// missing feed rather than a failed fetch. The recorded outcome is what
 /// carries the failure to the page.
 #[route(POST "/admin/feeds/{feed_id}/check")]
-async fn check_feed(cx: &Cx) -> Result<&'static str> {
+async fn check_feed(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
@@ -691,7 +692,7 @@ async fn check_feed(cx: &Cx) -> Result<&'static str> {
         return Err(not_found().into());
     }
 
-    Err(redirect(back).into())
+    Ok(see_other(back))
 }
 
 /// What the add form posts.
@@ -706,7 +707,7 @@ struct NewFeed {
 /// A blank name falls back to the URL host, then to the whole URL, so a
 /// registration always has something to show in a chip and a row.
 #[route(POST "/admin/feeds")]
-async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<&'static str> {
+async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<SeeOther> {
     let url = Url::parse(input.url.trim()).map_err(|_| bad_request("the feed URL is not valid"))?;
 
     let name = match input.name.trim() {
@@ -723,7 +724,7 @@ async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<&'static str> {
         .await
         .map_err(internal_server_error)?;
 
-    Err(redirect("/admin/feeds").into())
+    Ok(see_other("/admin/feeds"))
 }
 
 /// Removes a feed, then returns to the list.
@@ -731,7 +732,7 @@ async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<&'static str> {
 /// The stored items outlive the registration, because they record what a
 /// tracker announced rather than who watched for it.
 #[route(POST "/admin/feeds/{feed_id}/remove")]
-async fn remove_feed(cx: &Cx) -> Result<&'static str> {
+async fn remove_feed(cx: &Cx) -> Result<SeeOther> {
     if !app_context::<Arc<FeedRegistry>>(cx)
         .remove(path_param::<FeedId>(cx))
         .await
@@ -740,7 +741,7 @@ async fn remove_feed(cx: &Cx) -> Result<&'static str> {
         return Err(not_found().into());
     }
 
-    Err(redirect("/admin/feeds").into())
+    Ok(see_other("/admin/feeds"))
 }
 
 /// Controls the candidate list under the editor.
