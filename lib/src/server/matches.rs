@@ -263,7 +263,6 @@ pub(super) fn diff<'a>(before: &[Rule], after: &[Rule], title: &'a str) -> Diffe
 /// The value is normalized rather than raw, because that is the form a saved
 /// test asserts and the form the identity stores. A test on the raw capture
 /// passes on a title the library files elsewhere.
-#[allow(dead_code, reason = "the verdict that checks a saved test")]
 pub(super) fn values(rules: &[Rule], title: &str) -> Option<Vec<(String, String)>> {
     Some(read(title, &captures(rules, title)?))
 }

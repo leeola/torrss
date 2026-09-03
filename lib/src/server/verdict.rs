@@ -46,7 +46,6 @@ pub(super) struct Mismatch {
 ///
 /// A field the test does not name is not checked, so a test pins down the one
 /// value the reader cares about and stays silent about the rest.
-#[allow(dead_code, reason = "the test rows the editor renders")]
 pub(super) fn verdict(rules: &[Rule], test: &RulesetTest) -> Verdict {
     let Some(values) = matches::values(rules, &test.title) else {
         return Verdict::Unclaimed;

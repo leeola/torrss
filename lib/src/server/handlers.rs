@@ -33,6 +33,7 @@ use crate::{
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rule},
         query::IdList,
+        verdict::{self, Verdict},
     },
     services::Services,
     store::grabs::{self, Grab},
@@ -1558,6 +1559,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                 </p>
 
                 test_rows(rows: $(rows.get()))
+
+                test_results(draft: $(draft.get()))
             </div>
         </form>
 
@@ -1703,6 +1706,93 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
     view! {
         for (index, test) in posted.tests.iter().enumerate() {
             components::test_row(index: index, test: test, fields: &fields)
+        }
+    }
+}
+
+/// Reports each saved test against the draft the editor holds.
+///
+/// The verdicts follow the draft rather than the rows, so a pattern the
+/// reader is still typing is the one every test runs against. A test flips
+/// between pass and failed under the cursor, with no save in between.
+///
+/// A draft that does not parse renders nothing. The Matches section reports
+/// the same error on the same draft, and one message is enough.
+#[shard]
+async fn test_results(cx: &Cx, draft: String) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+
+    let Ok(posted) = RulesetForm::parse(&draft) else {
+        return view! {};
+    };
+
+    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
+    let fields = draft_fields(template, &posted.fields);
+    let rules = matches::rules(&fields, &Edits::default()).0;
+
+    let judged = posted
+        .tests
+        .iter()
+        .map(|test| (test, verdict::verdict(&rules, test)))
+        .collect::<Vec<_>>();
+
+    let passing = judged
+        .iter()
+        .filter(|(_, verdict)| *verdict == Verdict::Pass)
+        .count();
+
+    view! {
+        if !judged.is_empty() {
+            <div class="border-t border-slate-800 px-4 py-3">
+                <p class="text-xs text-slate-400">
+                    (passing) " of " (judged.len()) " pass"
+                </p>
+
+                <ul class="mt-2 space-y-2">
+                    for (test, verdict) in &judged {
+                        <li>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-mono text-xs text-slate-300">
+                                    (&test.title)
+                                </span>
+                                <span class=(class!(
+                                    "rounded-full px-2 py-0.5 text-xs",
+                                    match verdict {
+                                        Verdict::Pass => "bg-emerald-500/15 text-emerald-300",
+                                        _ => "bg-rose-500/15 text-rose-300",
+                                    },
+                                ))>
+                                    match verdict {
+                                        Verdict::Pass => "pass",
+                                        Verdict::Unclaimed => "not claimed",
+                                        Verdict::Failed(_) => "failed",
+                                    }
+                                </span>
+                            </div>
+
+                            if let Verdict::Failed(mismatches) = verdict {
+                                for mismatch in mismatches {
+                                    <p class="mt-1 text-xs text-slate-500">
+                                        (&mismatch.field) ": expected "
+                                        <span class="font-mono text-slate-400">
+                                            (&mismatch.expected)
+                                        </span>
+                                        match &mismatch.actual {
+                                            Some(actual) => {
+                                                ", read "
+                                                <span class="font-mono text-slate-400">
+                                                    (actual)
+                                                </span>
+                                            },
+                                            None => ", read nothing",
+                                        }
+                                    </p>
+                                }
+                            }
+                        </li>
+                    }
+                </ul>
+            </div>
         }
     }
 }
