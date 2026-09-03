@@ -25,10 +25,9 @@ use crate::ruleset::{Diff, Field, FieldKind, Part, Segment};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
-/// The editor's own controls (`diff`, `pinned`, `replaced`) share the query
-/// string with the field inputs. A key with no `.` in it is one of those, so
-/// it passes through untouched rather than becoming a field named after a
-/// control.
+/// The editor's own control (`diff`) shares the query string with the field
+/// inputs. A key with no `.` in it is that one, so it passes through
+/// untouched rather than becoming a field named after a control.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct Edits(BTreeMap<String, FieldEdit>);
 

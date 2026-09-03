@@ -1,9 +1,8 @@
 //! Query-string helpers for the id lists the pages carry in the URL.
 //!
-//! Selecting a feed result, pinning a candidate, and replacing an inherited
-//! field all live in the query string rather than in browser state. That
-//! keeps a view shareable, and it survives the full page load that every
-//! control triggers.
+//! Selecting a feed result lives in the query string rather than in browser
+//! state. That keeps a view shareable, and it survives the full page load
+//! that every control triggers.
 
 /// A comma-separated id list held in one query parameter.
 #[derive(Clone, Copy)]

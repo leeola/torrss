@@ -1001,12 +1001,6 @@ async fn remove_feed(cx: &Cx) -> Result<SeeOther> {
 struct MatchView {
     /// [`Diff::slug`] of the only state to list, or absent for every state.
     diff: Option<String>,
-
-    /// Comma-separated stored item ids held at the top of the match list.
-    ///
-    /// The ids are the feed items the section matches against, so a pin
-    /// survives an edit that changes which rules claim the title.
-    pinned: Option<String>,
 }
 
 impl MatchView {
@@ -1015,41 +1009,27 @@ impl MatchView {
     }
 
     /// The whole query state, ready to rebuild any link on the page.
-    fn query(&self) -> EditorQuery<'_> {
+    fn query(&self) -> EditorQuery {
         EditorQuery {
             diff: self.filter(),
-            pinned: IdList::new(self.pinned.as_deref()),
         }
     }
 }
 
-/// Every key the editor carries in its URL.
+/// The one key the editor carries in its URL.
 ///
-/// A control rebuilds the whole struct with one field changed rather than
-/// editing a single query key, so changing the filter never drops the pins.
+/// Every link on the page rebuilds itself from this rather than editing the
+/// query string in place, so a control never drops a key it does not name.
 #[derive(Clone, Copy)]
-struct EditorQuery<'a> {
+struct EditorQuery {
     diff: Option<Diff>,
-    pinned: IdList<'a>,
 }
 
-impl EditorQuery<'_> {
+impl EditorQuery {
     fn url(&self, ruleset: &str, anchor: &str) -> String {
-        self.build(ruleset, anchor, self.pinned.as_str())
-    }
-
-    /// The same query with the pin list replaced.
-    fn with_pins(&self, pins: &str, ruleset: &str, anchor: &str) -> String {
-        self.build(ruleset, anchor, pins)
-    }
-
-    fn build(&self, ruleset: &str, anchor: &str, pinned: &str) -> String {
         query::url(
             &format!("/admin/rulesets/{ruleset}"),
-            &[
-                ("diff", self.diff.map_or("", Diff::slug)),
-                ("pinned", pinned),
-            ],
+            &[("diff", self.diff.map_or("", Diff::slug))],
             anchor,
         )
     }
@@ -1085,7 +1065,7 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 /// [`None`] shows Create and no switch, because a ruleset nothing has saved
 /// has nothing to switch on.
 #[component]
-async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'_>) -> Result {
+async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) -> Result {
     let parent = ruleset.and_then(|ruleset| engine.parent(ruleset));
 
     let name = ruleset
@@ -1107,7 +1087,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
     let diff_slug = query
         .diff
         .map_or_else(String::new, |state| state.slug().to_owned());
-    let pinned_raw = query.pinned.as_str().to_owned();
 
     // What the browser posts on the first keystroke: the ruleset's own rows,
     // because a disabled inherited input sends nothing.
@@ -1259,7 +1238,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
         live_matches(
             ruleset: $(ruleset_id),
             diff: $(diff_slug),
-            pinned: $(pinned_raw),
             draft: $(draft.get()),
         )
     }
@@ -1389,13 +1367,7 @@ fn draft_fields<'a>(parent: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Fi
 /// is trusted: the ruleset is looked up rather than taken, and a draft that
 /// does not parse reports itself instead of matching anything.
 #[shard]
-async fn live_matches(
-    cx: &Cx,
-    ruleset: String,
-    diff: String,
-    pinned: String,
-    draft: String,
-) -> Result {
+async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     // An empty id names the ruleset the reader is still creating. Anything
@@ -1446,7 +1418,7 @@ async fn live_matches(
             errors: &errors,
             query: EditorQuery {
                 diff: Diff::from_slug(&diff),
-                pinned: IdList::new(Some(&pinned)),
+
             },
         )
     }
@@ -1454,24 +1426,20 @@ async fn live_matches(
 
 /// The stored titles the edited rules claim, and what the edit changed.
 ///
-/// A pinned title stays visible under every filter. Pinning exists to keep
-/// one name in sight while the patterns above it change.
+/// The list carries whichever diff state the reader chose, or every one of
+/// them when they chose none.
 #[component]
 async fn match_section(
     ruleset: &str,
     matched: &[Match<'_>],
     errors: &[PatternError],
-    query: EditorQuery<'_>,
+    query: EditorQuery,
 ) -> Result {
     let filter = query.diff;
     let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
 
-    let (pinned, rest): (Vec<_>, Vec<_>) = matched
+    let listed: Vec<_> = matched
         .iter()
-        .partition(|one| query.pinned.contains(&one.id.to_string()));
-
-    let listed: Vec<_> = rest
-        .into_iter()
         .filter(|one| filter.is_none_or(|state| one.diff == state))
         .collect();
 
@@ -1496,42 +1464,20 @@ async fn match_section(
 
             <nav class="mt-4 flex flex-wrap gap-2">
                 components::diff_filter(
-                    href: EditorQuery { diff: None, ..query }.url(ruleset, "#matches"),
+                    href: EditorQuery { diff: None }.url(ruleset, "#matches"),
                     label: "All",
                     count: matched.len(),
                     current: filter.is_none(),
                 )
                 for state in Diff::ALL {
                     components::diff_filter(
-                        href: EditorQuery { diff: Some(*state), ..query }.url(ruleset, "#matches"),
+                        href: EditorQuery { diff: Some(*state) }.url(ruleset, "#matches"),
                         label: state.label(),
                         count: count(*state),
                         current: filter == Some(*state),
                     )
                 }
             </nav>
-
-            if !pinned.is_empty() {
-                <div class="mt-4 rounded-lg border border-amber-400/25 bg-amber-400/5 px-3 py-3">
-                    <h3 class="text-xs font-medium tracking-wide text-amber-300/80 uppercase">
-                        "Pinned"
-                    </h3>
-                    <ul class="mt-2 flex flex-col gap-2">
-                        for one in pinned {
-                            components::match_row(
-                                matched: one,
-                                ruleset: ruleset,
-                                pin_href: query.with_pins(
-                                        &query.pinned.toggled(&one.id.to_string()),
-                                        ruleset,
-                                        &format!("#match-{}", one.id),
-                                        ),
-                                pinned: true,
-                            )
-                        }
-                    </ul>
-                </div>
-            }
 
             if listed.is_empty() {
                 <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
@@ -1540,16 +1486,7 @@ async fn match_section(
             } else {
                 <ul class="mt-4 flex flex-col gap-2">
                     for one in listed {
-                        components::match_row(
-                            matched: one,
-                            ruleset: ruleset,
-                            pin_href: query.with_pins(
-                                    &query.pinned.toggled(&one.id.to_string()),
-                                    ruleset,
-                                    &format!("#match-{}", one.id),
-                                    ),
-                            pinned: false,
-                        )
+                        components::match_row(matched: one, ruleset: ruleset)
                     }
                 </ul>
             }

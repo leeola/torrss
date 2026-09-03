@@ -89,17 +89,8 @@ pub(crate) async fn diff_filter(
 }
 
 /// One stored title in the editor, tinted by how the edit changed it.
-///
-/// The pin control is a link rather than a button because pinning lives in
-/// the query string. That keeps the pinned set shareable and survives the
-/// reload that follows every pattern edit.
 #[component]
-pub(crate) async fn match_row(
-    matched: &Match<'_>,
-    ruleset: &str,
-    #[into] pin_href: String,
-    pinned: bool,
-) -> Result {
+pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
     view! {
         <li
             id=(format!("match-{}", matched.id))
@@ -108,21 +99,6 @@ pub(crate) async fn match_row(
                 matched.diff.row_classes(),
             ))
         >
-            <a
-                href=(pin_href)
-                // A bool renders as an HTML boolean attribute, which is present or
-                // absent. ARIA reads the literal strings instead.
-                aria-pressed=(if pinned { "true" } else { "false" })
-                title=(if pinned { "Unpin" } else { "Pin to the top" })
-                class=(class!(
-                    "mt-0.5 shrink-0 rounded-md border px-1.5 py-1 text-xs leading-none transition-colors",
-                    "border-amber-400/50 bg-amber-400/10 text-amber-300" if pinned
-                        else "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
-                ))
-            >
-                "pin"
-            </a>
-
             <div class="min-w-0 flex-1">
                 filename(segments: &matched.segments, ruleset: ruleset)
 
