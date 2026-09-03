@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use tracing::{info, instrument, warn};
 
-use crate::clock::Clock;
+use crate::clock::{self, Clock};
 use crate::rules::Engine;
 use crate::ruleset::registry::Rulesets;
 use crate::store::library;
@@ -232,9 +232,48 @@ fn count(value: usize) -> Result<i64, sqlx::Error> {
     i64::try_from(value).map_err(|error| sqlx::Error::Encode(Box::new(error)))
 }
 
-/// Scans the library forever, pausing `interval` between passes.
+/// Scans the library when the last scan is older than `interval`, and returns
+/// how long to wait before the next one falls due.
 ///
-/// The pause runs after a pass rather than on a fixed schedule, so a slow
+/// A library never scanned is due at once. The status persists, so this reads
+/// what the last process already did, which is what makes a restart cheap.
+///
+/// The wait is measured after the pass, over the status it just wrote, so a
+/// pass that took minutes shortens the wait by what it spent. It never drops
+/// below [`clock::MIN_PAUSE`]. A status that fails to store leaves the library
+/// due forever, and the floor is what keeps that from spinning the loop.
+pub(crate) async fn scan_due(
+    state: &ScanState,
+    pool: &SqlitePool,
+    client: &dyn TorrentClient,
+    clock: &dyn Clock,
+    engine: &Engine,
+    interval: Duration,
+) -> Duration {
+    let now = clock.now();
+    let due = state
+        .last()
+        .is_none_or(|last| clock::remaining(interval, last.at, now).is_zero());
+
+    if due {
+        scan(state, pool, client, clock, engine).await;
+    }
+
+    state
+        .last()
+        .map_or(interval, |last| {
+            clock::remaining(interval, last.at, clock.now())
+        })
+        .max(clock::MIN_PAUSE)
+}
+
+/// Scans the library forever, waiting until the next scan falls due.
+///
+/// The first turn skips a scan the last process ran within `interval`, and
+/// the wait ends when that scan reaches it. A restart therefore neither lists
+/// the whole client at once nor waits a whole interval.
+///
+/// The wait runs after a pass rather than on a fixed schedule, so a slow
 /// client delays the next pass instead of stacking passes on top of each
 /// other.
 ///
@@ -251,15 +290,17 @@ pub(crate) async fn poll(
     interval: Duration,
 ) {
     loop {
-        scan(
+        let pause = scan_due(
             &state,
             &pool,
             client.as_ref(),
             clock.as_ref(),
             &rulesets.engine(),
+            interval,
         )
         .await;
-        clock.sleep(interval).await;
+
+        clock.sleep(pause).await;
     }
 }
 
@@ -279,10 +320,11 @@ fn identify(torrent: &Torrent, engine: &Engine) -> Option<Owned> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::time::Duration;
 
     use sqlx::SqlitePool;
 
-    use super::{ScanReport, ScanState, ScanStatus, scan};
+    use super::{ScanReport, ScanState, ScanStatus, scan, scan_due};
     use crate::clock::Clock;
     use crate::ruleset::fixture::ENGINE;
     use crate::services::Services;
@@ -382,6 +424,67 @@ mod tests {
             ScanState::load(&services.db).await.expect("load").last(),
             Some(failed),
             "a failure replaces the counts, error text and all"
+        );
+    }
+
+    const INTERVAL: Duration = Duration::from_secs(900);
+
+    async fn due(services: &Services, state: &ScanState) -> Duration {
+        scan_due(
+            state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+            INTERVAL,
+        )
+        .await
+    }
+
+    #[sqlx::test]
+    async fn scan_due_skips_a_recent_scan(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = ScanState::load(&services.db).await.expect("load");
+        fakes.torrents.seed(HOLLOW);
+
+        let first = scan(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        fakes.clock.advance(Duration::from_secs(300));
+
+        assert_eq!(
+            due(&services, &state).await,
+            Duration::from_secs(600),
+            "ten of the fifteen minutes are left to run"
+        );
+        assert_eq!(
+            state.last().map(|last| last.at),
+            Some(first.at),
+            "the scan five minutes ago still stands, so none ran"
+        );
+    }
+
+    #[sqlx::test]
+    async fn scan_due_scans_when_nothing_is_recorded(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = ScanState::load(&services.db).await.expect("load");
+        fakes.torrents.seed(HOLLOW);
+
+        assert_eq!(
+            due(&services, &state).await,
+            INTERVAL,
+            "the scan it just ran starts the interval over"
+        );
+        assert_eq!(
+            state.last().map(|last| last.at),
+            Some(fakes.clock.now()),
+            "a library never scanned is due at once"
         );
     }
 
