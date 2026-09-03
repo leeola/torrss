@@ -393,16 +393,17 @@ pub(crate) async fn field_row(
                 <input
                     type="text"
                     name=(format!("{}.pattern", field.name))
-                    value=(field.pattern)
-                    disabled=(locked)
+                    value=(field.matcher())
+                    disabled=(locked || field.pattern.is_none())
+                    title=(field.pattern.is_none().then_some("The kind supplies this pattern"))
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
                 >
                 match resolved.source {
                     FieldSource::Overridden { parent } => <p
                         class="mt-1 truncate font-mono text-[11px] text-slate-600"
-                        title=(parent.pattern)
+                        title=(parent.matcher())
                     >
-                        "replaces " (parent.pattern)
+                        "replaces " (parent.matcher())
                     </p>,
                     _ => "",
                 }

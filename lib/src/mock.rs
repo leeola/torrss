@@ -370,7 +370,15 @@ pub(crate) struct Field {
     pub(crate) name: &'static str,
     pub(crate) part: Part,
     pub(crate) kind: FieldKind,
-    pub(crate) pattern: &'static str,
+
+    /// The regex this field reads its value with, or `None` to take the
+    /// pattern its kind supplies.
+    ///
+    /// A pattern declared on a premade kind wins over the built-in one. That
+    /// is how a child ruleset narrows a season to a single constant while
+    /// keeping the kind's normalization.
+    pub(crate) pattern: Option<&'static str>,
+
     pub(crate) required: bool,
 
     /// Whether this field is part of the key that decides whether two
@@ -381,18 +389,46 @@ pub(crate) struct Field {
     pub(crate) identity: bool,
 }
 
+impl Field {
+    /// Returns the regex that reads this field's value.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the field declares no pattern and its kind supplies none.
+    /// The rulesets are checked in beside the code, so a text field without a
+    /// pattern is a programming error rather than bad input.
+    pub(crate) fn matcher(&self) -> &'static str {
+        self.pattern
+            .or_else(|| self.kind.pattern())
+            .expect("a field with no pattern has a premade kind")
+    }
+}
+
 /// How a matched string converts before the rest of the app sees it.
+///
+/// [`Self::Season`] and [`Self::Episode`] are premade kinds: each carries its
+/// own pattern, so a ruleset names the kind and writes no regex. Every other
+/// kind leaves the pattern to the field.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldKind {
     Text,
     Number,
     Enum,
     Boolean,
+    Season,
+    Episode,
 }
 
 impl FieldKind {
     /// Every kind, in the order the editor's dropdown lists them.
-    pub(crate) const ALL: &'static [Self] = &[Self::Text, Self::Number, Self::Enum, Self::Boolean];
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::Text,
+        Self::Number,
+        Self::Enum,
+        Self::Boolean,
+        Self::Season,
+        Self::Episode,
+    ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -400,6 +436,30 @@ impl FieldKind {
             Self::Number => "number",
             Self::Enum => "enum",
             Self::Boolean => "boolean",
+            Self::Season => "season",
+            Self::Episode => "episode",
+        }
+    }
+
+    /// Returns the pattern the kind supplies, or `None` when the field has to
+    /// declare one.
+    ///
+    /// The season pattern reads `S01`, `S1`, `S01E02`, `Season.1`, and
+    /// `Season 1`. It refuses `S123` and a bare year, because a season number
+    /// runs to two digits and a year carries no `S`. The episode pattern
+    /// requires the season prefix, so a loose number elsewhere in a title
+    /// never reads as an episode.
+    ///
+    /// Each pattern names its capture group after the field the shipped
+    /// rulesets give it. A ruleset that names the field something else still
+    /// reads it, because `captures` in [`crate::rules`] falls back to group 1.
+    pub(crate) fn pattern(self) -> Option<&'static str> {
+        match self {
+            Self::Season => {
+                Some(r"(?i)(?:^|[. _-])(?:S|Season[. _]?)(?<season>\d{1,2})(?:E\d|[. _-]|$)")
+            }
+            Self::Episode => Some(r"(?i)S\d{1,2}E(?<episode>\d{1,3})"),
+            Self::Text | Self::Number | Self::Enum | Self::Boolean => None,
         }
     }
 }
@@ -407,4 +467,66 @@ impl FieldKind {
 /// Finds the ruleset named by `id`.
 pub(crate) fn ruleset(id: &str) -> Option<&'static Ruleset> {
     RULESETS.iter().find(|ruleset| ruleset.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use regex::Regex;
+
+    use super::FieldKind;
+
+    /// Reads `title` through the pattern `kind` supplies, as the engine does.
+    fn read(kind: FieldKind, title: &str) -> Option<String> {
+        let regex = Regex::new(kind.pattern().expect("a premade kind")).expect("a valid regex");
+
+        regex
+            .captures(title)
+            .and_then(|caps| caps.name(kind.label()).or_else(|| caps.get(1)))
+            .map(|value| value.as_str().to_owned())
+    }
+
+    #[test]
+    fn season_kind_reads_each_form() {
+        let titles = [
+            "Show.S01.mkv",
+            "Show.S1E1",
+            "Show.S01E02",
+            "Show.Season.1",
+            "Show Season 1",
+            "Show.S123.mkv",
+            "Coastal.Drift.2024.1080p",
+        ];
+
+        assert_eq!(
+            titles
+                .iter()
+                .map(|title| read(FieldKind::Season, title))
+                .collect::<Vec<_>>(),
+            [
+                Some("01".to_owned()),
+                Some("1".to_owned()),
+                Some("01".to_owned()),
+                Some("1".to_owned()),
+                Some("1".to_owned()),
+                None,
+                None,
+            ],
+            "season read from each title"
+        );
+    }
+
+    #[test]
+    fn episode_kind_needs_a_season_prefix() {
+        assert_eq!(
+            read(FieldKind::Episode, "Show.S04E06"),
+            Some("06".to_owned()),
+            "episode behind a season"
+        );
+
+        assert_eq!(
+            read(FieldKind::Episode, "[OpenReel] Coastal.Ecology - 18"),
+            None,
+            "loose number with no season"
+        );
+    }
 }

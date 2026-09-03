@@ -186,7 +186,7 @@ impl CompiledField {
             kind: field.kind,
             required: field.required,
             identity: field.identity,
-            regex: Regex::new(field.pattern)?,
+            regex: Regex::new(field.matcher())?,
         })
     }
 }
@@ -224,8 +224,12 @@ fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(&'static str, String
 /// `The Hollow Meridian`, and the two capitalize differently. Collapsing
 /// separators and case is what makes those one release rather than two.
 fn normalize(kind: FieldKind, raw: &str) -> String {
-    if kind == FieldKind::Number {
-        // A season reads `S04` on one side and `S4` on the other.
+    if matches!(
+        kind,
+        FieldKind::Number | FieldKind::Season | FieldKind::Episode
+    ) {
+        // A season or an episode reads with a leading zero on one side and
+        // without it on the other.
         if let Ok(number) = raw.trim_start_matches('0').parse::<u64>() {
             return number.to_string();
         }
