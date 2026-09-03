@@ -8,7 +8,7 @@
 //! more, so a row the reader removed leaves a gap rather than renumbering
 //! every row after it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use snafu::{OptionExt, Snafu, ensure};
 use url::form_urlencoded;
@@ -55,6 +55,9 @@ pub(crate) enum FormError {
 
     #[snafu(display("field {field} needs a pattern, because its type supplies none"))]
     MissingPattern { field: String },
+
+    #[snafu(display("two fields are named {field}"))]
+    DuplicateName { field: String },
 }
 
 /// One field row as the form posted it, before it becomes a [`Field`].
@@ -147,6 +150,10 @@ impl RulesetForm {
     /// is no template. A template keeps that blank for the ruleset built on
     /// it to fill.
     ///
+    /// Returns a refusal when two rows name one field. The name keys the
+    /// identity, the test columns, and the override lookup, so two rows named
+    /// alike are one field carrying two patterns.
+    ///
     /// A row with an empty name is skipped rather than refused, because that
     /// is what an added row looks like before the reader fills it in. The
     /// editor lists such a row through [`EditorRows`], which keeps it.
@@ -158,16 +165,29 @@ impl RulesetForm {
 
         let template = posted.template;
 
+        let fields = posted
+            .rows
+            .into_values()
+            .filter(|row| !row.name.trim().is_empty())
+            .map(|row| field(row, template))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Only the own rows are checked. A name that repeats a template's
+        // field is an override, which `Ruleset::resolved_fields` matches by
+        // that same name.
+        let mut seen = BTreeSet::new();
+        for field in &fields {
+            ensure!(
+                seen.insert(field.name.as_str()),
+                DuplicateNameSnafu { field: &field.name }
+            );
+        }
+
         Ok(Self {
             name,
             template,
             based_on: Some(posted.based_on.trim().to_owned()).filter(|id| !id.is_empty()),
-            fields: posted
-                .rows
-                .into_values()
-                .filter(|row| !row.name.trim().is_empty())
-                .map(|row| field(row, template))
-                .collect::<Result<Vec<_>, _>>()?,
+            fields,
             // A blank title is a row the reader added and has not filled in,
             // and a blank expectation is an input they left alone. Neither
             // asserts that the value is empty.
@@ -637,6 +657,29 @@ mod tests {
                 }],
             },
             "an added row lists under the first part and kind, and the page needs no name yet"
+        );
+    }
+
+    #[test]
+    fn two_rows_with_one_name_are_refused() {
+        assert_eq!(
+            RulesetForm::parse(
+                "name=Films&field.0.name=year&field.0.kind=number&field.0.pattern=x\
+                 &field.1.name=year&field.1.kind=number&field.1.pattern=y"
+            ),
+            Err(FormError::DuplicateName {
+                field: "year".to_owned()
+            }),
+            "one name is one field, so a second row under it has no rule of its own"
+        );
+
+        assert!(
+            RulesetForm::parse(
+                "name=Films&field.0.name=year&field.0.kind=number&field.0.pattern=x\
+                 &field.1.name=Year&field.1.kind=number&field.1.pattern=y"
+            )
+            .is_ok(),
+            "a name is compared as typed, because that is how the rules look it up"
         );
     }
 }
