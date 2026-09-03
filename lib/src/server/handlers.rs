@@ -636,7 +636,8 @@ async fn admin(cx: &Cx) -> Result {
                 <h1 class="text-2xl font-semibold tracking-tight">"Rulesets"</h1>
                 <p class="mt-1 text-sm text-slate-400">
                     "A ruleset decides which filenames it claims and which parts it pulls out of
-                    them. A disabled ruleset filters nothing, so its releases stay out of the feed."
+                    them. A disabled ruleset filters nothing, so its releases stay out of the feed.
+                    A template claims nothing. It is what other rulesets are based on."
                 </p>
             </div>
             <a
@@ -659,6 +660,7 @@ async fn admin(cx: &Cx) -> Result {
                         template: engine.template_of(root),
                         nested: false,
                         enabled: root.enabled,
+                        is_template: root.template,
                     )
 
                     for derived in engine.derived(root) {
@@ -667,6 +669,7 @@ async fn admin(cx: &Cx) -> Result {
                             template: Some(root),
                             nested: true,
                             enabled: derived.enabled,
+                            is_template: derived.template,
                         )
                     }
                 }
@@ -1230,12 +1233,13 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
     let stored_id = ruleset_id.clone();
     let enabled_now = ruleset.is_some_and(|ruleset| ruleset.enabled);
+    let is_template = ruleset.is_some_and(|ruleset| ruleset.template);
 
     // What the browser posts on the first keystroke: the ruleset's own rows,
     // because a disabled inherited input sends nothing.
     let initial_draft = RulesetForm {
         name: name.clone(),
-        template: ruleset.is_some_and(|ruleset| ruleset.template),
+        template: is_template,
         based_on: ruleset.and_then(|ruleset| ruleset.based_on.clone()),
         fields: ruleset
             .map(|ruleset| ruleset.fields.clone())
@@ -1319,7 +1323,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         // signal and both have to agree without a reload.
                         // Each branch is one whole string, because the
                         // Tailwind scanner reads class names out of literals.
-                        if ruleset.is_some() {
+                        //
+                        // A template carries no state to report, because it
+                        // claims nothing and switching it decides nothing.
+                        if ruleset.is_some() && !is_template {
                             <span :class=$(if enabled.get() {
                                 "rounded-full px-2 py-0.5 text-xs bg-emerald-500/15 text-emerald-300"
                             } else {
@@ -1330,27 +1337,52 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         }
                     </div>
 
-                    <label for="based_on" class="mt-3 block text-xs text-slate-500">
+                    // The handler is the select's below. A blank pattern
+                    // becomes legal the moment this is checked, so the rows
+                    // and the matches both re-read the form.
+                    <label class="mt-3 flex items-center gap-2 text-sm text-slate-300">
+                        <input
+                            type="checkbox"
+                            name="template"
+                            checked=(is_template)
+                            @input=$(|_e: Event| {
+                                rows.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
+                                draft.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
+                            })
+                            class="size-4 rounded border-slate-700 bg-slate-950"
+                        >
                         "Template"
                     </label>
+                    <p class="mt-1 text-xs text-slate-500">
+                        "A template claims nothing. Rulesets based on it carry its fields and fill
+                        in the ones it leaves blank."
+                    </p>
+
+                    <label for="based_on" class="mt-3 block text-xs text-slate-500">
+                        "Based on"
+                    </label>
+                    // Disabled on a template, which is based on nothing. A
+                    // disabled select posts no value, which is the value a
+                    // template needs.
                     <select
                         id="based_on"
                         name="based_on"
+                        disabled=(is_template)
                         @input=$(|_e: Event| {
                             rows.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
                             draft.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
                         })
-                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none disabled:text-slate-500"
                     >
                         <option value="" selected=(based_on.is_empty())>
                             "None. Declare every field here."
                         </option>
-                        // Only a root is offered, and a root is based on
-                        // nothing, so the one chain a choice here closes is
-                        // onto itself.
-                        for root in engine.roots().filter(|root| root.id != ruleset_id) {
-                            <option value=(&root.id) selected=(root.id == based_on)>
-                                (&root.name) " (" (root.fields.len()) " fields)"
+                        // Only a template is offered, because only a template
+                        // serves as one. A template is based on nothing, so
+                        // the one chain a choice here closes is onto itself.
+                        for template in engine.templates().filter(|one| one.id != ruleset_id) {
+                            <option value=(&template.id) selected=(template.id == based_on)>
+                                (&template.name) " (" (template.fields.len()) " fields)"
                             </option>
                         }
                     </select>
@@ -1405,25 +1437,29 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             >
                                 $(if saving.get() { "Saving..." } else { "Save" })
                             </button>
-                            <button
-                                type="button"
-                                :title=$(if enabled.get() {
-                                    "Stop this ruleset filtering feed results"
-                                } else {
-                                    "Let this ruleset filter feed results"
-                                })
-                                :class=$(if enabled.get() {
-                                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                                } else {
-                                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200"
-                                })
-                                @click=$(async |_e: Event| {
-                                    let state = switch_ruleset(switch_id.get()).await;
-                                    enabled.set(state);
-                                })
-                            >
-                                $(if enabled.get() { "Disable" } else { "Enable" })
-                            </button>
+                            // A template carries no switch. It claims nothing,
+                            // so there is nothing for one to start or stop.
+                            if !is_template {
+                                <button
+                                    type="button"
+                                    :title=$(if enabled.get() {
+                                        "Stop this ruleset filtering feed results"
+                                    } else {
+                                        "Let this ruleset filter feed results"
+                                    })
+                                    :class=$(if enabled.get() {
+                                        "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                                    } else {
+                                        "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                                    })
+                                    @click=$(async |_e: Event| {
+                                        let state = switch_ruleset(switch_id.get()).await;
+                                        enabled.set(state);
+                                    })
+                                >
+                                    $(if enabled.get() { "Disable" } else { "Enable" })
+                                </button>
+                            }
                             // A submit button naming its own action, because
                             // the editor's form already wraps this and HTML
                             // forbids a form inside a form. It skips

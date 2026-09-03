@@ -207,6 +207,11 @@ impl Engine {
             .filter(|ruleset| ruleset.based_on.is_none())
     }
 
+    /// Every template, which is what a ruleset is allowed to be based on.
+    pub(crate) fn templates(&self) -> impl Iterator<Item = &Ruleset> {
+        self.source.iter().filter(|ruleset| ruleset.template)
+    }
+
     /// Every ruleset built on `template`.
     pub(crate) fn derived<'a>(
         &'a self,

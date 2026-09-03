@@ -503,6 +503,7 @@ pub(crate) async fn ruleset_card(
     template: Option<&Ruleset>,
     nested: bool,
     enabled: bool,
+    is_template: bool,
 ) -> Result {
     view! {
         <li
@@ -519,7 +520,15 @@ pub(crate) async fn ruleset_card(
             >
                 <div class="flex flex-wrap items-center gap-3">
                     <h2 class="text-sm font-semibold text-slate-100">(&ruleset.name)</h2>
-                    status_badge(enabled: enabled)
+                    // A template shows what it is rather than whether it runs,
+                    // because it claims nothing and carries no switch.
+                    if is_template {
+                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                            "template"
+                        </span>
+                    } else {
+                        status_badge(enabled: enabled)
+                    }
                     match template {
                         Some(template) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
                             "based on " (&template.name)
