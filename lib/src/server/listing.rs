@@ -102,9 +102,9 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 
 /// Decides where `title` stands.
 ///
-/// Interest follows the most specific claimant alone. A disabled ruleset
-/// hides its show even while its template stays enabled, because the ruleset
-/// is what describes this release and an enabled template never rescues it.
+/// Interest follows the claimant alone. A template claims nothing, so it
+/// never appears among the claimants and the enabled set never names one:
+/// switching a template on or off decides nothing by itself.
 ///
 /// A release counts as owned when the library holds it or any span around it.
 /// A stored season pack therefore owns each episode of that season, while a
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &enabled(&["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-hollow-meridian"]),
                 &HashSet::new(),
                 HOLLOW_1080,
             ),
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &enabled(&["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-hollow-meridian"]),
                 &owned_of(HOLLOW_1080),
                 HOLLOW_1080,
             ),
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &enabled(&["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-hollow-meridian"]),
                 &owned_of(HOLLOW_PACK),
                 HOLLOW_1080,
             ),
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &enabled(&["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-hollow-meridian"]),
                 &owned_of(HOLLOW_1080),
                 HOLLOW_PACK,
             ),
@@ -227,34 +227,24 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_ruleset_hides_what_its_enabled_template_claims() {
+    fn a_disabled_ruleset_hides_what_it_claims() {
         let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
             unreachable!()
         };
 
         assert_eq!(
-            standing(
-                &ENGINE,
-                &enabled(&["series-episodes"]),
-                &HashSet::new(),
-                HOLLOW_1080,
-            ),
+            standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_1080),
             Standing::Disabled(expected),
-            "the ruleset claims this title, so an enabled template changes nothing"
+            "the ruleset that claims this title is switched off"
         );
     }
 
     #[test]
-    fn an_enabled_template_wants_what_the_ruleset_on_it_refuses() {
+    fn title_only_the_template_describes_is_unmatched() {
         assert_eq!(
-            standing(
-                &ENGINE,
-                &enabled(&["series-episodes"]),
-                &HashSet::new(),
-                HOLLOW_720,
-            ),
-            parsed(HOLLOW_720),
-            "the ruleset requires 1080p, so its template is the most specific claimant"
+            standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_720),
+            Standing::Unmatched,
+            "the ruleset requires 1080p, and the template it is based on claims nothing"
         );
     }
 

@@ -269,7 +269,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the download answered with status 403".to_owned()),
-                    rulesets: vec!["series-episodes".to_owned()],
+                    rulesets: Vec::new(),
                 }
             )]),
             "a failed attempt is recorded, with the reason"
@@ -307,7 +307,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the torrent client rejected the request: duplicate".to_owned()),
-                    rulesets: vec!["series-episodes".to_owned()],
+                    rulesets: Vec::new(),
                 }
             )]),
             "the client's own words are what the page shows"
@@ -339,14 +339,14 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
-                    rulesets: vec!["series-episodes".to_owned()],
+                    rulesets: Vec::new(),
                 }
             )])
         );
     }
 
     #[sqlx::test]
-    async fn grab_records_every_claimant_most_specific_first(pool: SqlitePool) {
+    async fn grab_records_every_claimant(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let item = stored(
             &services.db,
@@ -374,13 +374,10 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
-                    rulesets: vec![
-                        "series-hollow-meridian".to_owned(),
-                        "series-episodes".to_owned(),
-                    ],
+                    rulesets: vec!["series-hollow-meridian".to_owned()],
                 }
             )]),
-            "the ruleset ranks ahead of the template it is based on"
+            "the template claims nothing, so only the show ruleset is recorded"
         );
     }
 

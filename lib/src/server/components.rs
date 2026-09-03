@@ -126,11 +126,11 @@ pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
 /// and the rulesets all live outside this module, so the page resolves them
 /// and this carries the answers.
 pub(crate) struct ItemDetails {
-    /// Every ruleset that claims the title, most specific first.
+    /// Every ruleset that claims the title, in declaration order.
     ///
-    /// A ruleset and the template it is based on both claim the same
-    /// release. Listing only the winner makes the template read as a ruleset
-    /// that never fires.
+    /// A template claims nothing, so it never appears. Two rulesets that both
+    /// claim one release do, and the first declared is the one that parsed
+    /// it, so listing all of them shows the reader the overlap they wrote.
     pub rulesets: Vec<Claimant>,
 
     /// What the claiming ruleset read out of the title, in its field order.
@@ -169,7 +169,7 @@ pub(crate) struct Grabbed {
     pub age: String,
 
     /// The ids of the rulesets that claimed the release when it was
-    /// grabbed, most specific first.
+    /// grabbed, in declaration order.
     ///
     /// Kept apart from [`ItemDetails::rulesets`], which says what claims the
     /// title now. The two agree while the rulesets are static, and they part

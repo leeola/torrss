@@ -205,6 +205,15 @@ mod tests {
     use crate::ruleset::store::RulesetStore;
     use crate::ruleset::{Field, FieldKind, Part, Ruleset};
 
+    /// The same shape as [`ruleset`], marked as a template so a ruleset is
+    /// allowed to be based on it.
+    fn template(id: &str, pattern: &str) -> Ruleset {
+        Ruleset {
+            template: true,
+            ..ruleset(id, None, pattern)
+        }
+    }
+
     fn ruleset(id: &str, based_on: Option<&str>, pattern: &str) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
@@ -274,9 +283,9 @@ mod tests {
     async fn removing_a_template_a_ruleset_is_based_on_is_refused(pool: SqlitePool) {
         let rulesets = loaded(&pool).await;
         rulesets
-            .save(ruleset("series", None, r"^(?<show>\w+)"))
+            .save(template("series", r"^(?<show>\w+)"))
             .await
-            .expect("the base");
+            .expect("the template");
         rulesets
             .save(ruleset("archive", Some("series"), "^Ashfall"))
             .await
@@ -325,13 +334,13 @@ mod tests {
         );
     }
 
-    /// A cycle is the only shape a stored set takes that does not compile.
+    /// The `based_on` foreign key refuses a template no row carries, but not
+    /// one that names a ruleset which is no template.
     ///
-    /// The `based_on` foreign key already refuses a template no row carries,
-    /// so a dangling template never reaches the table. Two rulesets based on
-    /// each other satisfy the key and still describe no chain.
+    /// That is the shape a stored set takes that the key permits and the
+    /// engine still refuses, so the load is where it surfaces.
     #[sqlx::test]
-    async fn a_stored_cycle_fails_the_load(pool: SqlitePool) {
+    async fn a_stored_ruleset_based_on_a_non_template_fails_the_load(pool: SqlitePool) {
         let store = RulesetStore::new(pool.clone());
         store
             .upsert(&ruleset("first", None, "^First"))
@@ -340,15 +349,11 @@ mod tests {
         store
             .upsert(&ruleset("second", Some("first"), "^Second"))
             .await
-            .expect("the second");
-        store
-            .upsert(&ruleset("first", Some("second"), "^First"))
-            .await
-            .expect("a loop written past the registry");
+            .expect("a ruleset based on a ruleset");
 
         assert!(
             matches!(Rulesets::load(store).await, Err(LoadError::Engine { .. })),
-            "the load stops the process rather than hanging in the walk"
+            "only a template serves as one"
         );
     }
 }

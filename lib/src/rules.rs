@@ -8,18 +8,18 @@
 //! identity. Normalizing them keeps punctuation and case from turning one
 //! episode into two.
 
-use std::cmp::Reverse;
 use std::fmt::{self, Display};
 
 use regex::Regex;
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{OptionExt, ResultExt, Snafu, ensure};
 
 use crate::ruleset::{Field, FieldKind, Ruleset};
 
 /// What one ruleset made of a release name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
-    /// The ruleset that claimed the name, which is the most specific one.
+    /// The ruleset that claimed the name, which is the first one declared
+    /// that does.
     pub(crate) ruleset: String,
 
     /// Every field that matched, in the ruleset's own order.
@@ -32,8 +32,8 @@ pub(crate) struct Parsed {
 ///
 /// The ruleset here is the template when the claimant has one, rather than
 /// the ruleset that claimed the name. Every ruleset built on one template
-/// therefore shares one namespace of releases, so an episode claimed by the
-/// template and the same episode claimed by a ruleset on it are one release.
+/// therefore shares one namespace of releases, so the same episode claimed
+/// by two rulesets on one template is one release.
 ///
 /// A trailing empty part makes the identity a span rather than one release. A
 /// season pack captures a show and a season and no episode, so its key ends
@@ -91,7 +91,10 @@ impl Display for Identity {
     }
 }
 
-/// Every ruleset, compiled and ordered most specific first.
+/// Every ruleset that claims titles, compiled in declaration order.
+///
+/// A template is not among them. It describes the fields the rulesets on it
+/// resolve against, and claims nothing itself.
 pub(crate) struct Engine {
     rulesets: Vec<Compiled>,
 
@@ -118,18 +121,21 @@ pub(crate) enum EngineError {
     #[snafu(display("ruleset {ruleset} is based on {template}, which does not exist"))]
     UnknownTemplate { ruleset: String, template: String },
 
-    #[snafu(display("ruleset {ruleset} is based on itself through a cycle"))]
-    Cycle { ruleset: String },
+    #[snafu(display("ruleset {ruleset} is based on {template}, which is not a template"))]
+    NotATemplate { ruleset: String, template: String },
+
+    #[snafu(display(
+        "template {ruleset} is based on another template, and a template stands alone"
+    ))]
+    NestedTemplate { ruleset: String },
 }
 
 struct Compiled {
     id: String,
 
-    /// The template at the root, which names the identity.
+    /// The template this ruleset is based on, which names the identity, or
+    /// the ruleset's own id when it is based on nothing.
     root: String,
-
-    /// How many templates this one is built on, which orders the list.
-    depth: usize,
 
     fields: Vec<CompiledField>,
 }
@@ -143,23 +149,29 @@ struct CompiledField {
 }
 
 impl Engine {
-    /// Compiles every ruleset, most specific first.
+    /// Compiles the rulesets that are not templates, in declaration order.
     ///
-    /// The sort is stable and by depth, so a ruleset precedes the template
-    /// it is based on while declaration order breaks ties among equals.
+    /// A template claims nothing, so it never reaches the compiled list. Its
+    /// patterns still compile, because the reader edits them and a bad regex
+    /// belongs to the template that carries it rather than to the first
+    /// ruleset that inherits it.
     ///
     /// # Errors
     ///
     /// Returns the first ruleset that names a template no other ruleset
-    /// declares, that is based on itself through a cycle, or that carries a
-    /// pattern the regex engine rejects.
+    /// declares, that is based on a ruleset that is not a template, that is
+    /// a template based on another, or that carries a pattern the regex
+    /// engine rejects.
     pub(crate) fn from_rulesets(rulesets: Vec<Ruleset>) -> Result<Self, EngineError> {
-        let mut compiled = rulesets
-            .iter()
-            .map(|ruleset| Compiled::new(ruleset, &rulesets))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut compiled = Vec::new();
 
-        compiled.sort_by_key(|ruleset| Reverse(ruleset.depth));
+        for ruleset in &rulesets {
+            if ruleset.template {
+                check_template(ruleset)?;
+            } else {
+                compiled.push(Compiled::new(ruleset, &rulesets)?);
+            }
+        }
 
         Ok(Self {
             rulesets: compiled,
@@ -200,7 +212,10 @@ impl Engine {
             .filter(move |one| one.based_on.as_deref() == Some(template.id.as_str()))
     }
 
-    /// Lists every ruleset that claims `title`, most specific first.
+    /// Lists every ruleset that claims `title`, in declaration order.
+    ///
+    /// A template claims nothing, so one never appears here even when the
+    /// ruleset built on it does.
     pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
         self.rulesets
             .iter()
@@ -209,7 +224,10 @@ impl Engine {
             .collect()
     }
 
-    /// Parses `title` with the most specific ruleset that claims it.
+    /// Parses `title` with the first declared ruleset that claims it.
+    ///
+    /// Two rulesets that both claim one title are a set the reader wrote to
+    /// overlap, and declaration order is what settles it.
     pub(crate) fn parse(&self, title: &str) -> Option<Parsed> {
         self.rulesets.iter().find_map(|ruleset| {
             let values = captures(ruleset, title)?;
@@ -224,45 +242,37 @@ impl Engine {
 }
 
 impl Compiled {
-    /// Walks `ruleset` to the template at the root and compiles its fields.
+    /// Resolves `ruleset` against its template and compiles its fields.
     ///
-    /// The walk is bounded by the number of rulesets, because a stored set
-    /// can name a chain of templates that loops back on itself. An unbounded
-    /// walk would hang the process on data a reader saved.
+    /// One lookup reaches the template, because a template stands alone.
+    /// There is no chain to walk, and therefore none to loop.
     fn new(ruleset: &Ruleset, rulesets: &[Ruleset]) -> Result<Self, EngineError> {
-        let find = |id: &str| rulesets.iter().find(|candidate| candidate.id == id);
-
         let template = match &ruleset.based_on {
-            Some(id) => Some(find(id).context(UnknownTemplateSnafu {
-                ruleset: ruleset.id.clone(),
-                template: id.clone(),
-            })?),
+            Some(id) => {
+                let found = rulesets
+                    .iter()
+                    .find(|candidate| &candidate.id == id)
+                    .context(UnknownTemplateSnafu {
+                        ruleset: ruleset.id.clone(),
+                        template: id.clone(),
+                    })?;
+
+                ensure!(
+                    found.template,
+                    NotATemplateSnafu {
+                        ruleset: ruleset.id.clone(),
+                        template: id.clone(),
+                    }
+                );
+
+                Some(found)
+            }
             None => None,
         };
 
-        let mut root = ruleset;
-        let mut depth = 0;
-
-        while let Some(id) = &root.based_on {
-            root = find(id).context(UnknownTemplateSnafu {
-                ruleset: root.id.clone(),
-                template: id.clone(),
-            })?;
-
-            depth += 1;
-
-            if depth > rulesets.len() {
-                return CycleSnafu {
-                    ruleset: ruleset.id.clone(),
-                }
-                .fail();
-            }
-        }
-
         Ok(Self {
             id: ruleset.id.clone(),
-            root: root.id.clone(),
-            depth,
+            root: template.map_or_else(|| ruleset.id.clone(), |found| found.id.clone()),
             fields: ruleset
                 .resolved_fields(template)
                 .into_iter()
@@ -294,6 +304,29 @@ impl Compiled {
                 .collect(),
         }
     }
+}
+
+/// Checks a template without compiling it into the claiming set.
+///
+/// A template claims nothing, so nothing here is kept. The patterns still
+/// compile, because the reader edits them here and a bad regex belongs to
+/// the template that carries it.
+fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
+    ensure!(
+        ruleset.based_on.is_none(),
+        NestedTemplateSnafu {
+            ruleset: ruleset.id.clone(),
+        }
+    );
+
+    for field in &ruleset.fields {
+        Regex::new(field.matcher()).context(PatternSnafu {
+            ruleset: ruleset.id.clone(),
+            field: field.name.clone(),
+        })?;
+    }
+
+    Ok(())
 }
 
 impl CompiledField {
@@ -370,8 +403,14 @@ mod tests {
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
+    /// The resolution the show ruleset requires is absent, so only the
+    /// template describes this one and nothing claims it.
     const HOLLOW_720: &str =
         "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
+    /// The same episode from another group. The show ruleset claims it,
+    /// because it requires 1080p and names no publisher.
+    const HOLLOW_OTHER_GROUP: &str =
+        "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
     /// A client names a multi-file torrent after its folder, which carries the
     /// release name and no suffix.
     const HOLLOW_FOLDER: &str = "The.Hollow.Meridian.S04E06.1080p.Broadcast";
@@ -391,21 +430,21 @@ mod tests {
     }
 
     #[test]
-    fn child_beats_its_base_for_a_matching_name() {
+    fn a_ruleset_on_a_template_claims_its_show() {
         let parsed = ENGINE.parse(HOLLOW_1080).expect("claimed");
 
         assert_eq!(
             parsed.ruleset, "series-hollow-meridian",
-            "the most specific ruleset wins"
+            "the ruleset built on the template is what claims the name"
         );
     }
 
     #[test]
-    fn claimants_lists_a_ruleset_before_its_template() {
+    fn claimants_never_name_a_template() {
         assert_eq!(
             ENGINE.claimants(HOLLOW_1080),
-            vec!["series-hollow-meridian", "series-episodes"],
-            "the ruleset and the template it is based on both claim it"
+            vec!["series-hollow-meridian"],
+            "the template claims nothing, so only the ruleset appears"
         );
     }
 
@@ -415,23 +454,27 @@ mod tests {
     }
 
     #[test]
-    fn child_and_base_share_identity() {
+    fn a_title_only_the_template_describes_is_unclaimed() {
         assert_eq!(
-            ENGINE.parse(HOLLOW_720).expect("claimed").ruleset,
-            "series-episodes",
-            "the ruleset requires 1080p, so its template claims this one"
+            ENGINE.parse(HOLLOW_720),
+            None,
+            "the ruleset requires 1080p, and the template it is based on claims nothing"
         );
+    }
+
+    #[test]
+    fn identity_names_the_template() {
         assert_eq!(
-            identity(HOLLOW_720),
-            identity(HOLLOW_1080),
-            "the identity names the root, not the claimant"
+            identity(HOLLOW_1080).ruleset,
+            "series-episodes",
+            "the identity names the template, not the ruleset that claimed it"
         );
     }
 
     #[test]
     fn same_episode_from_another_group_shares_identity() {
         assert_eq!(
-            identity(HOLLOW_720),
+            identity(HOLLOW_OTHER_GROUP),
             Identity {
                 ruleset: "series-episodes".to_owned(),
                 key: vec![
@@ -440,7 +483,12 @@ mod tests {
                     "6".to_owned(),
                 ],
             },
-            "a different group and resolution leave the episode unchanged"
+            "a different group leaves the episode unchanged"
+        );
+        assert_eq!(
+            identity(HOLLOW_OTHER_GROUP),
+            identity(HOLLOW_1080),
+            "so the two are one release"
         );
     }
 
@@ -539,36 +587,56 @@ mod tests {
     }
 
     /// Names a ruleset built on `based_on` that declares no field of its
-    /// own, which is all a template walk reads.
-    fn based_on(id: &str, based_on: Option<&str>) -> Ruleset {
+    /// own, which is all the template resolution reads.
+    fn based_on(id: &str, based_on: Option<&str>, template: bool) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            template: false,
+            template,
             based_on: based_on.map(ToOwned::to_owned),
             fields: Vec::new(),
         }
     }
 
     #[test]
-    fn a_base_chain_that_loops_is_an_error() {
+    fn a_template_based_on_a_template_is_an_error() {
         let Err(error) = Engine::from_rulesets(vec![
-            based_on("first", Some("second")),
-            based_on("second", Some("first")),
+            based_on("first", None, true),
+            based_on("second", Some("first"), true),
         ]) else {
-            panic!("a loop never compiles");
+            panic!("a nested template never compiles");
         };
 
         assert!(
-            matches!(error, EngineError::Cycle { ref ruleset } if ruleset == "first"),
-            "the walk stops rather than hanging: {error}"
+            matches!(error, EngineError::NestedTemplate { ref ruleset } if ruleset == "second"),
+            "a template stands alone: {error}"
+        );
+    }
+
+    #[test]
+    fn a_ruleset_based_on_a_non_template_is_an_error() {
+        let Err(error) = Engine::from_rulesets(vec![
+            based_on("first", None, false),
+            based_on("second", Some("first"), false),
+        ]) else {
+            panic!("a ruleset based on a ruleset never compiles");
+        };
+
+        assert!(
+            matches!(
+                error,
+                EngineError::NotATemplate { ref ruleset, ref template }
+                    if ruleset == "second" && template == "first"
+            ),
+            "only a template serves as one: {error}"
         );
     }
 
     #[test]
     fn a_template_no_ruleset_declares_is_an_error() {
-        let Err(error) = Engine::from_rulesets(vec![based_on("derived", Some("absent"))]) else {
+        let Err(error) = Engine::from_rulesets(vec![based_on("derived", Some("absent"), false)])
+        else {
             panic!("an unknown template never compiles");
         };
 

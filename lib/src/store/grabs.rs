@@ -55,7 +55,7 @@ pub(crate) struct Grab {
     /// Why the attempt failed, or nothing when the client accepted it.
     pub(crate) error: Option<String>,
 
-    /// Every ruleset that claimed the release, most specific first.
+    /// Every ruleset that claimed the release, in declaration order.
     pub(crate) rulesets: Vec<String>,
 }
 
