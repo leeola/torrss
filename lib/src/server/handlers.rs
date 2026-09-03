@@ -65,12 +65,34 @@ path_param!(feed_id);
 ///
 /// Every branch returns the form serialized, which is what both the rows and
 /// the matches read.
+///
+/// `exclusive` disables whichever of the Template checkbox and the Based on
+/// select the other rules out. It sets the DOM directly rather than through a
+/// bound attribute, because the runtime applies a bound attribute in a
+/// microtask, after the handler has already serialized the form. A bound
+/// `disabled` leaves the first re-render carrying both values.
+///
+/// `reserialize` pairs the two in that order, because a `raw!` statement
+/// returns nothing and a handler writes its signals from the value of one
+/// expression.
 const ROW_ACTIONS: &str = r"
 window.torrssRows = {
   form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
   next: (params) => [...params.keys()].filter((key) => /^field\.\d+\.name$/.test(key)).length,
   nextTest: (params) => [...params.keys()].filter((key) => /^test\.\d+\.title$/.test(key)).length,
   serialize: () => window.torrssRows.form().toString(),
+  exclusive: () => {
+    const template = document.querySelector('#ruleset-fields input[name=template]');
+    const base = document.getElementById('based_on');
+
+    base.disabled = template.checked;
+    template.disabled = base.value !== '';
+  },
+  reserialize: () => {
+    window.torrssRows.exclusive();
+
+    return window.torrssRows.serialize();
+  },
   drop: (params, prefix) => {
     for (const key of [...params.keys()]) {
       if (key.startsWith(prefix)) {
@@ -1375,6 +1397,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         }
                     </div>
 
+                    // Disabled while a base is chosen, because a ruleset on a
+                    // base is no template. A disabled checkbox posts no
+                    // value, which is the value that state needs.
+                    //
                     // The handler is the select's below. A blank pattern
                     // becomes legal the moment this is checked, so the rows
                     // and the matches both re-read the form.
@@ -1383,9 +1409,13 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             type="checkbox"
                             name="template"
                             checked=(is_template)
+                            disabled=(!based_on.is_empty())
+                            // `reserialize` excludes before it reads, so the
+                            // draft carries the ruled-out control's value
+                            // from neither this write nor the form's own.
                             @input=$(|_e: Event| {
-                                rows.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
-                                draft.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
+                                rows.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
+                                draft.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
                             })
                             class="size-4 rounded border-slate-700 bg-slate-950"
                         >
@@ -1407,8 +1437,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         name="based_on"
                         disabled=(is_template)
                         @input=$(|_e: Event| {
-                            rows.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
-                            draft.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
+                            rows.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
+                            draft.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
                         })
                         class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none disabled:text-slate-500"
                     >
