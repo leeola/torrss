@@ -23,7 +23,7 @@ use crate::{
     grab,
     rules::ENGINE,
     server::{
-        components::{self, Grabbed, ItemDetails},
+        components::{self, Claimant, Grabbed, ItemDetails},
         format,
         listing::{self, Standing},
         query::{self, IdList},
@@ -114,7 +114,11 @@ fn item_details(
         rulesets: ENGINE
             .claimants(title)
             .into_iter()
-            .filter_map(|id| ENGINE.ruleset(id))
+            .filter_map(|id| ENGINE.ruleset(&id))
+            .map(|ruleset| Claimant {
+                id: ruleset.id.clone(),
+                name: ruleset.name.clone(),
+            })
             .collect(),
         values: standing
             .parsed()
@@ -428,7 +432,7 @@ async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
         .clone()
         .unwrap_or_else(|| "/admin".to_owned());
 
-    app_context::<RulesetSwitches>(cx).toggle(ruleset.id);
+    app_context::<RulesetSwitches>(cx).toggle(&ruleset.id);
 
     Ok(see_other(back))
 }
@@ -502,7 +506,7 @@ async fn admin(cx: &Cx) -> Result {
                         ruleset: base,
                         parent: ENGINE.parent(base),
                         nested: false,
-                        enabled: switches.is_enabled(base.id),
+                        enabled: switches.is_enabled(&base.id),
                     )
 
                     for child in ENGINE.children(base) {
@@ -510,7 +514,7 @@ async fn admin(cx: &Cx) -> Result {
                             ruleset: child,
                             parent: Some(base),
                             nested: true,
-                            enabled: switches.is_enabled(child.id),
+                            enabled: switches.is_enabled(&child.id),
                         )
                     }
                 }
@@ -974,19 +978,19 @@ async fn ruleset_editor(cx: &Cx) -> Result {
     let parent = ENGINE.parent(ruleset);
     let fields = ruleset.resolved_fields(parent, &replacements);
     let inheriting = parent.is_some();
-    let enabled = app_context::<RulesetSwitches>(cx).is_enabled(ruleset.id);
+    let enabled = app_context::<RulesetSwitches>(cx).is_enabled(&ruleset.id);
 
     view! {
         <nav class="text-sm text-slate-500">
             <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
             " / "
-            <span class="text-slate-300">(ruleset.name)</span>
+            <span class="text-slate-300">(&ruleset.name)</span>
         </nav>
 
         <div id="top" class="mt-3 flex scroll-mt-24 flex-wrap items-start justify-between gap-4">
             <div>
                 <div class="flex flex-wrap items-center gap-3">
-                    <h1 class="text-2xl font-semibold tracking-tight">(ruleset.name)</h1>
+                    <h1 class="text-2xl font-semibold tracking-tight">(&ruleset.name)</h1>
                     components::status_badge(enabled: enabled)
                 </div>
             </div>
@@ -1007,7 +1011,7 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                 </button>
                 components::status_toggle(
                     enabled: enabled,
-                    action: switch_action(ruleset.id, &q.url(ruleset.id, "#top")),
+                    action: switch_action(&ruleset.id, &q.url(&ruleset.id, "#top")),
                 )
             </div>
         </div>
@@ -1018,7 +1022,7 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                 <a
                     href=(format!("/admin/rulesets/{}", parent.id))
                     class="text-slate-200 underline decoration-slate-700 underline-offset-2 hover:text-white"
-                >(parent.name)</a>
+                >(&parent.name)</a>
                 ". A greyed field carries the parent's value. Replace one to give this ruleset its own."
             </p>,
             None => "",
@@ -1043,8 +1047,8 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                     resolved: resolved,
                     inheriting: inheriting,
                     toggle_href: q.with_replaced(
-                            &q.replaced.toggled(resolved.field.name),
-                            ruleset.id,
+                            &q.replaced.toggled(&resolved.field.name),
+                            &ruleset.id,
                             &format!("#field-{}", resolved.field.part.slug()),
                         ),
                 )
@@ -1101,8 +1105,8 @@ async fn new_ruleset() -> Result {
                 >
                     <option value="">"Nothing. Declare every field here."</option>
                     for base in ENGINE.bases() {
-                        <option value=(base.id)>
-                            (base.name) " (" (base.fields.len()) " fields)"
+                        <option value=(&base.id)>
+                            (&base.name) " (" (base.fields.len()) " fields)"
                         </option>
                     }
                 </select>

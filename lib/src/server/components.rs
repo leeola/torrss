@@ -56,6 +56,16 @@ pub(crate) async fn filter_chip(#[into] href: String, label: &str, current: bool
     }
 }
 
+/// One ruleset that claims a listed title.
+///
+/// A row links a claimant by id and shows its name, and it holds nothing
+/// else of the ruleset. Borrowing the whole ruleset would tie every row to
+/// the engine that resolved it, which outlives no request.
+pub(crate) struct Claimant {
+    pub id: String,
+    pub name: String,
+}
+
 /// What the page worked out about one listed release.
 ///
 /// The values arrive rendered rather than raw. The clock, the feed registry,
@@ -67,7 +77,7 @@ pub(crate) struct ItemDetails {
     /// A base and the child that narrows it both claim the same release.
     /// Listing only the winner makes the base read as a ruleset that never
     /// fires.
-    pub rulesets: Vec<&'static Ruleset>,
+    pub rulesets: Vec<Claimant>,
 
     /// What the claiming ruleset read out of the title, in its field order.
     ///
@@ -193,7 +203,7 @@ pub(crate) async fn item_row(
                                 href=(format!("/admin/rulesets/{}", ruleset.id))
                                 class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                             >
-                                (ruleset.name)
+                                (&ruleset.name)
                             </a>
                         }
                     }
@@ -234,7 +244,7 @@ fn passed(engine: &Engine, rulesets: &[String]) -> String {
         .map(|id| {
             engine
                 .ruleset(id)
-                .map_or(id.as_str(), |ruleset| ruleset.name)
+                .map_or(id.as_str(), |ruleset| ruleset.name.as_str())
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -276,7 +286,7 @@ pub(crate) async fn checkbox(#[into] href: String, checked: bool, label: &str) -
 /// with one this ruleset owns.
 #[component]
 pub(crate) async fn field_row(
-    resolved: ResolvedField,
+    resolved: ResolvedField<'_>,
     #[into] toggle_href: String,
     inheriting: bool,
 ) -> Result {
@@ -298,7 +308,7 @@ pub(crate) async fn field_row(
                     <input
                         type="text"
                         name=(format!("{}.name", field.name))
-                        value=(field.name)
+                        value=(&field.name)
                         disabled=(locked)
                         class="w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
@@ -460,8 +470,8 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
 /// actions in the editor.
 #[component]
 pub(crate) async fn ruleset_card(
-    ruleset: &'static Ruleset,
-    parent: Option<&'static Ruleset>,
+    ruleset: &Ruleset,
+    parent: Option<&Ruleset>,
     nested: bool,
     enabled: bool,
 ) -> Result {
@@ -479,11 +489,11 @@ pub(crate) async fn ruleset_card(
                 ))
             >
                 <div class="flex flex-wrap items-center gap-3">
-                    <h2 class="text-sm font-semibold text-slate-100">(ruleset.name)</h2>
+                    <h2 class="text-sm font-semibold text-slate-100">(&ruleset.name)</h2>
                     status_badge(enabled: enabled)
                     match parent {
                         Some(parent) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
-                            "narrows " (parent.name)
+                            "narrows " (&parent.name)
                         </span>,
                         None => "",
                     }

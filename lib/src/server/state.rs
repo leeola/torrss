@@ -9,7 +9,7 @@ use crate::rules::Engine;
 /// The set lives in memory. A restart returns every ruleset to the value
 /// [`crate::ruleset::Ruleset::enabled`] declares.
 pub(crate) struct RulesetSwitches {
-    enabled: Mutex<HashSet<&'static str>>,
+    enabled: Mutex<HashSet<String>>,
 }
 
 impl RulesetSwitches {
@@ -20,7 +20,7 @@ impl RulesetSwitches {
                 engine
                     .rulesets()
                     .filter(|ruleset| ruleset.enabled)
-                    .map(|ruleset| ruleset.id)
+                    .map(|ruleset| ruleset.id.clone())
                     .collect(),
             ),
         }
@@ -35,23 +35,23 @@ impl RulesetSwitches {
     /// A listing asks about every row it renders. Answering each through
     /// [`Self::is_enabled`] would take the lock once per row for a set that
     /// cannot change mid-render anyway.
-    pub(crate) fn snapshot(&self) -> HashSet<&'static str> {
+    pub(crate) fn snapshot(&self) -> HashSet<String> {
         self.lock().clone()
     }
 
     /// Flips one ruleset and returns the state it lands in.
-    pub(crate) fn toggle(&self, id: &'static str) -> bool {
+    pub(crate) fn toggle(&self, id: &str) -> bool {
         let mut enabled = self.lock();
 
         if enabled.remove(id) {
             return false;
         }
 
-        enabled.insert(id);
+        enabled.insert(id.to_owned());
         true
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<&'static str>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
         // Nothing panics while the guard is held, so the lock never poisons.
         self.enabled
             .lock()
@@ -80,6 +80,9 @@ mod tests {
         let switches = RulesetSwitches::new(&ENGINE);
         switches.toggle("archive-talks");
 
-        assert_eq!(switches.snapshot(), HashSet::from(["archive-talks"]));
+        assert_eq!(
+            switches.snapshot(),
+            HashSet::from(["archive-talks".to_owned()])
+        );
     }
 }

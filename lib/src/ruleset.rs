@@ -45,6 +45,26 @@ pub(crate) enum Part {
 }
 
 impl Part {
+    /// Every part, in the order the field editor lists them.
+    #[allow(
+        dead_code,
+        reason = "the vocabulary a stored field names its part from, ahead of a form that reads one back"
+    )]
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::Show,
+        Self::Movie,
+        Self::Season,
+        Self::Episode,
+        Self::Year,
+        Self::Resolution,
+        Self::Source,
+        Self::Codec,
+        Self::Audio,
+        Self::Publisher,
+        Self::Checksum,
+        Self::Extension,
+    ];
+
     /// URL-safe name, used as the anchor that links a matched run in a
     /// filename to the field rule that claimed it.
     pub(crate) fn slug(self) -> &'static str {
@@ -62,6 +82,15 @@ impl Part {
             Self::Checksum => "checksum",
             Self::Extension => "extension",
         }
+    }
+
+    /// The part named by `slug`, or [`None`] for anything else.
+    #[allow(
+        dead_code,
+        reason = "reads a stored field's part back, ahead of a form that writes one"
+    )]
+    pub(crate) fn from_slug(slug: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|part| part.slug() == slug)
     }
 
     #[allow(
@@ -141,19 +170,13 @@ pub(crate) struct Segment<'a> {
     pub(crate) part: Option<Part>,
 }
 
-/// The rulesets the application ships, which is none.
-///
-/// A ruleset the reader never wrote claims releases they never asked for,
-/// so nothing is declared here. The list stays empty until rulesets come
-/// from a store the reader writes into.
-pub(crate) const RULESETS: &[Ruleset] = &[];
-
 /// A set of field rules that together parse one family of filenames.
 pub(crate) struct Ruleset {
     /// Stable key that names the ruleset in a URL.
-    pub(crate) id: &'static str,
+    pub(crate) id: String,
 
-    pub(crate) name: &'static str,
+    pub(crate) name: String,
+
     /// Whether the ruleset runs when the process starts.
     ///
     /// This seeds the switch state once. [`crate::server`] holds the live
@@ -169,14 +192,14 @@ pub(crate) struct Ruleset {
     /// One base ruleset describes a whole family, such as every episode name.
     /// A child narrows it to a single series by replacing one field with a
     /// constant, which saves restating the eight fields that do not change.
-    pub(crate) inherits: Option<&'static str>,
+    pub(crate) inherits: Option<String>,
 
     /// The fields this ruleset declares itself.
     ///
     /// For a child this holds only the overrides, so a parent's later edit
     /// reaches every child that did not replace that field. Use
     /// [`Ruleset::resolved_fields`] to get the full list the editor shows.
-    pub(crate) fields: &'static [Field],
+    pub(crate) fields: Vec<Field>,
 }
 
 impl Ruleset {
@@ -192,13 +215,14 @@ impl Ruleset {
     ///
     /// `toggled` names the fields switched since the last save. Each named
     /// field flips to the other state. An inherited field starts overriding,
-    /// and an overriding field drops back to the inherited value. The parent's field seeds a fresh
-    /// override, so the reader edits a working pattern rather than a blank.
-    pub(crate) fn resolved_fields(
-        &self,
-        parent: Option<&'static Ruleset>,
+    /// and an overriding field drops back to the inherited value. The
+    /// parent's field seeds a fresh override, so the reader edits a working
+    /// pattern rather than a blank.
+    pub(crate) fn resolved_fields<'a>(
+        &'a self,
+        parent: Option<&'a Ruleset>,
         toggled: &[&str],
-    ) -> Vec<ResolvedField> {
+    ) -> Vec<ResolvedField<'a>> {
         let Some(parent) = parent else {
             return self
                 .fields
@@ -216,7 +240,7 @@ impl Ruleset {
             .map(|inherited| {
                 let own = self.fields.iter().find(|own| own.name == inherited.name);
 
-                match (own, toggled.contains(&inherited.name)) {
+                match (own, toggled.contains(&inherited.name.as_str())) {
                     (Some(field), false) => ResolvedField {
                         field,
                         source: FieldSource::Overridden { parent: inherited },
@@ -237,14 +261,14 @@ impl Ruleset {
 
 /// A field as the editor shows it, once inheritance is applied.
 #[derive(Clone, Copy)]
-pub(crate) struct ResolvedField {
+pub(crate) struct ResolvedField<'a> {
     /// The value in effect, whether inherited or replaced.
-    pub(crate) field: &'static Field,
+    pub(crate) field: &'a Field,
 
-    pub(crate) source: FieldSource,
+    pub(crate) source: FieldSource<'a>,
 }
 
-impl ResolvedField {
+impl ResolvedField<'_> {
     /// Whether the editor greys the row and locks its inputs.
     pub(crate) fn is_inherited(&self) -> bool {
         matches!(self.source, FieldSource::Inherited)
@@ -253,7 +277,7 @@ impl ResolvedField {
 
 /// Where a resolved field came from.
 #[derive(Clone, Copy)]
-pub(crate) enum FieldSource {
+pub(crate) enum FieldSource<'a> {
     /// Declared by a ruleset that inherits nothing.
     Own,
 
@@ -263,7 +287,7 @@ pub(crate) enum FieldSource {
     /// Replaces the parent's field, usually narrowing a pattern to a constant.
     Overridden {
         /// The parent's field, shown beside the override it replaced.
-        parent: &'static Field,
+        parent: &'a Field,
     },
 }
 
@@ -340,7 +364,7 @@ impl Diff {
 
 /// One extraction rule: the part it fills, and how its value is read.
 pub(crate) struct Field {
-    pub(crate) name: &'static str,
+    pub(crate) name: String,
     pub(crate) part: Part,
     pub(crate) kind: FieldKind,
 
@@ -350,7 +374,7 @@ pub(crate) struct Field {
     /// A pattern declared on a premade kind wins over the built-in one. That
     /// is how a child ruleset narrows a season to a single constant while
     /// keeping the kind's normalization.
-    pub(crate) pattern: Option<&'static str>,
+    pub(crate) pattern: Option<String>,
 
     pub(crate) required: bool,
 
@@ -370,8 +394,9 @@ impl Field {
     /// Panics when the field declares no pattern and its kind supplies none.
     /// The rulesets are checked in beside the code, so a text field without a
     /// pattern is a programming error rather than bad input.
-    pub(crate) fn matcher(&self) -> &'static str {
+    pub(crate) fn matcher(&self) -> &str {
         self.pattern
+            .as_deref()
             .or_else(|| self.kind.pattern())
             .expect("a field with no pattern has a premade kind")
     }
@@ -412,6 +437,11 @@ impl FieldKind {
             Self::Season => "season",
             Self::Episode => "episode",
         }
+    }
+
+    /// The kind named by `label`, or [`None`] for anything else.
+    pub(crate) fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|kind| kind.label() == label)
     }
 
     /// Returns the pattern the kind supplies, or `None` when the field has to

@@ -72,7 +72,7 @@ pub(crate) async fn grab(
         item.id,
         clock.now(),
         submitted.as_ref().err().map(ToString::to_string).as_deref(),
-        &rulesets,
+        &rulesets.iter().map(String::as_str).collect::<Vec<_>>(),
     )
     .await
     .context(StoreSnafu);

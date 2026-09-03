@@ -60,7 +60,7 @@ impl Standing {
 /// sameness apart from the ones that only describe the release.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ParsedValue {
-    pub(super) name: &'static str,
+    pub(super) name: String,
     pub(super) value: String,
     pub(super) part: Part,
 
@@ -75,7 +75,7 @@ pub(super) struct ParsedValue {
 /// appear in a well-formed name. A captured name with no matching field is
 /// dropped: the engine compiles from this same list, so none is expected.
 pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue> {
-    let Some(ruleset) = engine.ruleset(parsed.ruleset) else {
+    let Some(ruleset) = engine.ruleset(&parsed.ruleset) else {
         return Vec::new();
     };
 
@@ -91,7 +91,7 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
                 .field;
 
             Some(ParsedValue {
-                name: field.name,
+                name: field.name.clone(),
                 value: raw.clone(),
                 part: field.part,
                 identity: field.identity,
@@ -112,7 +112,7 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 /// too.
 pub(super) fn standing(
     engine: &Engine,
-    enabled: &HashSet<&'static str>,
+    enabled: &HashSet<String>,
     owned: &HashSet<String>,
     title: &str,
 ) -> Standing {
@@ -120,7 +120,7 @@ pub(super) fn standing(
         return Standing::Unmatched;
     };
 
-    if !enabled.contains(parsed.ruleset) {
+    if !enabled.contains(&parsed.ruleset) {
         return Standing::Disabled(parsed);
     }
 
@@ -160,12 +160,16 @@ mod tests {
         HashSet::from([ENGINE.parse(title).expect("claimed").identity.to_string()])
     }
 
+    fn enabled(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
     #[test]
     fn enabled_claimant_and_empty_library_is_wanted() {
         assert_eq!(
             standing(
                 &ENGINE,
-                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-episodes", "series-hollow-meridian"]),
                 &HashSet::new(),
                 HOLLOW_1080,
             ),
@@ -182,7 +186,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-episodes", "series-hollow-meridian"]),
                 &owned_of(HOLLOW_1080),
                 HOLLOW_1080,
             ),
@@ -199,7 +203,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-episodes", "series-hollow-meridian"]),
                 &owned_of(HOLLOW_PACK),
                 HOLLOW_1080,
             ),
@@ -213,7 +217,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &enabled(&["series-episodes", "series-hollow-meridian"]),
                 &owned_of(HOLLOW_1080),
                 HOLLOW_PACK,
             ),
@@ -231,7 +235,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &HashSet::from(["series-episodes"]),
+                &enabled(&["series-episodes"]),
                 &HashSet::new(),
                 HOLLOW_1080,
             ),
@@ -245,7 +249,7 @@ mod tests {
         assert_eq!(
             standing(
                 &ENGINE,
-                &HashSet::from(["series-episodes"]),
+                &enabled(&["series-episodes"]),
                 &HashSet::new(),
                 HOLLOW_720,
             ),
@@ -281,23 +285,24 @@ mod tests {
     fn a_parse_resolves_to_its_fields_in_order() {
         let parsed = ENGINE.parse(HOLLOW_1080).expect("claimed");
 
-        let read: Vec<(&str, String, bool)> = parsed_values(&ENGINE, &parsed)
-            .into_iter()
-            .map(|value| (value.name, value.value, value.identity))
+        let values = parsed_values(&ENGINE, &parsed);
+        let read: Vec<(&str, &str, bool)> = values
+            .iter()
+            .map(|value| (value.name.as_str(), value.value.as_str(), value.identity))
             .collect();
 
         assert_eq!(
             read,
             [
-                ("show", "The.Hollow.Meridian".to_owned(), true),
-                ("season", "04".to_owned(), true),
-                ("episode", "06".to_owned(), true),
-                ("resolution", "1080p".to_owned(), false),
-                ("source", "Broadcast".to_owned(), false),
-                ("audio", "AAC.Stereo".to_owned(), false),
-                ("codec", "H.264".to_owned(), false),
-                ("publisher", "PublicWave".to_owned(), false),
-                ("extension", ".mkv".to_owned(), false),
+                ("show", "The.Hollow.Meridian", true),
+                ("season", "04", true),
+                ("episode", "06", true),
+                ("resolution", "1080p", false),
+                ("source", "Broadcast", false),
+                ("audio", "AAC.Stereo", false),
+                ("codec", "H.264", false),
+                ("publisher", "PublicWave", false),
+                ("extension", ".mkv", false),
             ],
         );
     }
@@ -309,7 +314,7 @@ mod tests {
         assert_eq!(
             parsed_values(&ENGINE, &parsed)
                 .iter()
-                .map(|value| value.name)
+                .map(|value| value.name.clone())
                 .collect::<Vec<_>>(),
             ["show", "season", "resolution", "source", "audio", "codec"],
             "a pack names no episode, and the publisher pattern needs an \

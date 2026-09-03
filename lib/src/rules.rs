@@ -13,28 +13,30 @@ use std::fmt::{self, Display};
 use std::sync::LazyLock;
 
 use regex::Regex;
+use snafu::{OptionExt, ResultExt, Snafu};
 
-use crate::ruleset::{self, Field, FieldKind, Ruleset};
+use crate::ruleset::{Field, FieldKind, Ruleset};
 
 /// The rulesets this application ships, compiled once.
 ///
+/// The application declares none. A ruleset the reader never wrote claims
+/// releases they never asked for, so the set stays empty until rulesets come
+/// from a store the reader writes into.
+///
 /// # Panics
 ///
-/// Panics when a pattern fails to compile. The patterns are checked in beside
-/// the code, so a bad one is a programming error rather than a condition a
-/// caller handles.
-pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
-    Engine::from_rulesets(ruleset::RULESETS).expect("every shipped pattern is a valid regex")
-});
+/// Panics when the set fails to compile, which an empty one never does.
+pub(crate) static ENGINE: LazyLock<Engine> =
+    LazyLock::new(|| Engine::from_rulesets(Vec::new()).expect("an empty ruleset set compiles"));
 
 /// What one ruleset made of a release name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
     /// The ruleset that claimed the name, which is the most specific one.
-    pub(crate) ruleset: &'static str,
+    pub(crate) ruleset: String,
 
     /// Every field that matched, in the ruleset's own order.
-    pub(crate) values: Vec<(&'static str, String)>,
+    pub(crate) values: Vec<(String, String)>,
 
     pub(crate) identity: Identity,
 }
@@ -108,16 +110,36 @@ pub(crate) struct Engine {
 
     /// The declarations the compiled set was built from.
     ///
-    /// Inheritance resolves against this slice alone, so an engine built
-    /// from a fixture never reaches for the shipped list.
-    source: &'static [Ruleset],
+    /// Inheritance resolves against this list alone, so an engine built from
+    /// a fixture never reaches for the shipped set.
+    source: Vec<Ruleset>,
+}
+
+/// Why a set of rulesets does not compile into an engine.
+///
+/// Every variant names the ruleset it came from, because a reader who saved a
+/// bad rule needs to know which one to open.
+#[derive(Debug, Snafu)]
+pub(crate) enum EngineError {
+    #[snafu(display("the pattern of field {field} in ruleset {ruleset} is not a valid regex"))]
+    Pattern {
+        ruleset: String,
+        field: String,
+        source: regex::Error,
+    },
+
+    #[snafu(display("ruleset {ruleset} narrows {parent}, which does not exist"))]
+    UnknownParent { ruleset: String, parent: String },
+
+    #[snafu(display("ruleset {ruleset} narrows itself through a cycle"))]
+    Cycle { ruleset: String },
 }
 
 struct Compiled {
-    id: &'static str,
+    id: String,
 
     /// The base of the inheritance chain, which names the identity.
-    root: &'static str,
+    root: String,
 
     /// How many rulesets this one narrows, which is what orders the list.
     depth: usize,
@@ -126,7 +148,7 @@ struct Compiled {
 }
 
 struct CompiledField {
-    name: &'static str,
+    name: String,
     kind: FieldKind,
     required: bool,
     identity: bool,
@@ -141,11 +163,13 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns the first pattern that fails to compile.
-    pub(crate) fn from_rulesets(rulesets: &'static [Ruleset]) -> Result<Self, regex::Error> {
+    /// Returns the first ruleset that names a parent no other ruleset
+    /// declares, that narrows itself through a cycle, or that carries a
+    /// pattern the regex engine rejects.
+    pub(crate) fn from_rulesets(rulesets: Vec<Ruleset>) -> Result<Self, EngineError> {
         let mut compiled = rulesets
             .iter()
-            .map(|ruleset| Compiled::new(ruleset, rulesets))
+            .map(|ruleset| Compiled::new(ruleset, &rulesets))
             .collect::<Result<Vec<_>, _>>()?;
 
         compiled.sort_by_key(|ruleset| Reverse(ruleset.depth));
@@ -157,42 +181,40 @@ impl Engine {
     }
 
     /// Every ruleset this engine was built from, in declaration order.
-    pub(crate) fn rulesets(&self) -> impl Iterator<Item = &'static Ruleset> {
+    pub(crate) fn rulesets(&self) -> impl Iterator<Item = &Ruleset> {
         self.source.iter()
     }
 
     /// Finds the ruleset named by `id`.
-    pub(crate) fn ruleset(&self, id: &str) -> Option<&'static Ruleset> {
+    pub(crate) fn ruleset(&self, id: &str) -> Option<&Ruleset> {
         self.source.iter().find(|ruleset| ruleset.id == id)
     }
 
     /// The ruleset `ruleset` narrows, or [`None`] when it is a base.
-    pub(crate) fn parent(&self, ruleset: &Ruleset) -> Option<&'static Ruleset> {
-        ruleset.inherits.and_then(|id| self.ruleset(id))
+    pub(crate) fn parent(&self, ruleset: &Ruleset) -> Option<&Ruleset> {
+        self.ruleset(ruleset.inherits.as_deref()?)
     }
 
     /// Every ruleset that narrows nothing, which is where the editor starts.
-    pub(crate) fn bases(&self) -> impl Iterator<Item = &'static Ruleset> {
+    pub(crate) fn bases(&self) -> impl Iterator<Item = &Ruleset> {
         self.source
             .iter()
             .filter(|ruleset| ruleset.inherits.is_none())
     }
 
     /// Every ruleset that narrows `base`.
-    pub(crate) fn children(&self, base: &Ruleset) -> impl Iterator<Item = &'static Ruleset> {
-        let id = base.id;
-
+    pub(crate) fn children<'a>(&'a self, base: &'a Ruleset) -> impl Iterator<Item = &'a Ruleset> {
         self.source
             .iter()
-            .filter(move |child| child.inherits == Some(id))
+            .filter(move |child| child.inherits.as_deref() == Some(base.id.as_str()))
     }
 
     /// Lists every ruleset that claims `title`, most specific first.
-    pub(crate) fn claimants(&self, title: &str) -> Vec<&'static str> {
+    pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
         self.rulesets
             .iter()
             .filter(|ruleset| captures(ruleset, title).is_some())
-            .map(|ruleset| ruleset.id)
+            .map(|ruleset| ruleset.id.clone())
             .collect()
     }
 
@@ -202,7 +224,7 @@ impl Engine {
             let values = captures(ruleset, title)?;
 
             Some(Parsed {
-                ruleset: ruleset.id,
+                ruleset: ruleset.id.clone(),
                 identity: ruleset.identity(&values),
                 values,
             })
@@ -211,27 +233,49 @@ impl Engine {
 }
 
 impl Compiled {
-    fn new(ruleset: &'static Ruleset, rulesets: &'static [Ruleset]) -> Result<Self, regex::Error> {
-        let find = |id| rulesets.iter().find(|candidate| candidate.id == id);
+    /// Walks `ruleset` to the base of its chain and compiles its fields.
+    ///
+    /// The walk is bounded by the number of rulesets, because a stored set
+    /// can name a parent chain that loops back on itself. An unbounded walk
+    /// would hang the process on data a reader saved.
+    fn new(ruleset: &Ruleset, rulesets: &[Ruleset]) -> Result<Self, EngineError> {
+        let find = |id: &str| rulesets.iter().find(|candidate| candidate.id == id);
 
-        let parent = ruleset.inherits.and_then(find);
+        let parent = match &ruleset.inherits {
+            Some(id) => Some(find(id).context(UnknownParentSnafu {
+                ruleset: ruleset.id.clone(),
+                parent: id.clone(),
+            })?),
+            None => None,
+        };
 
         let mut root = ruleset;
         let mut depth = 0;
 
-        while let Some(next) = root.inherits.and_then(find) {
-            root = next;
+        while let Some(id) = &root.inherits {
+            root = find(id).context(UnknownParentSnafu {
+                ruleset: root.id.clone(),
+                parent: id.clone(),
+            })?;
+
             depth += 1;
+
+            if depth > rulesets.len() {
+                return CycleSnafu {
+                    ruleset: ruleset.id.clone(),
+                }
+                .fail();
+            }
         }
 
         Ok(Self {
-            id: ruleset.id,
-            root: root.id,
+            id: ruleset.id.clone(),
+            root: root.id.clone(),
             depth,
             fields: ruleset
                 .resolved_fields(parent, &[])
                 .into_iter()
-                .map(|resolved| CompiledField::new(resolved.field))
+                .map(|resolved| CompiledField::new(resolved.field, &ruleset.id))
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -243,7 +287,7 @@ impl Compiled {
     /// two releases only agree position by position, and a trailing gap
     /// reads as a span over everything inside it rather than as a shorter
     /// key that matches nothing.
-    fn identity(&self, values: &[(&'static str, String)]) -> Identity {
+    fn identity(&self, values: &[(String, String)]) -> Identity {
         Identity {
             ruleset: self.root.to_owned(),
             key: self
@@ -262,13 +306,16 @@ impl Compiled {
 }
 
 impl CompiledField {
-    fn new(field: &'static Field) -> Result<Self, regex::Error> {
+    fn new(field: &Field, ruleset: &str) -> Result<Self, EngineError> {
         Ok(Self {
-            name: field.name,
+            name: field.name.clone(),
             kind: field.kind,
             required: field.required,
             identity: field.identity,
-            regex: Regex::new(field.matcher())?,
+            regex: Regex::new(field.matcher()).context(PatternSnafu {
+                ruleset: ruleset.to_owned(),
+                field: field.name.clone(),
+            })?,
         })
     }
 }
@@ -278,7 +325,7 @@ impl CompiledField {
 /// A ruleset claims a title only when every required field matched. An
 /// optional field that misses contributes nothing and blocks nothing, which
 /// is what lets one ruleset claim a feed title and a folder-named torrent.
-fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(&'static str, String)>> {
+fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
     let mut values = Vec::new();
 
     for field in &ruleset.fields {
@@ -287,11 +334,11 @@ fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(&'static str, String
         let matched = field
             .regex
             .captures(title)
-            .and_then(|caps| caps.name(field.name).or_else(|| caps.get(1)))
+            .and_then(|caps| caps.name(&field.name).or_else(|| caps.get(1)))
             .map(|value| value.as_str().to_owned());
 
         match matched {
-            Some(raw) => values.push((field.name, raw)),
+            Some(raw) => values.push((field.name.clone(), raw)),
             None if field.required => return None,
             None => {}
         }
@@ -326,7 +373,8 @@ fn normalize(kind: FieldKind, raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::Identity;
+    use super::{Engine, EngineError, Identity};
+    use crate::ruleset::Ruleset;
     use crate::ruleset::fixture::ENGINE;
 
     const HOLLOW_1080: &str =
@@ -496,6 +544,49 @@ mod tests {
         assert_eq!(
             identity(HOLLOW_1080).to_string(),
             "series-episodes|the hollow meridian|4|6"
+        );
+    }
+
+    /// Names a ruleset that narrows `inherits` and declares no field of its
+    /// own, which is all a parent walk reads.
+    fn narrowing(id: &str, inherits: Option<&str>) -> Ruleset {
+        Ruleset {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            enabled: false,
+            inherits: inherits.map(ToOwned::to_owned),
+            fields: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_parent_chain_that_loops_is_an_error() {
+        let Err(error) = Engine::from_rulesets(vec![
+            narrowing("first", Some("second")),
+            narrowing("second", Some("first")),
+        ]) else {
+            panic!("a loop never compiles");
+        };
+
+        assert!(
+            matches!(error, EngineError::Cycle { ref ruleset } if ruleset == "first"),
+            "the walk stops rather than hanging: {error}"
+        );
+    }
+
+    #[test]
+    fn a_parent_no_ruleset_declares_is_an_error() {
+        let Err(error) = Engine::from_rulesets(vec![narrowing("child", Some("absent"))]) else {
+            panic!("an unknown parent never compiles");
+        };
+
+        assert!(
+            matches!(
+                error,
+                EngineError::UnknownParent { ref ruleset, ref parent }
+                    if ruleset == "child" && parent == "absent"
+            ),
+            "the message names both ends: {error}"
         );
     }
 }

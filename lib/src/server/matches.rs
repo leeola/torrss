@@ -99,7 +99,7 @@ impl Edits {
 
             match attribute {
                 "name" => edit.name = Some(value.into_owned()),
-                "kind" => edit.kind = kind_of(&value),
+                "kind" => edit.kind = FieldKind::from_label(&value),
                 "pattern" => edit.pattern = Some(value.into_owned()),
                 "required" => edit.required = true,
                 _ => {}
@@ -149,26 +149,26 @@ impl Edits {
 /// because the form posts every input of a row together and an unchecked box
 /// posts nothing. A caller that builds an edit by hand supplies the checkbox
 /// too, or the field turns optional.
-pub(super) fn rules(fields: &[ResolvedField], edits: &Edits) -> (Vec<Rule>, Vec<PatternError>) {
+pub(super) fn rules(fields: &[ResolvedField<'_>], edits: &Edits) -> (Vec<Rule>, Vec<PatternError>) {
     let mut rules = Vec::with_capacity(fields.len());
     let mut errors = Vec::new();
 
     for resolved in fields {
         let field = resolved.field;
-        let edit = edits.0.get(field.name);
+        let edit = edits.0.get(&field.name);
 
         let kind = edit.and_then(|edit| edit.kind).unwrap_or(field.kind);
 
         let pattern = edit
             .and_then(|edit| edit.pattern.clone())
-            .or_else(|| field.pattern.map(str::to_owned))
+            .or_else(|| field.pattern.clone())
             .or_else(|| kind.pattern().map(str::to_owned));
 
         let required = edit.map_or(field.required, |edit| edit.required);
 
         let name = edit
             .and_then(|edit| edit.name.clone())
-            .unwrap_or_else(|| field.name.to_owned());
+            .unwrap_or_else(|| field.name.clone());
 
         let regex = match pattern {
             Some(pattern) => match Regex::new(&pattern) {
@@ -292,48 +292,53 @@ fn segments(title: &str, mut spans: Vec<(Range<usize>, Part)>) -> Vec<Segment<'_
     segments
 }
 
-/// Finds the kind a form value names, or nothing when it names none.
-fn kind_of(label: &str) -> Option<FieldKind> {
-    FieldKind::ALL
-        .iter()
-        .copied()
-        .find(|kind| kind.label() == label)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Edits, PatternError, diff, rules};
     use crate::ruleset::{
-        Diff, Field,
+        Diff, Field, FieldKind,
         FieldKind::{Season, Text},
-        FieldSource,
+        FieldSource, Part,
         Part::{Season as SeasonPart, Show},
         ResolvedField,
     };
 
-    const SHOW: Field = Field {
-        name: "show",
-        part: Show,
-        kind: Text,
-        pattern: Some(r"^(?<show>[\w.]+?)\.S\d"),
-        required: true,
-        identity: true,
-    };
+    fn field(
+        name: &str,
+        part: Part,
+        kind: FieldKind,
+        pattern: Option<&str>,
+        required: bool,
+        identity: bool,
+    ) -> Field {
+        Field {
+            name: name.to_owned(),
+            part,
+            kind,
+            pattern: pattern.map(ToOwned::to_owned),
+            required,
+            identity,
+        }
+    }
 
-    const SEASON: Field = Field {
-        name: "season",
-        part: SeasonPart,
-        kind: Season,
-        pattern: None,
-        required: true,
-        identity: true,
-    };
+    /// The saved fields every edit below is measured against.
+    fn declared() -> Vec<Field> {
+        vec![
+            field(
+                "show",
+                Show,
+                Text,
+                Some(r"^(?<show>[\w.]+?)\.S\d"),
+                true,
+                true,
+            ),
+            field("season", SeasonPart, Season, None, true, true),
+        ]
+    }
 
-    const TITLE: &str = "The.Hollow.Meridian.S04E06.1080p";
-
-    fn fields() -> Vec<ResolvedField> {
-        [&SHOW, &SEASON]
-            .into_iter()
+    fn resolved(fields: &[Field]) -> Vec<ResolvedField<'_>> {
+        fields
+            .iter()
             .map(|field| ResolvedField {
                 field,
                 source: FieldSource::Own,
@@ -341,9 +346,11 @@ mod tests {
             .collect()
     }
 
+    const TITLE: &str = "The.Hollow.Meridian.S04E06.1080p";
+
     /// The rules the saved fields produce, with no edit applied.
-    fn saved() -> Vec<super::Rule> {
-        rules(&fields(), &Edits::default()).0
+    fn saved(fields: &[ResolvedField<'_>]) -> Vec<super::Rule> {
+        rules(fields, &Edits::default()).0
     }
 
     #[test]
@@ -379,22 +386,25 @@ mod tests {
 
     #[test]
     fn an_edited_pattern_claims_what_the_saved_one_refuses() {
+        let declared = declared();
+        let fields = resolved(&declared);
+
         // A space-separated title, which the saved show pattern never crosses.
         let spaced = "Ashfall Ridge S02E01";
 
         let edits = Edits::parse(
             "show.pattern=%5E(%3F%3Cshow%3E%5B%5Cw+%20%5D%2B%3F)%20S%5Cd&show.required=on",
         );
-        let (edited, errors) = rules(&fields(), &edits);
+        let (edited, errors) = rules(&fields, &edits);
 
         assert_eq!(errors, Vec::new(), "both patterns compile");
         assert_eq!(
-            diff(&saved(), &edited, spaced).0,
+            diff(&saved(&fields), &edited, spaced).0,
             Diff::Added,
             "the saved pattern needs a dot before the season, the edit a space"
         );
         assert_eq!(
-            diff(&saved(), &edited, "Ashfall.County.S01E10").0,
+            diff(&saved(&fields), &edited, "Ashfall.County.S01E10").0,
             Diff::Removed,
             "the edit gives up the dot-separated names the saved pattern claims"
         );
@@ -402,8 +412,11 @@ mod tests {
 
     #[test]
     fn a_broken_pattern_claims_nothing() {
+        let declared = declared();
+        let fields = resolved(&declared);
+
         let edits = Edits::parse("show.pattern=(&show.required=on");
-        let (edited, errors) = rules(&fields(), &edits);
+        let (edited, errors) = rules(&fields, &edits);
 
         assert_eq!(
             errors.iter().map(|error| &error.field).collect::<Vec<_>>(),
@@ -411,26 +424,22 @@ mod tests {
             "the message names the field the reader is typing in"
         );
         assert_eq!(
-            diff(&saved(), &edited, TITLE).0,
+            diff(&saved(&fields), &edited, TITLE).0,
             Diff::Removed,
             "a required rule with no regex turns every title away"
         );
     }
 
     /// A text field with no pattern, which no kind stands in for.
-    const BARE: Field = Field {
-        name: "bare",
-        part: Show,
-        kind: Text,
-        pattern: None,
-        required: true,
-        identity: false,
-    };
-
+    fn bare() -> Field {
+        field("bare", Show, Text, None, true, false)
+    }
     #[test]
+
     fn a_field_with_no_pattern_at_all_is_an_error() {
+        let bare = bare();
         let fields = [ResolvedField {
-            field: &BARE,
+            field: &bare,
             source: FieldSource::Own,
         }];
 
@@ -446,8 +455,11 @@ mod tests {
 
     #[test]
     fn diff_names_each_of_the_four_states() {
+        let declared = declared();
+        let fields = resolved(&declared);
+
         let narrowed = rules(
-            &fields(),
+            &fields,
             &Edits::parse(
                 "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow%5C.Meridian)%5C.S%5Cd&show.required=on",
             ),
@@ -461,7 +473,7 @@ mod tests {
             "The.Hollow.Meridian.S04E06.720p",
         ]
         .iter()
-        .map(|title| diff(&saved(), &narrowed, title).0)
+        .map(|title| diff(&saved(&fields), &narrowed, title).0)
         .collect();
 
         assert_eq!(
@@ -473,7 +485,10 @@ mod tests {
 
     #[test]
     fn segments_reproduce_the_title_and_tint_each_claimed_run() {
-        let (_, segments) = diff(&saved(), &saved(), TITLE);
+        let declared = declared();
+        let fields = resolved(&declared);
+
+        let (_, segments) = diff(&saved(&fields), &saved(&fields), TITLE);
 
         assert_eq!(
             segments
@@ -500,10 +515,13 @@ mod tests {
 
     #[test]
     fn an_overlapping_span_is_dropped() {
+        let declared = declared();
+        let fields = resolved(&declared);
+
         let edits = Edits::parse(
             "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow)&season.pattern=(%3F%3Cseason%3EHollow)",
         );
-        let (edited, _) = rules(&fields(), &edits);
+        let (edited, _) = rules(&fields, &edits);
         let (_, segments) = diff(&edited, &edited, TITLE);
 
         assert_eq!(
