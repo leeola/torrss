@@ -25,22 +25,9 @@ use super::{
         Audio, Checksum, Codec, Episode, Extension, Movie, Publisher, Resolution, Season, Show,
         Source, Year,
     },
-    Ruleset, Segment,
+    Ruleset,
 };
 use crate::rules::Engine;
-
-/// Marks a run of text that no rule claimed, such as a separator.
-const fn gap(text: &'static str) -> Segment<'static> {
-    Segment { text, part: None }
-}
-
-/// Marks a run of text that `part` claimed.
-const fn hit(text: &'static str, part: super::Part) -> Segment<'static> {
-    Segment {
-        text,
-        part: Some(part),
-    }
-}
 
 /// The fixture rulesets, compiled once.
 ///
@@ -56,23 +43,8 @@ pub(crate) const RULESETS: &[Ruleset] = &[
     Ruleset {
         id: "series-episodes",
         name: "Series Episodes",
-        summary: "Dot-separated episode names carrying a season and episode pair.",
         enabled: false,
         inherits: None,
-        feeds: &["publicwave-series", "northlight-hd"],
-        sample: &[
-            hit("The.Hollow.Meridian", Show),
-            gap("."),
-            hit("S04", Season),
-            hit("E06", Episode),
-            gap("."),
-            hit("1080p", Resolution),
-            gap("."),
-            hit("Broadcast", Source),
-            gap("-"),
-            hit("PublicWave", Publisher),
-            hit(".mkv", Extension),
-        ],
         fields: &[
             Field {
                 name: "show",
@@ -147,27 +119,12 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 identity: false,
             },
         ],
-        candidates: &[],
     },
     Ruleset {
         id: "feature-films",
         name: "Feature Films",
-        summary: "Feature titles followed by a production year and a master source.",
         enabled: false,
         inherits: None,
-        feeds: &["civicarchive-films"],
-        sample: &[
-            hit("Paper.Continents", Movie),
-            gap("."),
-            hit("2024", Year),
-            gap("."),
-            hit("1080p", Resolution),
-            gap("."),
-            hit("Remaster", Source),
-            gap("-"),
-            hit("MeridianPress", Publisher),
-            hit(".mkv", Extension),
-        ],
         fields: &[
             Field {
                 name: "title",
@@ -234,28 +191,12 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 identity: false,
             },
         ],
-        candidates: &[],
     },
     Ruleset {
         id: "archive-talks",
         name: "Archive Talks",
-        summary: "Publisher-prefixed session names with a sequential session number.",
         enabled: false,
         inherits: None,
-        feeds: &["openreel-talks"],
-        sample: &[
-            hit("[OpenReel]", Publisher),
-            gap(" "),
-            hit("Coastal.Ecology", Show),
-            gap(" - "),
-            hit("18", Episode),
-            gap(" ("),
-            hit("1080p", Resolution),
-            gap(") ["),
-            hit("A1B2C3D4", Checksum),
-            gap("]"),
-            hit(".mkv", Extension),
-        ],
         fields: &[
             Field {
                 name: "publisher",
@@ -306,29 +247,12 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 identity: false,
             },
         ],
-        candidates: &[],
     },
     Ruleset {
         id: "series-hollow-meridian",
         name: "The Hollow Meridian",
-        summary: "Narrows the episode rules to one series at broadcast quality.",
         enabled: false,
         inherits: Some("series-episodes"),
-        feeds: &["publicwave-series"],
-        sample: &[
-            hit("The.Hollow.Meridian", Show),
-            gap("."),
-            hit("S04", Season),
-            hit("E06", Episode),
-            gap("."),
-            hit("1080p", Resolution),
-            gap("."),
-            hit("Broadcast", Source),
-            gap("-"),
-            hit("PublicWave", Publisher),
-            hit(".mkv", Extension),
-        ],
-        candidates: &[],
         fields: &[
             Field {
                 name: "show",
@@ -351,24 +275,8 @@ pub(crate) const RULESETS: &[Ruleset] = &[
     Ruleset {
         id: "series-ashfall-county",
         name: "Ashfall County",
-        summary: "Narrows the episode rules to one series from one publisher.",
         enabled: false,
         inherits: Some("series-episodes"),
-        feeds: &["publicwave-series"],
-        sample: &[
-            hit("Ashfall.County", Show),
-            gap("."),
-            hit("S01", Season),
-            hit("E10", Episode),
-            gap("."),
-            hit("1080p", Resolution),
-            gap("."),
-            hit("NLT.Broadcast", Source),
-            gap("-"),
-            hit("PublicWave", Publisher),
-            hit(".mkv", Extension),
-        ],
-        candidates: &[],
         fields: &[
             Field {
                 name: "show",

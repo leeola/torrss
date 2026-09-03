@@ -64,6 +64,10 @@ impl Part {
         }
     }
 
+    #[allow(
+        dead_code,
+        reason = "read by the highlighted-filename render, ahead of a page that renders one"
+    )]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Show => "show",
@@ -128,6 +132,10 @@ impl Part {
 /// in order reproduce the filename exactly, so the highlighted render never
 /// drifts from the name it describes.
 #[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "read by the highlighted-filename render, ahead of a page that renders one"
+)]
 pub(crate) struct Segment<'a> {
     pub(crate) text: &'a str,
     pub(crate) part: Option<Part>,
@@ -146,7 +154,6 @@ pub(crate) struct Ruleset {
     pub(crate) id: &'static str,
 
     pub(crate) name: &'static str,
-    pub(crate) summary: &'static str,
     /// Whether the ruleset runs when the process starts.
     ///
     /// This seeds the switch state once. [`crate::server`] holds the live
@@ -156,7 +163,6 @@ pub(crate) struct Ruleset {
     /// A disabled ruleset filters nothing, so its releases stay out of the
     /// feed.
     pub(crate) enabled: bool,
-    pub(crate) feeds: &'static [&'static str],
 
     /// [`Ruleset::id`] of the ruleset this one narrows, or [`None`] for a base.
     ///
@@ -171,23 +177,9 @@ pub(crate) struct Ruleset {
     /// reaches every child that did not replace that field. Use
     /// [`Ruleset::resolved_fields`] to get the full list the editor shows.
     pub(crate) fields: &'static [Field],
-
-    /// A filename the editor highlights to preview the rules below it.
-    pub(crate) sample: &'static [Segment<'static>],
-
-    /// Filenames the editor tests the rules against, shown as a diff.
-    pub(crate) candidates: &'static [Candidate],
 }
 
 impl Ruleset {
-    /// Counts the candidates sitting in one diff state.
-    pub(crate) fn diff_count(&self, diff: Diff) -> usize {
-        self.candidates
-            .iter()
-            .filter(|candidate| candidate.diff == diff)
-            .count()
-    }
-
     /// Every field the editor shows, each tagged with where it came from.
     ///
     /// A base ruleset returns its own fields untouched. A child returns the
@@ -275,19 +267,9 @@ pub(crate) enum FieldSource {
     },
 }
 
-/// One filename the editor tests the ruleset against.
-pub(crate) struct Candidate {
-    /// Stable key that names the candidate in the pin list.
-    pub(crate) id: &'static str,
-
-    pub(crate) segments: &'static [Segment<'static>],
-    pub(crate) diff: Diff,
-    pub(crate) feed: &'static str,
-}
-
-/// How a candidate's match changed under the edit in progress.
+/// How a title's match changed under the edit in progress.
 ///
-/// A [`Diff::Removed`] candidate keeps the highlighting it had before the
+/// A [`Diff::Removed`] title keeps the highlighting it had before the
 /// edit. The row shows what the edit gives up. An unhighlighted filename
 /// loses that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +284,10 @@ pub(crate) enum Diff {
     Excluded,
 }
 
+#[allow(
+    dead_code,
+    reason = "the labels and classes the Matches section dresses a row with, ahead of a page that renders one"
+)]
 impl Diff {
     /// Every state, in the order the filter bar lists them.
     pub(crate) const ALL: &'static [Self] =
