@@ -15,6 +15,8 @@
 #[cfg(test)]
 pub(crate) mod fixture;
 
+pub(crate) mod store;
+
 /// A named component that a ruleset pulls out of a release filename.
 ///
 /// The variant picks both the label and the highlight color, so a reader sees
@@ -46,10 +48,6 @@ pub(crate) enum Part {
 
 impl Part {
     /// Every part, in the order the field editor lists them.
-    #[allow(
-        dead_code,
-        reason = "the vocabulary a stored field names its part from, ahead of a form that reads one back"
-    )]
     pub(crate) const ALL: &'static [Self] = &[
         Self::Show,
         Self::Movie,
@@ -85,10 +83,6 @@ impl Part {
     }
 
     /// The part named by `slug`, or [`None`] for anything else.
-    #[allow(
-        dead_code,
-        reason = "reads a stored field's part back, ahead of a form that writes one"
-    )]
     pub(crate) fn from_slug(slug: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|part| part.slug() == slug)
     }
@@ -171,6 +165,7 @@ pub(crate) struct Segment<'a> {
 }
 
 /// A set of field rules that together parse one family of filenames.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Ruleset {
     /// Stable key that names the ruleset in a URL.
     pub(crate) id: String,
@@ -363,6 +358,7 @@ impl Diff {
 }
 
 /// One extraction rule: the part it fills, and how its value is read.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) part: Part,
