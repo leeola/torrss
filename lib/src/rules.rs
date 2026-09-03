@@ -45,12 +45,48 @@ pub(crate) struct Parsed {
 /// that claimed the name. A child only narrows what its base describes, so an
 /// episode claimed by the base and the same episode claimed by a child are
 /// one release, not two.
+///
+/// A trailing empty part makes the identity a span rather than one release. A
+/// season pack captures a show and a season and no episode, so its key ends
+/// empty, and it stands for every release that agrees on the parts it does
+/// name. See [`Self::spans`] for the spans one release falls inside.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Identity {
     pub(crate) ruleset: String,
 
     /// The normalized value of each identity field, in the ruleset's order.
     pub(crate) key: Vec<String>,
+}
+
+impl Identity {
+    /// Returns every span this release falls inside, from the exact key
+    /// outward, each rendered in the form the library stores.
+    ///
+    /// The first entry is the release itself, and each later one drops one
+    /// more trailing part. An episode therefore yields its own key, its
+    /// season, its show, and the bare ruleset. Testing all of them against
+    /// the library is what lets a stored season pack own the episodes it
+    /// carries.
+    ///
+    /// The allocations are proportional to the key, which runs to a handful
+    /// of parts, and a page calls this once per row.
+    pub(crate) fn spans(&self) -> Vec<String> {
+        (0..=self.key.len())
+            .rev()
+            .map(|kept| {
+                let mut key = self.key.clone();
+                for part in &mut key[kept..] {
+                    part.clear();
+                }
+
+                Self {
+                    ruleset: self.ruleset.clone(),
+                    key,
+                }
+                .to_string()
+            })
+            .collect()
+    }
 }
 
 impl Display for Identity {
@@ -159,8 +195,10 @@ impl Compiled {
     /// Builds the identity from what the fields captured.
     ///
     /// A missing optional identity field contributes an empty part rather
-    /// than shortening the key, so two releases only agree when they agree
-    /// position by position.
+    /// than shortening the key. Every part keeps its position that way, so
+    /// two releases only agree position by position, and a trailing gap
+    /// reads as a span over everything inside it rather than as a shorter
+    /// key that matches nothing.
     fn identity(&self, values: &[(&'static str, String)]) -> Identity {
         Identity {
             ruleset: self.root.to_owned(),
@@ -346,6 +384,20 @@ mod tests {
                 ],
             },
             "the missing episode holds its position in the key"
+        );
+    }
+
+    #[test]
+    fn spans_run_from_the_exact_key_outward() {
+        assert_eq!(
+            identity(HOLLOW_1080).spans(),
+            [
+                "series-episodes|the hollow meridian|4|6",
+                "series-episodes|the hollow meridian|4|",
+                "series-episodes|the hollow meridian||",
+                "series-episodes|||",
+            ],
+            "the episode, then its season, then its show, then the ruleset"
         );
     }
 

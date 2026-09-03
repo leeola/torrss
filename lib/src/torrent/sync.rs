@@ -189,10 +189,13 @@ mod tests {
         "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
     const FILM: &str = "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
     const UNCLAIMED: &str = "just some words with no structure at all";
+    /// A whole season the client holds as one torrent.
+    const HOLLOW_PACK: &str = "The.Hollow.Meridian.S04.1080p.Broadcast";
 
     const HOLLOW_KEY: &str = "series-episodes|the hollow meridian|4|6";
     const NEXT_KEY: &str = "series-episodes|the hollow meridian|4|7";
     const FILM_KEY: &str = "feature-films|coastal drift|2024";
+    const PACK_KEY: &str = "series-episodes|the hollow meridian|4|";
 
     fn set(identities: &[&str]) -> HashSet<String> {
         identities.iter().map(|id| (*id).to_owned()).collect()
@@ -233,6 +236,28 @@ mod tests {
             library::identities(&services.db).await.expect("identities"),
             set(&[HOLLOW_KEY, FILM_KEY]),
             "each name reaches the library under its own identity"
+        );
+    }
+
+    #[sqlx::test]
+    async fn sync_stores_a_season_pack_as_a_span(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = SyncState::new();
+        fakes.torrents.seed(HOLLOW_PACK);
+
+        sync(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert_eq!(
+            library::identities(&services.db).await.expect("identities"),
+            set(&[PACK_KEY]),
+            "the empty episode part is what makes the stored key a span"
         );
     }
 

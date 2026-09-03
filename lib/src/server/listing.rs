@@ -105,6 +105,11 @@ pub(super) fn parsed_values(parsed: &Parsed) -> Vec<ParsedValue> {
 /// Interest follows the most specific claimant alone. A disabled child hides
 /// its show even while its base stays enabled, because the child is what
 /// describes this release and an enabled base never rescues it.
+///
+/// A release counts as owned when the library holds it or any span around it.
+/// A stored season pack therefore owns each episode of that season, while a
+/// stored episode never owns the pack, which carries the rest of the season
+/// too.
 pub(super) fn standing(
     engine: &Engine,
     enabled: &HashSet<&'static str>,
@@ -119,7 +124,12 @@ pub(super) fn standing(
         return Standing::Disabled(parsed);
     }
 
-    if owned.contains(&parsed.identity.to_string()) {
+    if parsed
+        .identity
+        .spans()
+        .iter()
+        .any(|span| owned.contains(span))
+    {
         return Standing::Owned(parsed);
     }
 
@@ -138,8 +148,9 @@ mod tests {
     const HOLLOW_720: &str =
         "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
     const NONSENSE: &str = "just some words with no structure at all";
-    /// A whole season announced as one release, named after its folder.
-    const HOLLOW_PACK: &str = "The.Hollow.Meridian.S01.1080p.Broadcast.AAC.Stereo.H.264-PublicWave";
+    /// A whole season announced as one release, named after its folder. It
+    /// covers the season the episode constants above name.
+    const HOLLOW_PACK: &str = "The.Hollow.Meridian.S04.1080p.Broadcast.AAC.Stereo.H.264-PublicWave";
 
     fn parsed(title: &str) -> Standing {
         Standing::Wanted(ENGINE.parse(title).expect("claimed"))
@@ -176,6 +187,38 @@ mod tests {
                 HOLLOW_1080,
             ),
             Standing::Owned(expected),
+        );
+    }
+
+    #[test]
+    fn owned_season_pack_owns_each_episode() {
+        let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &owned_of(HOLLOW_PACK),
+                HOLLOW_1080,
+            ),
+            Standing::Owned(expected),
+            "the pack carries this episode, so the library already holds it"
+        );
+    }
+
+    #[test]
+    fn owned_episode_never_owns_its_pack() {
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &HashSet::from(["series-episodes", "series-hollow-meridian"]),
+                &owned_of(HOLLOW_1080),
+                HOLLOW_PACK,
+            ),
+            parsed(HOLLOW_PACK),
+            "a pack carries more than the one episode the library holds"
         );
     }
 
