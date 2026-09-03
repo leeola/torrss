@@ -7,7 +7,7 @@ use crate::rules::Engine;
 /// Which rulesets currently run.
 ///
 /// The set lives in memory. A restart returns every ruleset to the value
-/// [`crate::mock::Ruleset::enabled`] declares.
+/// [`crate::ruleset::Ruleset::enabled`] declares.
 pub(crate) struct RulesetSwitches {
     enabled: Mutex<HashSet<&'static str>>,
 }
@@ -64,7 +64,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::RulesetSwitches;
-    use crate::mock::fixture::ENGINE;
+    use crate::ruleset::fixture::ENGINE;
 
     #[test]
     fn nothing_is_enabled_at_start() {

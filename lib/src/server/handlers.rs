@@ -21,8 +21,8 @@ use url::Url;
 use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
-    mock::Diff,
     rules::ENGINE,
+    ruleset::Diff,
     server::{
         components::{self, Grabbed, ItemDetails},
         format,
@@ -923,12 +923,12 @@ struct MatchView {
     /// [`Diff::slug`] of the only state to list, or absent for every state.
     diff: Option<String>,
 
-    /// Comma-separated [`mock::Candidate::id`] values held at the top of the
-    /// list.
+    /// Comma-separated [`ruleset::Candidate::id`] values held at the top
+    /// of the list.
     pinned: Option<String>,
 
-    /// Comma-separated [`mock::Field::name`] values flipped between inherited
-    /// and replaced since the last save.
+    /// Comma-separated [`ruleset::Field::name`] values flipped between
+    /// inherited and replaced since the last save.
     replaced: Option<String>,
 }
 

@@ -6,8 +6,8 @@ use topcoat::{
 use super::format;
 use super::listing::ParsedValue;
 use crate::feed::registry::FeedCheck;
-use crate::mock::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::rules::{ENGINE, Engine};
+use crate::ruleset::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
 
 /// Renders a filename with every claimed run tinted by its part.
@@ -623,7 +623,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 #[cfg(test)]
 mod tests {
     use super::passed;
-    use crate::mock::fixture::ENGINE;
+    use crate::ruleset::fixture::ENGINE;
 
     #[test]
     fn passed_names_declared_rulesets_and_keeps_the_rest_by_id() {

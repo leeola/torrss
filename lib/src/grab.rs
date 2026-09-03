@@ -139,7 +139,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::feed::{FeedAuth, FeedItem, fake};
-    use crate::mock::fixture::ENGINE;
+    use crate::ruleset::fixture::ENGINE;
     use crate::services::Services;
     use crate::store;
     use crate::store::grabs::{self, Grab};

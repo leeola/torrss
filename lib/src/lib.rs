@@ -9,4 +9,4 @@ pub mod services;
 pub mod store;
 pub mod torrent;
 
-mod mock;
+mod ruleset;

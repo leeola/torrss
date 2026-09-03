@@ -178,7 +178,7 @@ mod tests {
 
     use super::{ScanReport, ScanState, ScanStatus, scan};
     use crate::clock::Clock;
-    use crate::mock::fixture::ENGINE;
+    use crate::ruleset::fixture::ENGINE;
     use crate::services::Services;
     use crate::store::library;
     use crate::torrent::TorrentError;

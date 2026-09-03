@@ -1,8 +1,13 @@
-//! The types that describe a ruleset and the fields it reads a release
-//! name with.
+//! What a ruleset is made of.
 //!
-//! The premade field kinds live here too, because a kind carries the
-//! pattern a field of that kind matches with.
+//! A ruleset is a set of fields, and each field claims one part of a release
+//! filename. [`Part`] names the vocabulary of parts, and [`Segment`] tags the
+//! run of characters a part claimed. [`FieldKind`] says how a matched string
+//! converts, and a premade kind carries the pattern its fields match with.
+//!
+//! [`Candidate`] and [`Diff`] belong here too. The editor tests a ruleset
+//! against filenames as the reader edits, and a diff state is what each row
+//! reports about the edit in progress.
 //!
 //! Every value is `'static`, so a handler borrows a ruleset rather than
 //! building one per request. That is what a later store has to preserve.

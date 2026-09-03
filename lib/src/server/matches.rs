@@ -25,7 +25,7 @@ use std::ops::Range;
 use regex::Regex;
 use url::form_urlencoded;
 
-use crate::mock::{Diff, FieldKind, Part, ResolvedField, Segment};
+use crate::ruleset::{Diff, FieldKind, Part, ResolvedField, Segment};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
@@ -303,7 +303,7 @@ fn kind_of(label: &str) -> Option<FieldKind> {
 #[cfg(test)]
 mod tests {
     use super::{Edits, PatternError, diff, rules};
-    use crate::mock::{
+    use crate::ruleset::{
         Diff, Field,
         FieldKind::{Season, Text},
         FieldSource,

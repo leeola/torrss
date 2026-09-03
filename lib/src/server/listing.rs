@@ -7,8 +7,8 @@
 
 use std::collections::HashSet;
 
-use crate::mock::Part;
 use crate::rules::{Engine, Parsed};
+use crate::ruleset::Part;
 
 /// Where one title stands against the rulesets and the library.
 #[derive(Debug, PartialEq, Eq)]
@@ -141,7 +141,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{Standing, parsed_values, standing};
-    use crate::mock::fixture::ENGINE;
+    use crate::ruleset::fixture::ENGINE;
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
