@@ -5,6 +5,7 @@ use topcoat::{
 
 use super::format;
 use super::listing::ParsedValue;
+use super::matches::Match;
 use crate::feed::registry::FeedCheck;
 use crate::rules::Engine;
 use crate::ruleset::{FieldKind, FieldSource, Part, ResolvedField, Ruleset, Segment};
@@ -14,10 +15,6 @@ use crate::store::StoredItem;
 ///
 /// Each claimed run links to the field that produced it, anchored inside
 /// `ruleset`'s editor, so a reader jumps from a value to the rule behind it.
-#[allow(
-    dead_code,
-    reason = "the editor's Matches section is the only caller, ahead of a page that renders one"
-)]
 #[component]
 pub(crate) async fn filename(segments: &[Segment<'_>], ruleset: &str) -> Result {
     view! {
@@ -64,6 +61,83 @@ pub(crate) async fn filter_chip(#[into] href: String, label: &str, current: bool
 pub(crate) struct Claimant {
     pub id: String,
     pub name: String,
+}
+
+/// One entry in the diff filter bar, carrying its own count.
+#[component]
+pub(crate) async fn diff_filter(
+    #[into] href: String,
+    label: &str,
+    count: usize,
+    current: bool,
+) -> Result {
+    view! {
+        <a
+            href=(href)
+            class=(class!(
+                "rounded-full border px-3 py-1 text-xs transition-colors",
+                "border-slate-600 bg-slate-800 text-slate-100" if current
+                    else "border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200",
+            ))
+            if current {
+                aria-current="true"
+            }
+        >
+            (label) " " <span class="text-slate-500">(count)</span>
+        </a>
+    }
+}
+
+/// One stored title in the editor, tinted by how the edit changed it.
+///
+/// The pin control is a link rather than a button because pinning lives in
+/// the query string. That keeps the pinned set shareable and survives the
+/// reload that follows every pattern edit.
+#[component]
+pub(crate) async fn match_row(
+    matched: &Match<'_>,
+    ruleset: &str,
+    #[into] pin_href: String,
+    pinned: bool,
+) -> Result {
+    view! {
+        <li
+            id=(format!("match-{}", matched.id))
+            class=(class!(
+                "flex items-start gap-3 rounded-lg border px-3 py-2.5 scroll-mt-24",
+                matched.diff.row_classes(),
+            ))
+        >
+            <a
+                href=(pin_href)
+                // A bool renders as an HTML boolean attribute, which is present or
+                // absent. ARIA reads the literal strings instead.
+                aria-pressed=(if pinned { "true" } else { "false" })
+                title=(if pinned { "Unpin" } else { "Pin to the top" })
+                class=(class!(
+                    "mt-0.5 shrink-0 rounded-md border px-1.5 py-1 text-xs leading-none transition-colors",
+                    "border-amber-400/50 bg-amber-400/10 text-amber-300" if pinned
+                        else "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
+                ))
+            >
+                "pin"
+            </a>
+
+            <div class="min-w-0 flex-1">
+                filename(segments: &matched.segments, ruleset: ruleset)
+
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                    <span class=(class!(
+                        "rounded-full px-2 py-0.5",
+                        matched.diff.badge_classes(),
+                    ))>
+                        (matched.diff.label())
+                    </span>
+                    <span>(&matched.feed)</span>
+                </div>
+            </div>
+        </li>
+    }
 }
 
 /// What the page worked out about one listed release.

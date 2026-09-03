@@ -15,17 +15,13 @@
 //! which reads as the mistake it is. The opposite quietly claims the whole
 //! feed and tells the reader nothing.
 
-// FIXME: No page renders a match, so every item here is unused. The editor's
-// Matches section is the caller this waits on.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 use regex::Regex;
 use url::form_urlencoded;
 
-use crate::ruleset::{Diff, FieldKind, Part, ResolvedField, Segment};
+use crate::ruleset::{Diff, Field, FieldKind, Part, Segment};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
@@ -85,6 +81,10 @@ pub(super) struct Match<'a> {
     pub(super) feed: String,
 }
 
+#[allow(
+    dead_code,
+    reason = "the live re-render parses an edit out of the form and writes it back"
+)]
 impl Edits {
     /// Reads every `field.attribute` pair out of a form-encoded query.
     pub(super) fn parse(query: &str) -> Self {
@@ -149,12 +149,11 @@ impl Edits {
 /// because the form posts every input of a row together and an unchecked box
 /// posts nothing. A caller that builds an edit by hand supplies the checkbox
 /// too, or the field turns optional.
-pub(super) fn rules(fields: &[ResolvedField<'_>], edits: &Edits) -> (Vec<Rule>, Vec<PatternError>) {
+pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<PatternError>) {
     let mut rules = Vec::with_capacity(fields.len());
     let mut errors = Vec::new();
 
-    for resolved in fields {
-        let field = resolved.field;
+    for field in fields {
         let edit = edits.0.get(&field.name);
 
         let kind = edit.and_then(|edit| edit.kind).unwrap_or(field.kind);
@@ -298,9 +297,8 @@ mod tests {
     use crate::ruleset::{
         Diff, Field, FieldKind,
         FieldKind::{Season, Text},
-        FieldSource, Part,
+        Part,
         Part::{Season as SeasonPart, Show},
-        ResolvedField,
     };
 
     fn field(
@@ -336,20 +334,14 @@ mod tests {
         ]
     }
 
-    fn resolved(fields: &[Field]) -> Vec<ResolvedField<'_>> {
-        fields
-            .iter()
-            .map(|field| ResolvedField {
-                field,
-                source: FieldSource::Own,
-            })
-            .collect()
+    fn resolved(fields: &[Field]) -> Vec<&Field> {
+        fields.iter().collect()
     }
 
     const TITLE: &str = "The.Hollow.Meridian.S04E06.1080p";
 
     /// The rules the saved fields produce, with no edit applied.
-    fn saved(fields: &[ResolvedField<'_>]) -> Vec<super::Rule> {
+    fn saved(fields: &[&Field]) -> Vec<super::Rule> {
         rules(fields, &Edits::default()).0
     }
 
@@ -434,14 +426,11 @@ mod tests {
     fn bare() -> Field {
         field("bare", Show, Text, None, true, false)
     }
-    #[test]
 
+    #[test]
     fn a_field_with_no_pattern_at_all_is_an_error() {
         let bare = bare();
-        let fields = [ResolvedField {
-            field: &bare,
-            source: FieldSource::Own,
-        }];
+        let fields = [&bare];
 
         assert_eq!(
             rules(&fields, &Edits::default()).1,

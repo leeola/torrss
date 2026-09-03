@@ -14,7 +14,7 @@ use topcoat::{
         },
         page, path_param, query_params, route,
     },
-    view::{class, view},
+    view::{class, component, view},
 };
 use url::Url;
 
@@ -22,13 +22,14 @@ use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
     rules::Engine,
-    ruleset::Ruleset,
     ruleset::form::{self, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
+    ruleset::{Diff, Field, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format,
         listing::{self, Standing},
+        matches::{self, Edits, Match, PatternError},
         query::{self, IdList},
     },
     services::Services,
@@ -942,15 +943,30 @@ async fn remove_feed(cx: &Cx) -> Result<SeeOther> {
 /// shares an exact view and keeps it across the reload that follows a save.
 #[query_params(error = bad_request)]
 struct MatchView {
+    /// [`Diff::slug`] of the only state to list, or absent for every state.
+    diff: Option<String>,
+
+    /// Comma-separated stored item ids held at the top of the match list.
+    ///
+    /// The ids are the feed items the section matches against, so a pin
+    /// survives an edit that changes which rules claim the title.
+    pinned: Option<String>,
+
     /// Comma-separated [`ruleset::Field::name`] values flipped between
     /// inherited and replaced since the last save.
     replaced: Option<String>,
 }
 
 impl MatchView {
+    fn filter(&self) -> Option<Diff> {
+        Diff::from_slug(self.diff.as_deref()?)
+    }
+
     /// The whole query state, ready to rebuild any link on the page.
     fn query(&self) -> EditorQuery<'_> {
         EditorQuery {
+            diff: self.filter(),
+            pinned: IdList::new(self.pinned.as_deref()),
             replaced: IdList::new(self.replaced.as_deref()),
         }
     }
@@ -959,27 +975,43 @@ impl MatchView {
 /// Every key the editor carries in its URL.
 ///
 /// A control rebuilds the whole struct with one field changed rather than
-/// editing a single query key, so a link never drops the state it does not
-/// name.
+/// editing a single query key. Changing the filter therefore never drops the
+/// pins, and replacing a field never drops the filter.
 #[derive(Clone, Copy)]
 struct EditorQuery<'a> {
+    diff: Option<Diff>,
+    pinned: IdList<'a>,
     replaced: IdList<'a>,
 }
 
 impl EditorQuery<'_> {
     fn url(&self, ruleset: &str, anchor: &str) -> String {
-        self.build(ruleset, anchor, self.replaced.as_str())
+        self.build(
+            ruleset,
+            anchor,
+            self.pinned.as_str(),
+            self.replaced.as_str(),
+        )
+    }
+
+    /// The same query with the pin list replaced.
+    fn with_pins(&self, pins: &str, ruleset: &str, anchor: &str) -> String {
+        self.build(ruleset, anchor, pins, self.replaced.as_str())
     }
 
     /// The same query with the replaced-field list replaced.
     fn with_replaced(&self, replaced: &str, ruleset: &str, anchor: &str) -> String {
-        self.build(ruleset, anchor, replaced)
+        self.build(ruleset, anchor, self.pinned.as_str(), replaced)
     }
 
-    fn build(&self, ruleset: &str, anchor: &str, replaced: &str) -> String {
+    fn build(&self, ruleset: &str, anchor: &str, pinned: &str, replaced: &str) -> String {
         query::url(
             &format!("/admin/rulesets/{ruleset}"),
-            &[("replaced", replaced)],
+            &[
+                ("diff", self.diff.map_or("", Diff::slug)),
+                ("pinned", pinned),
+                ("replaced", replaced),
+            ],
             anchor,
         )
     }
@@ -999,6 +1031,17 @@ async fn ruleset_editor(cx: &Cx) -> Result {
     let fields = ruleset.resolved_fields(parent, &replacements);
     let inheriting = parent.is_some();
     let enabled = ruleset.enabled;
+
+    let services = app_context::<Services>(cx);
+    let items = store::items(&services.db, None).await?;
+    let saved = fields.iter().map(|field| field.field).collect::<Vec<_>>();
+    let (matched, errors) = compute_matches(
+        app_context::<Arc<FeedRegistry>>(cx),
+        &engine,
+        ruleset,
+        &items,
+        &saved,
+    );
 
     view! {
         <nav class="text-sm text-slate-500">
@@ -1091,6 +1134,155 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 
         </form>
 
+        match_section(
+            ruleset: &ruleset.id,
+            matched: &matched,
+            errors: &errors,
+            query: q,
+        )
+    }
+}
+
+/// Runs the saved rules and the edited rules over every stored title.
+///
+/// `after` is the edited field list. The page passes the saved fields until
+/// the form feeds its own rows in, so a title reads unchanged rather than
+/// gained or lost on a page nobody has edited yet.
+///
+/// The items arrive from the caller rather than being read here, because a
+/// [`Match`] borrows the title it describes and cannot outlive the read.
+fn compute_matches<'a>(
+    registry: &FeedRegistry,
+    engine: &Engine,
+    ruleset: &Ruleset,
+    items: &'a [StoredItem],
+    after: &[&Field],
+) -> (Vec<Match<'a>>, Vec<PatternError>) {
+    let saved = ruleset.resolved_fields(engine.parent(ruleset), &[]);
+    let saved = saved.iter().map(|field| field.field).collect::<Vec<_>>();
+
+    let (before, _) = matches::rules(&saved, &Edits::default());
+    let (after, errors) = matches::rules(after, &Edits::default());
+
+    let matched = items
+        .iter()
+        .map(|item| {
+            let (diff, segments) = matches::diff(&before, &after, &item.item.title);
+
+            Match {
+                id: item.id,
+                segments,
+                diff,
+                feed: feed_name(registry, item),
+            }
+        })
+        .collect();
+
+    (matched, errors)
+}
+
+/// The stored titles the edited rules claim, and what the edit changed.
+///
+/// A pinned title stays visible under every filter. Pinning exists to keep
+/// one name in sight while the patterns above it change.
+#[component]
+async fn match_section(
+    ruleset: &str,
+    matched: &[Match<'_>],
+    errors: &[PatternError],
+    query: EditorQuery<'_>,
+) -> Result {
+    let filter = query.diff;
+    let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
+
+    let (pinned, rest): (Vec<_>, Vec<_>) = matched
+        .iter()
+        .partition(|one| query.pinned.contains(&one.id.to_string()));
+
+    let listed: Vec<_> = rest
+        .into_iter()
+        .filter(|one| filter.is_none_or(|state| one.diff == state))
+        .collect();
+
+    view! {
+        <section id="matches" class="mt-8 scroll-mt-24">
+            <div class="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
+                    <p class="mt-1 text-sm text-slate-400">
+                        (format::count(matched.len(), "stored title", "stored titles"))
+                        " against the edited rules."
+                    </p>
+                </div>
+                <p class="text-xs text-slate-500">
+                    (count(Diff::Added)) " gained, " (count(Diff::Removed)) " lost"
+                </p>
+            </div>
+
+            for error in errors {
+                <p class="mt-2 text-xs text-rose-300">(&error.field) ": " (&error.message)</p>
+            }
+
+            <nav class="mt-4 flex flex-wrap gap-2">
+                components::diff_filter(
+                    href: EditorQuery { diff: None, ..query }.url(ruleset, "#matches"),
+                    label: "All",
+                    count: matched.len(),
+                    current: filter.is_none(),
+                )
+                for state in Diff::ALL {
+                    components::diff_filter(
+                        href: EditorQuery { diff: Some(*state), ..query }.url(ruleset, "#matches"),
+                        label: state.label(),
+                        count: count(*state),
+                        current: filter == Some(*state),
+                    )
+                }
+            </nav>
+
+            if !pinned.is_empty() {
+                <div class="mt-4 rounded-lg border border-amber-400/25 bg-amber-400/5 px-3 py-3">
+                    <h3 class="text-xs font-medium tracking-wide text-amber-300/80 uppercase">
+                        "Pinned"
+                    </h3>
+                    <ul class="mt-2 flex flex-col gap-2">
+                        for one in pinned {
+                            components::match_row(
+                                matched: one,
+                                ruleset: ruleset,
+                                pin_href: query.with_pins(
+                                        &query.pinned.toggled(&one.id.to_string()),
+                                        ruleset,
+                                        &format!("#match-{}", one.id),
+                                        ),
+                                pinned: true,
+                            )
+                        }
+                    </ul>
+                </div>
+            }
+
+            if listed.is_empty() {
+                <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                    "No stored title sits in this state."
+                </p>
+            } else {
+                <ul class="mt-4 flex flex-col gap-2">
+                    for one in listed {
+                        components::match_row(
+                            matched: one,
+                            ruleset: ruleset,
+                            pin_href: query.with_pins(
+                                    &query.pinned.toggled(&one.id.to_string()),
+                                    ruleset,
+                                    &format!("#match-{}", one.id),
+                                    ),
+                            pinned: false,
+                        )
+                    }
+                </ul>
+            }
+        </section>
     }
 }
 

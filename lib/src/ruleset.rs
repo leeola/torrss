@@ -88,10 +88,6 @@ impl Part {
         Self::ALL.iter().copied().find(|part| part.slug() == slug)
     }
 
-    #[allow(
-        dead_code,
-        reason = "read by the highlighted-filename render, ahead of a page that renders one"
-    )]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Show => "show",
@@ -156,10 +152,6 @@ impl Part {
 /// in order reproduce the filename exactly, so the highlighted render never
 /// drifts from the name it describes.
 #[derive(Debug)]
-#[allow(
-    dead_code,
-    reason = "read by the highlighted-filename render, ahead of a page that renders one"
-)]
 pub(crate) struct Segment<'a> {
     pub(crate) text: &'a str,
     pub(crate) part: Option<Part>,
@@ -304,10 +296,6 @@ pub(crate) enum Diff {
     Excluded,
 }
 
-#[allow(
-    dead_code,
-    reason = "the labels and classes the Matches section dresses a row with, ahead of a page that renders one"
-)]
 impl Diff {
     /// Every state, in the order the filter bar lists them.
     pub(crate) const ALL: &'static [Self] =
