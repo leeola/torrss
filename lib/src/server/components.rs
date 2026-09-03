@@ -462,28 +462,11 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
     }
 }
 
-/// A button that posts to `action`, for a write with nothing to configure.
+/// A link that carries the reader to a page, styled as a button.
 ///
-/// The form wraps a single button because the write needs no input beyond the
-/// action itself. A link lets a crawler or a prefetch trigger the write.
-#[component]
-pub(crate) async fn action_button(#[into] action: String, label: &str) -> Result {
-    view! {
-        <form method="post" action=(action) class="contents">
-            <button
-                type="submit"
-                class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
-            >
-                (label)
-            </button>
-        </form>
-    }
-}
-
-/// A link styled like [`action_button`], for a read that runs on navigation.
-///
-/// A form is right for a write and wrong for a read. A POST prompts the
-/// reader to resubmit on reload, and a link does not.
+/// It reads rather than writes, so it is a link and not a control. A write
+/// belongs to a procedure the page calls, which leaves the reader where they
+/// are.
 #[component]
 pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
     view! {

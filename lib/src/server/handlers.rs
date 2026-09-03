@@ -581,12 +581,6 @@ async fn grab_items(cx: &Cx, selected: String) -> Result<f64> {
     Ok(taken)
 }
 
-/// Where a switch returns the reader after it flips a ruleset.
-#[query_params(error = bad_request)]
-struct SwitchReturn {
-    back: Option<String>,
-}
-
 /// Flips one ruleset between enabled and disabled, and reports the new state.
 ///
 /// The caller renders from the returned flag rather than from what it sent,
@@ -812,13 +806,13 @@ async fn feed_list(cx: &Cx, version: f64) -> Result {
 }
 
 #[page("/admin/client")]
-async fn client(cx: &Cx) -> Result {
-    let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
-    let now = app_context::<Services>(cx).clock.now();
-
+async fn client() -> Result {
     view! {
         signal version = 0.0;
         signal scanning = false;
+        // The feed the current check reads. It disables that one button and
+        // leaves the others alive.
+        signal busy = String::new();
 
         <h1 class="text-2xl font-semibold tracking-tight">"Client"</h1>
         <p class="mt-1 text-sm text-slate-400">
@@ -850,59 +844,17 @@ async fn client(cx: &Cx) -> Result {
             "How each feed answered when it was last checked."
         </p>
 
-        if entries.is_empty() {
-            <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No feed is registered. "
-                <a
-                    href="/admin/feeds"
-                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                >
-                    "Add a feed."
-                </a>
-            </p>
-        } else {
-            <ul class="mt-2 flex flex-col gap-2">
-                for entry in &entries {
-                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
-                        <div class="min-w-0">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="text-sm text-slate-200">(&entry.name)</span>
-                                components::check_badge(check: entry.check.as_ref())
-                            </div>
-
-                            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
-                                (entry.url.as_str())
-                            </p>
-
-                            <p class="mt-1 text-xs text-slate-500">
-                                match &entry.check {
-                                    None => "never checked",
-                                    Some(check) => match &check.outcome {
-                                        Ok(ingest) => {
-                                            (format::count(ingest.items, "item", "items"))
-                                            ", " (ingest.added) " new, checked "
-                                            (format::age(now, Some(check.at)))
-                                        },
-                                        Err(error) => {
-                                            "failed: " (error) ", checked "
-                                            (format::age(now, Some(check.at)))
-                                        },
-                                    },
-                                }
-                            </p>
-                        </div>
-
-                        components::action_button(
-                            action: format!(
-                                "/admin/feeds/{}/check?back=/admin/client",
-                                entry.id,
-                            ),
-                            label: "Test",
-                        )
-                    </li>
-                }
-            </ul>
-        }
+        // A Test button is rendered by the shard, so its click is caught
+        // here, where the signals live.
+        <div @click=$(async |e: Event| if e.target.name == "check-feed" {
+            let id = e.target.value;
+            busy.set(id.clone());
+            check_feed_now(id).await;
+            busy.set("".to_owned());
+            version.increment();
+        })>
+            feed_checks(version: $(version.get()), busy: $(busy.get()))
+        </div>
     }
 }
 
@@ -964,6 +916,79 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
     }
 }
 
+/// Every registered feed, with how it last answered and a control to ask now.
+///
+/// `busy` names the one feed a check is reading, so its button alone goes
+/// dead while the others stay live. The label is plain server text, because
+/// a write to `busy` re-renders the whole block anyway.
+#[shard]
+async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result {
+    // This is read for its change alone. A finished check bumps it so the
+    // row reports the answer that just arrived.
+    let _ = version;
+
+    let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
+    let now = app_context::<Services>(cx).clock.now();
+
+    view! {
+        if entries.is_empty() {
+            <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No feed is registered. "
+                <a
+                    href="/admin/feeds"
+                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                >
+                    "Add a feed."
+                </a>
+            </p>
+        } else {
+            <ul class="mt-2 flex flex-col gap-2">
+                for entry in &entries {
+                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-sm text-slate-200">(&entry.name)</span>
+                                components::check_badge(check: entry.check.as_ref())
+                            </div>
+
+                            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
+                                (entry.url.as_str())
+                            </p>
+
+                            <p class="mt-1 text-xs text-slate-500">
+                                match &entry.check {
+                                    None => "never checked",
+                                    Some(check) => match &check.outcome {
+                                        Ok(ingest) => {
+                                            (format::count(ingest.items, "item", "items"))
+                                            ", " (ingest.added) " new, checked "
+                                            (format::age(now, Some(check.at)))
+                                        },
+                                        Err(error) => {
+                                            "failed: " (error) ", checked "
+                                            (format::age(now, Some(check.at)))
+                                        },
+                                    },
+                                }
+                            </p>
+                        </div>
+
+                        <button
+                            type="button"
+                            name="check-feed"
+                            value=(&entry.id)
+                            disabled=(busy == entry.id)
+                            class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-600"
+                        >
+                            if busy == entry.id { "Checking..." } else { "Test" }
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+    }
+}
+
 /// Scans the library from the torrent client now, and reports what matched.
 ///
 /// This runs the same pass the scan task runs, so a reader who just added a
@@ -999,34 +1024,23 @@ async fn scan_now(cx: &Cx) -> Result<f64> {
     Ok(matched as f64)
 }
 
-/// Checks one feed now, then returns to `back`.
+/// Checks one feed now, and reports whether one is registered under that id.
 ///
-/// A feed that fails to answer still counts as checked, so this reports a
-/// missing feed rather than a failed fetch. The recorded outcome is what
+/// A feed that fails to answer still counts as checked, so a `false` reports
+/// a missing feed rather than a failed fetch. The recorded outcome is what
 /// carries the failure to the page.
-#[route(POST "/admin/feeds/{feed_id}/check")]
-async fn check_feed(cx: &Cx) -> Result<SeeOther> {
-    let back = query_params::<SwitchReturn>(cx)?
-        .back
-        .clone()
-        .unwrap_or_else(|| "/admin/client".to_owned());
-
+#[procedure]
+async fn check_feed_now(cx: &Cx, id: String) -> Result<bool> {
     let services = app_context::<Services>(cx);
 
-    let checked = registry::check(
+    Ok(registry::check(
         app_context::<Arc<FeedRegistry>>(cx),
         &services.db,
         services.feeds.as_ref(),
         services.clock.as_ref(),
-        path_param::<FeedId>(cx),
+        &id,
     )
-    .await;
-
-    if !checked {
-        return Err(not_found().into());
-    }
-
-    Ok(see_other(back))
+    .await)
 }
 
 /// Fetches one feed now and shows what it carries.
