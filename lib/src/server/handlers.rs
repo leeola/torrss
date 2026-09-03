@@ -251,17 +251,6 @@ async fn feed(cx: &Cx) -> Result {
     let active_id = view.active().unwrap_or_default().to_owned();
     let show_all = view.show_all();
 
-    // The Fetch now post still leaves the page, so it carries the view it
-    // returns to. The procedure that replaces it drops this.
-    let back = query::url(
-        "/",
-        &[
-            ("feed", &active_id),
-            ("all", if show_all { "1" } else { "" }),
-        ],
-        "#results",
-    );
-
     view! {
         signal filter = active_id;
         signal all = show_all;
@@ -269,6 +258,7 @@ async fn feed(cx: &Cx) -> Result {
         signal kept = String::new();
         signal count = 0.0;
         signal version = 0.0;
+        signal fetching = false;
         signal grabbing = false;
 
         <script>(Unescaped::new_unchecked(FEED_ACTIONS))</script>
@@ -339,10 +329,23 @@ async fn feed(cx: &Cx) -> Result {
                 </div>
 
                 <div class="flex items-center gap-2">
-                    components::action_button(
-                        action: query::url("/feeds/check", &[("back", back.as_str())], ""),
-                        label: "Fetch now",
-                    )
+                    <button
+                        type="button"
+                        :disabled=$(fetching.get())
+                        class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-600"
+                        @click=$(async |_e: Event| {
+                            fetching.set(true);
+                            fetch_feeds().await;
+                            fetching.set(false);
+                            // A pass adds rows, so the listing refetches. The
+                            // selection goes with it, because the rows the
+                            // reader picked are still there.
+                            kept.set(selected.get());
+                            version.increment();
+                        })
+                    >
+                        $(if fetching.get() { "Fetching..." } else { "Fetch now" })
+                    </button>
 
                     <button
                         type="button"
@@ -611,7 +614,7 @@ async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
     Ok(see_other(back))
 }
 
-/// Checks every registered feed now, then returns to `back`.
+/// Checks every registered feed now and reports how many it passed over.
 ///
 /// This runs the same pass the poll task runs, so a reader who just added a
 /// feed sees its items without waiting out the interval.
@@ -619,24 +622,20 @@ async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
 /// A pass that overlaps the poll task is harmless. Ingest upserts inside a
 /// transaction keyed on the feed and the item's guid, so two passes converge
 /// on the same rows rather than doubling them.
-#[route(POST "/feeds/check")]
-async fn check_feeds(cx: &Cx) -> Result<SeeOther> {
-    let back = query_params::<SwitchReturn>(cx)?
-        .back
-        .clone()
-        .unwrap_or_else(|| "/".to_owned());
-
+#[procedure]
+async fn fetch_feeds(cx: &Cx) -> Result<f64> {
+    let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
 
     registry::check_all(
-        app_context::<Arc<FeedRegistry>>(cx),
+        registry,
         &services.db,
         services.feeds.as_ref(),
         services.clock.as_ref(),
     )
     .await;
 
-    Ok(see_other(back))
+    Ok(registry.entries().len() as f64)
 }
 
 /// Builds the action a ruleset's switch posts to.
