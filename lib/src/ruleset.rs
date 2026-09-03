@@ -352,6 +352,10 @@ pub(crate) struct Field {
     /// A pattern declared on a premade kind wins over the built-in one. That
     /// is how a ruleset replaces a season with a single constant while
     /// keeping the kind's normalization.
+    ///
+    /// `None` on a kind that supplies none is a blank. Only a template
+    /// declares one, naming the part and the flags and leaving the regex for
+    /// the ruleset built on it to write.
     pub(crate) pattern: Option<String>,
 
     pub(crate) required: bool,
@@ -365,18 +369,14 @@ pub(crate) struct Field {
 }
 
 impl Field {
-    /// Returns the regex that reads this field's value.
+    /// Returns the regex that reads this field's value, or [`None`] when the
+    /// field is a blank.
     ///
-    /// # Panics
-    ///
-    /// Panics when the field declares no pattern and its kind supplies none.
-    /// The rulesets are checked in beside the code, so a text field without a
-    /// pattern is a programming error rather than bad input.
-    pub(crate) fn matcher(&self) -> &str {
-        self.pattern
-            .as_deref()
-            .or_else(|| self.kind.pattern())
-            .expect("a field with no pattern has a premade kind")
+    /// A blank is what a template leaves for the ruleset based on it to fill.
+    /// It reads no value of its own, so a ruleset that inherits one without
+    /// replacing it never compiles.
+    pub(crate) fn matcher(&self) -> Option<&str> {
+        self.pattern.as_deref().or_else(|| self.kind.pattern())
     }
 }
 

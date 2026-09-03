@@ -79,9 +79,12 @@ impl RulesetForm {
     /// # Errors
     ///
     /// Returns the first row that names a part or a type this build does not
-    /// know, or that leaves a pattern empty where the type supplies none. A
-    /// row with an empty name is skipped rather than refused, because that is
-    /// what an added row looks like before the reader fills it in.
+    /// know, or that leaves a pattern empty where the type supplies none and
+    /// the form is no template. A template keeps that blank for the ruleset
+    /// built on it to fill.
+    ///
+    /// A row with an empty name is skipped rather than refused, because that
+    /// is what an added row looks like before the reader fills it in.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
         let mut name = String::new();
         let mut based_on = String::new();
@@ -110,7 +113,7 @@ impl RulesetForm {
             fields: rows
                 .into_values()
                 .filter(|row| !row.name.trim().is_empty())
-                .map(field)
+                .map(|row| field(row, template))
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -226,7 +229,11 @@ fn read_row(rows: &mut BTreeMap<usize, Row>, key: &str, value: &str) {
 ///
 /// The pattern is dropped when the kind supplies one, so a premade kind keeps
 /// its built-in regex rather than storing a copy the editor rendered.
-fn field(row: Row) -> Result<Field, FormError> {
+///
+/// A template keeps an empty pattern as a blank rather than refusing it. A
+/// template names the part and the flags, and the ruleset built on it writes
+/// the regex.
+fn field(row: Row, template: bool) -> Result<Field, FormError> {
     let kind = FieldKind::from_label(&row.kind).context(UnknownKindSnafu { kind: &row.kind })?;
     let part = Part::from_slug(&row.part).context(UnknownPartSnafu { part: &row.part })?;
 
@@ -235,12 +242,13 @@ fn field(row: Row) -> Result<Field, FormError> {
         None => {
             let pattern = row.pattern.unwrap_or_default();
 
-            ensure!(
-                !pattern.trim().is_empty(),
-                MissingPatternSnafu { field: &row.name }
-            );
+            if pattern.trim().is_empty() {
+                ensure!(template, MissingPatternSnafu { field: &row.name });
 
-            Some(pattern)
+                None
+            } else {
+                Some(pattern)
+            }
         }
     };
 
@@ -362,6 +370,31 @@ mod tests {
                 field: "show".to_owned()
             }),
             "a text field carries its own pattern or reads nothing"
+        );
+    }
+
+    #[test]
+    fn a_template_keeps_a_blank_pattern() {
+        const ROW: &str = "field.0.name=show&field.0.part=show&field.0.kind=text&field.0.pattern=";
+
+        let parsed = RulesetForm::parse(&format!("name=Series&template=on&{ROW}"))
+            .expect("a template declares a blank");
+
+        assert_eq!(
+            parsed
+                .fields
+                .iter()
+                .map(|field| &field.pattern)
+                .collect::<Vec<_>>(),
+            vec![&None],
+            "the blank is what the ruleset based on this fills in"
+        );
+        assert_eq!(
+            RulesetForm::parse(&format!("name=Series&{ROW}")),
+            Err(FormError::MissingPattern {
+                field: "show".to_owned()
+            }),
+            "only a template leaves one"
         );
     }
 

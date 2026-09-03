@@ -341,7 +341,7 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
             data-name=(&field.name)
             data-part=(field.part.slug())
             data-kind=(field.kind.label())
-            data-pattern=(field.matcher())
+            data-pattern=(field.matcher().unwrap_or_default())
             data-required=(if field.required { "on" } else { "" })
             data-identity=(if field.identity { "on" } else { "" })
         >
@@ -391,20 +391,30 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
 
             <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Pattern"</label>
+                // The input locks only where the kind supplies the pattern and
+                // the field takes it. A blank has nothing to take, and an
+                // override is the reader's own text, so both stay editable.
                 <input
                     type="text"
                     name=(format!("field.{index}.pattern"))
-                    value=(field.matcher())
-                    disabled=(locked || field.pattern.is_none())
-                    title=(field.pattern.is_none().then_some("The kind supplies this pattern"))
+                    value=(field.matcher().unwrap_or_default())
+                    disabled=(locked || (field.kind.pattern().is_some() && field.pattern.is_none()))
+                    title=((field.kind.pattern().is_some() && field.pattern.is_none())
+                        .then_some("The kind supplies this pattern"))
+                    placeholder=(field.matcher().is_none().then_some(
+                        "blank. The ruleset based on this template fills it in."
+                    ))
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
                 >
                 match resolved.source {
                     FieldSource::Overridden { template } => <p
                         class="mt-1 truncate font-mono text-[11px] text-slate-600"
-                        title=(template.matcher())
+                        title=(template.matcher().unwrap_or_default())
                     >
-                        "replaces " (template.matcher())
+                        match template.matcher() {
+                            Some(matcher) => { "replaces " (matcher) },
+                            None => "fills in a blank",
+                        }
                     </p>,
                     _ => "",
                 }

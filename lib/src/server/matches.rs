@@ -183,7 +183,9 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<Pattern
             None => {
                 errors.push(PatternError {
                     field: field.name.to_owned(),
-                    message: "no pattern".to_owned(),
+                    message:
+                        "no pattern. A template leaves one blank for the ruleset based on it to fill."
+                            .to_owned(),
                 });
 
                 None
@@ -435,7 +437,9 @@ mod tests {
             rules(&fields, &Edits::default()).1,
             [PatternError {
                 field: "bare".to_owned(),
-                message: "no pattern".to_owned(),
+                message:
+                    "no pattern. A template leaves one blank for the ruleset based on it to fill."
+                        .to_owned(),
             }],
             "a text kind supplies no pattern of its own"
         );

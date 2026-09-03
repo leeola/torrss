@@ -128,6 +128,11 @@ pub(crate) enum EngineError {
         "template {ruleset} is based on another template, and a template stands alone"
     ))]
     NestedTemplate { ruleset: String },
+
+    #[snafu(display(
+        "ruleset {ruleset} leaves field {field} without a pattern, which only a template does"
+    ))]
+    BlankField { ruleset: String, field: String },
 }
 
 struct Compiled {
@@ -311,6 +316,10 @@ impl Compiled {
 /// A template claims nothing, so nothing here is kept. The patterns still
 /// compile, because the reader edits them here and a bad regex belongs to
 /// the template that carries it.
+///
+/// A blank field has no pattern to compile. It is what the template exists
+/// to declare, so it passes here and is refused only where a ruleset
+/// inherits it without writing one.
 fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
     ensure!(
         ruleset.based_on.is_none(),
@@ -320,7 +329,11 @@ fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
     );
 
     for field in &ruleset.fields {
-        Regex::new(field.matcher()).context(PatternSnafu {
+        let Some(matcher) = field.matcher() else {
+            continue;
+        };
+
+        Regex::new(matcher).context(PatternSnafu {
             ruleset: ruleset.id.clone(),
             field: field.name.clone(),
         })?;
@@ -331,12 +344,17 @@ fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
 
 impl CompiledField {
     fn new(field: &Field, ruleset: &str) -> Result<Self, EngineError> {
+        let matcher = field.matcher().context(BlankFieldSnafu {
+            ruleset: ruleset.to_owned(),
+            field: field.name.clone(),
+        })?;
+
         Ok(Self {
             name: field.name.clone(),
             kind: field.kind,
             required: field.required,
             identity: field.identity,
-            regex: Regex::new(field.matcher()).context(PatternSnafu {
+            regex: Regex::new(matcher).context(PatternSnafu {
                 ruleset: ruleset.to_owned(),
                 field: field.name.clone(),
             })?,
@@ -398,8 +416,8 @@ fn normalize(kind: FieldKind, raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Engine, EngineError, Identity};
-    use crate::ruleset::Ruleset;
     use crate::ruleset::fixture::ENGINE;
+    use crate::ruleset::{Field, FieldKind, Part, Ruleset};
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -611,6 +629,58 @@ mod tests {
         assert!(
             matches!(error, EngineError::NestedTemplate { ref ruleset } if ruleset == "second"),
             "a template stands alone: {error}"
+        );
+    }
+
+    /// Names a field with the pattern `pattern`, or a blank when it is
+    /// [`None`].
+    fn show_field(pattern: Option<&str>) -> Field {
+        Field {
+            name: "show".to_owned(),
+            part: Part::Show,
+            kind: FieldKind::Text,
+            pattern: pattern.map(ToOwned::to_owned),
+            required: true,
+            identity: true,
+        }
+    }
+
+    #[test]
+    fn a_blank_template_field_left_unreplaced_is_an_error() {
+        let template = Ruleset {
+            fields: vec![show_field(None)],
+            ..based_on("series", None, true)
+        };
+
+        let Err(error) = Engine::from_rulesets(vec![
+            template.clone(),
+            based_on("bare", Some("series"), false),
+        ]) else {
+            panic!("an unreplaced blank never compiles");
+        };
+
+        assert!(
+            matches!(
+                error,
+                EngineError::BlankField { ref ruleset, ref field }
+                    if ruleset == "bare" && field == "show"
+            ),
+            "the ruleset owes the template a pattern: {error}"
+        );
+
+        let engine = Engine::from_rulesets(vec![
+            template,
+            Ruleset {
+                fields: vec![show_field(Some("^(?<show>Ashfall)"))],
+                ..based_on("ashfall", Some("series"), false)
+            },
+        ])
+        .expect("a ruleset that replaces the blank compiles");
+
+        assert_eq!(
+            engine.claimants("Ashfall.S01E01"),
+            vec!["ashfall"],
+            "and claims what the pattern it wrote describes"
         );
     }
 
