@@ -1,21 +1,16 @@
-//! Query-string helpers for the id lists the pages carry in the URL.
+//! Query-string helpers for the id lists the pages carry.
 //!
-//! Selecting a feed result lives in the query string rather than in browser
-//! state. That keeps a view shareable, and it survives the full page load
-//! that every control triggers.
+//! The list is what the grab procedure receives and what the listing shard
+//! reads a row's checked state from. It is comma-separated because the
+//! browser builds it from a `Set` with `join`.
 
-/// A comma-separated id list held in one query parameter.
+/// A comma-separated id list held in one value.
 #[derive(Clone, Copy)]
 pub(super) struct IdList<'a>(&'a str);
 
 impl<'a> IdList<'a> {
     pub(super) fn new(raw: Option<&'a str>) -> Self {
         Self(raw.unwrap_or_default())
-    }
-
-    /// The raw parameter value, ready to write back into a URL.
-    pub(super) fn as_str(self) -> &'a str {
-        self.0
     }
 
     /// The ids collected, for a caller that tests membership many times.
@@ -25,30 +20,6 @@ impl<'a> IdList<'a> {
 
     pub(super) fn contains(self, id: &str) -> bool {
         self.split().any(|entry| entry == id)
-    }
-
-    pub(super) fn len(self) -> usize {
-        self.split().count()
-    }
-
-    pub(super) fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
-    /// The list with `id` removed when present, and appended otherwise.
-    pub(super) fn toggled(self, id: &str) -> String {
-        if self.contains(id) {
-            return self
-                .split()
-                .filter(|entry| *entry != id)
-                .collect::<Vec<_>>()
-                .join(",");
-        }
-
-        match self.0 {
-            "" => id.to_owned(),
-            list => format!("{list},{id}"),
-        }
     }
 
     fn split(self) -> impl Iterator<Item = &'a str> {

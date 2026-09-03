@@ -173,7 +173,11 @@ pub(crate) struct Grabbed {
     pub rulesets: Vec<String>,
 }
 
-/// One stored feed item, prefixed by the control that selects it.
+/// One stored feed item, prefixed by the checkbox that selects it.
+///
+/// The checkbox posts nothing. The page reads it, keeps the selection in the
+/// browser, and hands the set to the grab procedure, so a click changes one
+/// box and nothing else.
 ///
 /// A row the page did not want dims rather than disappears, because a reader
 /// who asked to see everything still has to tell it from what they want.
@@ -186,20 +190,24 @@ pub(crate) async fn item_row(
     engine: &Engine,
     item: &StoredItem,
     details: &ItemDetails,
-    #[into] toggle_href: String,
     selected: bool,
 ) -> Result {
     view! {
         <li
             id=(format!("item-{}", item.id))
             class=(class!(
-                "flex items-start gap-3 rounded-lg border px-4 py-3 scroll-mt-24 transition-colors",
-                "border-sky-400/50 bg-sky-400/5" if selected
-                    else "border-slate-800 bg-slate-900/40 hover:border-slate-700",
+                "flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 scroll-mt-24 transition-colors hover:border-slate-700 has-checked:border-sky-400/50 has-checked:bg-sky-400/5",
                 "opacity-60" if details.hidden.is_some(),
             ))
         >
-            checkbox(href: toggle_href, checked: selected, label: "Select this release")
+            <input
+                type="checkbox"
+                name="item"
+                value=(item.id.to_string())
+                checked=(selected)
+                aria-label="Select this release"
+                class="mt-1 size-4 shrink-0 rounded border-slate-700 bg-slate-950"
+            >
 
             <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
@@ -301,29 +309,6 @@ fn passed(engine: &Engine, rulesets: &[String]) -> String {
         .join(", ")
 }
 
-/// A checkbox that toggles by navigation rather than by script.
-///
-/// The control is a link because the selection lives in the query string. A
-/// real `input` would hold the state in the browser instead, where a reload
-/// drops it and no one can share the result.
-#[component]
-pub(crate) async fn checkbox(#[into] href: String, checked: bool, label: &str) -> Result {
-    view! {
-        <a
-            href=(href)
-            role="checkbox"
-            aria-checked=(if checked { "true" } else { "false" })
-            aria-label=(label)
-            class=(class!(
-                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border text-[10px] leading-none transition-colors",
-                "border-sky-400 bg-sky-400 text-slate-900" if checked
-                    else "border-slate-600 text-transparent hover:border-slate-400",
-            ))
-        >
-            "x"
-        </a>
-    }
-}
 /// One extraction rule inside the ruleset editor.
 ///
 /// The row is anchored by its part rather than its field name, because that

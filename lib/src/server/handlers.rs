@@ -14,7 +14,7 @@ use topcoat::{
         },
         page, path_param, query_params, route,
     },
-    runtime::{Event, shard},
+    runtime::{Event, procedure, shard},
     view::Unescaped,
     view::{class, component, view},
 };
@@ -102,15 +102,55 @@ window.torrssRows = {
 };
 ";
 
-/// Controls which stored items show and which of them are selected.
+/// The selection the feed page keeps while the listing re-renders.
+///
+/// The set is the one source of truth in the browser, so an id checked under
+/// one filter survives a re-render that lists other rows. The signal beside
+/// it only mirrors the set for the server.
+///
+/// Every operation returns the list the grab procedure receives, so one
+/// handler writes one signal from one call.
+const FEED_ACTIONS: &str = r"
+window.torrssFeed = {
+  chosen: new Set(),
+  boxes: () => [...document.querySelectorAll('#listing input[name=\'item\']')],
+  list: () => [...window.torrssFeed.chosen].join(','),
+  toggle: (value) => {
+    const box = window.torrssFeed.boxes().find((one) => one.value === value);
+    if (box && box.checked) {
+      window.torrssFeed.chosen.add(value);
+    } else {
+      window.torrssFeed.chosen.delete(value);
+    }
+
+    return window.torrssFeed.list();
+  },
+  all: () => {
+    for (const box of window.torrssFeed.boxes()) {
+      box.checked = true;
+      window.torrssFeed.chosen.add(box.value);
+    }
+
+    return window.torrssFeed.list();
+  },
+  clear: () => {
+    window.torrssFeed.chosen.clear();
+    for (const box of window.torrssFeed.boxes()) {
+      box.checked = false;
+    }
+
+    return '';
+  },
+  count: () => window.torrssFeed.chosen.size,
+};
+";
+
+/// Controls which stored items the listing shows.
 #[query_params(error = bad_request)]
 struct FeedView {
     /// [`FeedEntry::id`](crate::feed::registry::FeedEntry::id) of the only
     /// feed to list, or absent for all.
     feed: Option<String>,
-
-    /// Comma-separated [`StoredItem::id`] values marked to grab.
-    selected: Option<String>,
 
     /// `1` to list every stored item, or absent for the wanted ones alone.
     all: Option<String>,
@@ -121,29 +161,9 @@ impl FeedView {
         self.feed.as_deref().filter(|id| !id.is_empty())
     }
 
-    fn selection(&self) -> IdList<'_> {
-        IdList::new(self.selected.as_deref())
-    }
-
     fn show_all(&self) -> bool {
         self.all.as_deref() == Some("1")
     }
-}
-
-/// Builds a feed URL carrying the feed filter, the selection, and the mode.
-///
-/// The parameter is `filter` rather than `feed`, because the `#[page]`
-/// attribute below puts a unit struct named `feed` in this scope.
-fn feed_url(filter: Option<&str>, selected: &str, all: bool, anchor: &str) -> String {
-    query::url(
-        "/",
-        &[
-            ("feed", filter.unwrap_or_default()),
-            ("selected", selected),
-            ("all", if all { "1" } else { "" }),
-        ],
-        anchor,
-    )
 }
 
 /// Names the feed a stored row came from.
@@ -204,15 +224,163 @@ fn item_details(
 #[page("/")]
 async fn feed(cx: &Cx) -> Result {
     let view = query_params::<FeedView>(cx)?;
-    let active = view.active();
-    let selection = view.selection();
+    let active_id = view.active().unwrap_or_default().to_owned();
     let show_all = view.show_all();
+
+    // Named `registered` rather than `feeds`, because the `#[page]` attribute
+    // on the admin list below puts a unit struct named `feeds` in this scope.
+    let registered = app_context::<Arc<FeedRegistry>>(cx).entries();
+    let active = view.active();
+
+    let mode = if show_all { "1" } else { "" };
+    let back = query::url("/", &[("feed", &active_id), ("all", mode)], "#results");
+
+    view! {
+        signal selected = String::new();
+        signal kept = String::new();
+        signal count = 0.0;
+        signal version = 0.0;
+        signal grabbing = false;
+
+        <script>(Unescaped::new_unchecked(FEED_ACTIONS))</script>
+
+        <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
+
+        <nav class="mt-6 flex flex-wrap gap-2">
+            // No chip carries a selection. The browser holds it, so a filter
+            // change re-renders the rows and leaves the set alone.
+            components::filter_chip(
+                href: query::url("/", &[("feed", ""), ("all", mode)], ""),
+                label: "All",
+                current: active.is_none(),
+            )
+            for entry in &registered {
+                components::filter_chip(
+                    href: query::url("/", &[("feed", &entry.id), ("all", mode)], ""),
+                    label: entry.name.as_str(),
+                    current: active == Some(entry.id.as_str()),
+                )
+            }
+        </nav>
+
+        <div
+            id="listing"
+            // A row's checkbox is rendered by the shard, so its change is
+            // caught here, where the signals live.
+            @change=$(|e: Event| {
+                if e.target.name == "item" {
+                    selected.set(raw!(
+                        "cx.hydrate(window.torrssFeed.toggle(String(${e}.target.value)))",
+                        String::new()
+                    ));
+                }
+
+                count.set(raw!("cx.hydrate(window.torrssFeed.count())", 0.0));
+            })
+        >
+            <div
+                id="results"
+                class="mt-6 flex scroll-mt-24 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3"
+            >
+                <div class="flex flex-wrap items-center gap-3">
+                    <button
+                        type="button"
+                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                        @click=$(|_e: Event| {
+                            selected.set(raw!("cx.hydrate(window.torrssFeed.all())", String::new()));
+                            count.set(raw!("cx.hydrate(window.torrssFeed.count())", 0.0));
+                        })
+                    >
+                        "Select all"
+                    </button>
+                    // A link among the buttons: the mode is a query key the
+                    // page reads, and the browser keeps the selection across
+                    // the navigation it costs.
+                    <a
+                        href=(query::url(
+                            "/",
+                            &[("feed", &active_id), ("all", if show_all { "" } else { "1" })],
+                            "#results",
+                        ))
+                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                    >
+                        if show_all { "Show wanted only" } else { "Show all" }
+                    </a>
+                    <span class="text-sm text-slate-300">
+                        $(if count.get() == 0.0 { "Nothing selected" } else { "" })
+                        <span :hidden=$(count.get() == 0.0)>$(count.get()) " selected"</span>
+                    </span>
+                    <button
+                        type="button"
+                        :hidden=$(count.get() == 0.0)
+                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                        @click=$(|_e: Event| {
+                            selected.set(raw!("cx.hydrate(window.torrssFeed.clear())", String::new()));
+                            count.set(0.0);
+                        })
+                    >
+                        "Clear"
+                    </button>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    components::action_button(
+                        action: query::url("/feeds/check", &[("back", back.as_str())], ""),
+                        label: "Fetch now",
+                    )
+
+                    <button
+                        type="button"
+                        :disabled=$(count.get() == 0.0)
+                        class="rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                        @click=$(async |_e: Event| {
+                            grabbing.set(true);
+                            grab_items(selected.get()).await;
+                            grabbing.set(false);
+                            // clear() empties the browser set and returns the
+                            // empty list, so one call does both.
+                            selected.set(raw!("cx.hydrate(window.torrssFeed.clear())", String::new()));
+                            kept.set("".to_owned());
+                            count.set(0.0);
+                            version.increment();
+                        })
+                    >
+                        $(if grabbing.get() { "Grabbing…" } else { "Grab" })
+                        <span :hidden=$(count.get() == 0.0)>
+                            " " $(count.get()) " "
+                            $(if count.get() == 1.0 { "release" } else { "releases" })
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            feed_listing(
+                filter: $(active_id),
+                all: $(show_all),
+                kept: $(kept.get()),
+                version: $(version.get()),
+            )
+        </div>
+    }
+}
+
+/// The stored rows under the chosen filter, and what the page knows of each.
+///
+/// `kept` is the selection the browser holds, which the rows read their
+/// checked state from. `version` is unread here and exists so a grab forces
+/// a re-render once the rows it took are gone.
+#[shard]
+async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version: f64) -> Result {
+    // Read for its change alone: a grab bumps it so the rows it took leave
+    // the listing.
+    let _ = version;
+
+    let active = Some(filter.as_str()).filter(|id| !id.is_empty());
+    let selection = IdList::new(Some(&kept));
 
     let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
-    // Named `registered` rather than `feeds`, because the `#[page]` attribute
-    // on the admin list below puts a unit struct named `feeds` in this scope.
     let registered = registry.entries();
 
     // A bookmark outlives the registration it names, because a restart empties
@@ -252,11 +420,8 @@ async fn feed(cx: &Cx) -> Result {
         .count();
     let hidden_count = owned_count + disabled_count + unmatched_count;
 
-    // The selection, the select-all link, and the grab form all work from
-    // the listed rows, so hidden rows leave the set entirely rather than
-    // staying selectable behind a filter.
     let mut listed: Vec<(&StoredItem, Standing)> = items.iter().zip(standings).collect();
-    if !show_all {
+    if !all {
         listed.retain(|(_, standing)| standing.is_wanted());
     }
 
@@ -268,35 +433,21 @@ async fn feed(cx: &Cx) -> Result {
         .map(|(item, standing)| item_details(&engine, registry, standing, &grabbed, now, item))
         .collect();
 
-    // Selecting every listed item is one link, so the target is the whole
-    // listed set rather than a toggle of what is already selected.
-    let all_listed = ids.join(",");
-    let selected_here = ids.iter().filter(|id| selection.contains(id)).count();
-    let all_selected = selected_here == ids.len() && !ids.is_empty();
-
     view! {
-        <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
         <p class="mt-1 text-sm text-slate-400">
-            if show_all {
+            if all {
                 (format::count(ids.len(), "item", "items"))
             } else {
                 (format::count(ids.len(), "wanted release", "wanted releases"))
             }
             " from " (format::count(registered.len(), "feed", "feeds"))
             if hidden_count > 0 {
-                if show_all { ", " } else { ", hidden: " }
+                if all { ", " } else { ", hidden: " }
                 (owned_count) " owned, "
                 (disabled_count) " disabled, "
                 (unmatched_count) " unmatched"
             }
             "."
-            " "
-            <a
-                href=(feed_url(active, selection.as_str(), !show_all, "#results"))
-                class="underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
-            >
-                if show_all { "Show wanted only" } else { "Show all" }
-            </a>
             if registered.is_empty() {
                 " "
                 <a
@@ -308,85 +459,9 @@ async fn feed(cx: &Cx) -> Result {
             }
         </p>
 
-        <nav class="mt-6 flex flex-wrap gap-2">
-            components::filter_chip(
-                href: feed_url(None, selection.as_str(), show_all, "#results"),
-                label: "All",
-                current: active.is_none(),
-            )
-            for entry in &registered {
-                components::filter_chip(
-                    href: feed_url(Some(&entry.id), selection.as_str(), show_all, "#results"),
-                    label: entry.name.as_str(),
-                    current: active == Some(entry.id.as_str()),
-                )
-            }
-        </nav>
-
-        <div
-            id="results"
-            class="mt-6 flex scroll-mt-24 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3"
-        >
-            <div class="flex flex-wrap items-center gap-3">
-                components::checkbox(
-                    href: feed_url(
-                        active,
-                        if all_selected { "" } else { all_listed.as_str() },
-                        show_all,
-                        "#results",
-                    ),
-                    checked: all_selected,
-                    label: "Select every listed release",
-                )
-                <span class="text-sm text-slate-300">
-                    if selection.is_empty() {
-                        "Nothing selected"
-                    } else {
-                        (selection.len()) " selected"
-                    }
-                </span>
-                if !selection.is_empty() {
-                    <a
-                        href=(feed_url(active, "", show_all, "#results"))
-                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                    >
-                        "Clear"
-                    </a>
-                }
-            </div>
-
-            <div class="flex items-center gap-2">
-                components::action_button(
-                    action: query::url(
-                        "/feeds/check",
-                        &[("back", feed_url(active, selection.as_str(), show_all, "#results").as_str())],
-                        "",
-                    ),
-                    label: "Fetch now",
-                )
-
-                <form method="post" action="/grab" class="contents">
-                    <input type="hidden" name="selected" value=(selection.as_str())>
-                    <input type="hidden" name="feed" value=(active.unwrap_or_default())>
-                    <input type="hidden" name="all" value=(if show_all { "1" } else { "" })>
-                    <button
-                        type="submit"
-                        disabled=(selection.is_empty())
-                        class="rounded-md bg-sky-400 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-sky-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
-                    >
-                        if selection.is_empty() {
-                            "Grab selected"
-                        } else {
-                            "Grab " (format::count(selection.len(), "release", "releases"))
-                        }
-                    </button>
-                </form>
-            </div>
-        </div>
-
         if listed.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                if show_all { "No item in this feed yet." } else { "No wanted release yet." }
+                if all { "No item in this feed yet." } else { "No wanted release yet." }
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
@@ -395,12 +470,6 @@ async fn feed(cx: &Cx) -> Result {
                         engine: &engine,
                         item: item,
                         details: shown,
-                        toggle_href: feed_url(
-                            active,
-                            &selection.toggled(id),
-                            show_all,
-                            &format!("#item-{id}"),
-                        ),
                         selected: selection.contains(id),
                     )
                 }
@@ -409,21 +478,7 @@ async fn feed(cx: &Cx) -> Result {
     }
 }
 
-/// What the feed page's grab form posts.
-#[derive(Deserialize)]
-struct GrabForm {
-    /// The selection, in the comma-separated form the page carries it in.
-    selected: String,
-
-    /// The feed filter to return to, empty for every feed.
-    feed: Option<String>,
-
-    /// `1` when the grab came from the show-all view, so it returns there.
-    all: Option<String>,
-}
-
-/// Grabs every selected item, then returns to the listing with the
-/// selection cleared.
+/// Grabs every selected item and reports how many it took.
 ///
 /// One failure never stops the rest. Each grab records its own outcome, so
 /// the loop discards the result and the reader learns which release failed
@@ -431,17 +486,17 @@ struct GrabForm {
 ///
 /// The library is rescanned once at the end rather than once per item. A scan
 /// lists the client's whole queue, so a call per release would repeat that
-/// listing for the same answer. Doing it before the redirect means the
-/// listing already shows what was just grabbed.
-#[route(POST "/grab")]
-async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther> {
+/// listing for the same answer.
+#[procedure]
+async fn grab_items(cx: &Cx, selected: String) -> Result<f64> {
     let services = app_context::<Services>(cx);
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let mut taken = 0.0;
 
-    for entry in IdList::new(Some(&input.selected)).entries() {
-        // A selection is whatever arrived in the URL, so an entry that is
-        // not an id, or names a row since removed, is skipped rather than
-        // failing the whole submission.
+    for entry in IdList::new(Some(&selected)).entries() {
+        // A selection crosses the network like any other argument, so an
+        // entry that is not an id, or names a row since removed, is skipped
+        // rather than failing the whole call.
         let Ok(id) = entry.parse::<i64>() else {
             continue;
         };
@@ -465,6 +520,8 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
             &auth,
         )
         .await;
+
+        taken += 1.0;
     }
 
     scan::scan(
@@ -476,12 +533,7 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
     )
     .await;
 
-    Ok(see_other(feed_url(
-        input.feed.as_deref().filter(|id| !id.is_empty()),
-        "",
-        input.all.as_deref() == Some("1"),
-        "#results",
-    )))
+    Ok(taken)
 }
 
 /// Where a switch returns the reader after it flips a ruleset.
