@@ -595,6 +595,7 @@ mod tests {
             template,
             based_on: based_on.map(ToOwned::to_owned),
             fields: Vec::new(),
+            tests: Vec::new(),
         }
     }
 

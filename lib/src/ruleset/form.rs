@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use snafu::{OptionExt, Snafu, ensure};
 use url::form_urlencoded;
 
-use super::{Field, FieldKind, Part};
+use super::{Field, FieldKind, Part, RulesetTest};
 
 /// A ruleset as the editor's form describes it.
 ///
@@ -37,6 +37,8 @@ pub(crate) struct RulesetForm {
     pub(crate) based_on: Option<String>,
 
     pub(crate) fields: Vec<Field>,
+
+    pub(crate) tests: Vec<RulesetTest>,
 }
 
 /// Why a posted ruleset is not one.
@@ -73,6 +75,16 @@ struct Row {
     identity: bool,
 }
 
+/// One test row as the form posted it, before it becomes a [`RulesetTest`].
+///
+/// Keyed `test.{index}.title` and `test.{index}.expect.{field}`, so a reader
+/// names as few fields as they mean to assert.
+#[derive(Default)]
+struct TestRow {
+    title: String,
+    expected: BTreeMap<String, String>,
+}
+
 impl RulesetForm {
     /// Reads a ruleset out of a form-encoded body.
     ///
@@ -90,16 +102,20 @@ impl RulesetForm {
         let mut based_on = String::new();
         let mut template = false;
 
-        // Ordered by index, so the fields come out in the order the editor
-        // showed them however the browser ordered the pairs.
+        // Ordered by index, so the fields and the tests come out in the order
+        // the editor showed them however the browser ordered the pairs.
         let mut rows: BTreeMap<usize, Row> = BTreeMap::new();
+        let mut tests: BTreeMap<usize, TestRow> = BTreeMap::new();
 
         for (key, value) in form_urlencoded::parse(body.as_bytes()) {
             match key.as_ref() {
                 "name" => name = value.into_owned(),
                 "based_on" => based_on = value.into_owned(),
                 "template" => template = true,
-                _ => read_row(&mut rows, &key, &value),
+                _ => {
+                    read_test(&mut tests, &key, &value);
+                    read_row(&mut rows, &key, &value);
+                }
             }
         }
 
@@ -115,6 +131,21 @@ impl RulesetForm {
                 .filter(|row| !row.name.trim().is_empty())
                 .map(|row| field(row, template))
                 .collect::<Result<Vec<_>, _>>()?,
+            // A blank title is a row the reader added and has not filled in,
+            // and a blank expectation is an input they left alone. Neither
+            // asserts that the value is empty.
+            tests: tests
+                .into_values()
+                .filter(|row| !row.title.trim().is_empty())
+                .map(|row| RulesetTest {
+                    title: row.title.trim().to_owned(),
+                    expected: row
+                        .expected
+                        .into_iter()
+                        .filter(|(_, value)| !value.trim().is_empty())
+                        .collect(),
+                })
+                .collect(),
         })
     }
 
@@ -150,6 +181,14 @@ impl RulesetForm {
 
             if field.identity {
                 pairs.append_pair(&format!("field.{index}.identity"), "on");
+            }
+        }
+
+        for (index, test) in self.tests.iter().enumerate() {
+            pairs.append_pair(&format!("test.{index}.title"), &test.title);
+
+            for (field, expected) in &test.expected {
+                pairs.append_pair(&format!("test.{index}.expect.{field}"), expected);
             }
         }
 
@@ -193,6 +232,33 @@ pub(crate) fn unique_slug(name: &str, taken: impl Fn(&str) -> bool) -> Option<St
     }
 
     (2..).map(|n| format!("{base}-{n}")).find(|id| !taken(id))
+}
+
+/// Files one `test.{index}.title` or `test.{index}.expect.{field}` pair under
+/// its test.
+///
+/// A key that is not a test row passes through untouched, as [`read_row`]
+/// does with its own.
+fn read_test(tests: &mut BTreeMap<usize, TestRow>, key: &str, value: &str) {
+    let Some(rest) = key.strip_prefix("test.") else {
+        return;
+    };
+
+    let Some((index, attribute)) = rest.split_once('.') else {
+        return;
+    };
+
+    let Ok(index) = index.parse::<usize>() else {
+        return;
+    };
+
+    let test = tests.entry(index).or_default();
+
+    if attribute == "title" {
+        test.title = value.to_owned();
+    } else if let Some(field) = attribute.strip_prefix("expect.") {
+        test.expected.insert(field.to_owned(), value.to_owned());
+    }
 }
 
 /// Files one `field.{index}.attribute` pair under its row.
@@ -264,8 +330,10 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{FormError, RulesetForm, slug, unique_slug};
-    use crate::ruleset::{Field, FieldKind, Part};
+    use crate::ruleset::{Field, FieldKind, Part, RulesetTest};
 
     fn text(name: &str, part: Part, pattern: &str, required: bool, identity: bool) -> Field {
         Field {
@@ -298,6 +366,7 @@ mod tests {
                     text("show", Part::Show, "^.+", true, true),
                     text("season", Part::Season, r"S\d+", false, false),
                 ],
+                tests: Vec::new(),
             },
             "the index orders the rows, and an absent checkbox reads false"
         );
@@ -316,6 +385,34 @@ mod tests {
             form.fields,
             vec![text("show", Part::Show, "^.+", false, false)],
             "an added row the reader never filled in is not a field"
+        );
+    }
+
+    #[test]
+    fn tests_read_the_title_and_each_expected_value() {
+        let form = RulesetForm::parse(
+            "name=Series\
+             &test.1.title=Coastal.Drift.2024&test.1.expect.show=coastal%20drift\
+             &test.1.expect.year=\
+             &test.0.title=The.Hollow.Meridian.S04E06&test.0.expect.season=4\
+             &test.2.title=%20%20",
+        )
+        .expect("the body parses");
+
+        assert_eq!(
+            form.tests,
+            vec![
+                RulesetTest {
+                    title: "The.Hollow.Meridian.S04E06".to_owned(),
+                    expected: BTreeMap::from([("season".to_owned(), "4".to_owned())]),
+                },
+                RulesetTest {
+                    title: "Coastal.Drift.2024".to_owned(),
+                    expected: BTreeMap::from([("show".to_owned(), "coastal drift".to_owned())]),
+                },
+            ],
+            "the index orders them, a blank expectation asserts nothing, and a blank title \
+             is a row the reader never filled in"
         );
     }
 
@@ -439,6 +536,13 @@ mod tests {
                     identity: true,
                 },
             ],
+            tests: vec![RulesetTest {
+                title: "The.Hollow.Meridian.S04E06.1080p".to_owned(),
+                expected: BTreeMap::from([
+                    ("show".to_owned(), "the hollow meridian".to_owned()),
+                    ("season".to_owned(), "4".to_owned()),
+                ]),
+            }],
         };
 
         assert_eq!(

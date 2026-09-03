@@ -78,6 +78,7 @@ impl RulesetStore {
                     template,
                     based_on,
                     fields: Vec::new(),
+                    tests: Vec::new(),
                 })
                 .collect::<Vec<_>>();
 
@@ -217,6 +218,7 @@ mod tests {
             template,
             based_on: based_on.map(ToOwned::to_owned),
             fields,
+            tests: Vec::new(),
         }
     }
 

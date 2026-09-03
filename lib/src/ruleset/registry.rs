@@ -229,6 +229,7 @@ mod tests {
                 required: true,
                 identity: true,
             }],
+            tests: Vec::new(),
         }
     }
 

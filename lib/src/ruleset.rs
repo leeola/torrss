@@ -18,6 +18,8 @@ pub(crate) mod form;
 pub(crate) mod registry;
 pub(crate) mod store;
 
+use std::collections::BTreeMap;
+
 /// A named component that a ruleset pulls out of a release filename.
 ///
 /// The variant picks both the label and the highlight color, so a reader sees
@@ -192,6 +194,13 @@ pub(crate) struct Ruleset {
     /// field. Use [`Ruleset::resolved_fields`] to get the full list the
     /// editor shows.
     pub(crate) fields: Vec<Field>,
+
+    /// What the reader expects this ruleset to read from named titles.
+    ///
+    /// The engine never reads these. They exist for the editor, which runs
+    /// them against the draft as the reader types, so a rule change that
+    /// breaks a title the reader cared about says so at once.
+    pub(crate) tests: Vec<RulesetTest>,
 }
 
 impl Ruleset {
@@ -366,6 +375,23 @@ pub(crate) struct Field {
     /// A different group, resolution, or encode of one episode is still that
     /// episode, so only the fields that name what a release *is* take part.
     pub(crate) identity: bool,
+}
+
+/// One title the reader named, and what each field must read from it.
+///
+/// The expected value is in the normalized form the field's kind produces,
+/// which is what the identity stores, so a season field that captures `01`
+/// from `S01E40` passes with the expected value `1`. A test on the raw
+/// capture instead disagrees with the library the first time a zero moves.
+///
+/// A field absent from `expected` asserts nothing about that field. A reader
+/// pins down the one value they care about without writing out the rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RulesetTest {
+    pub(crate) title: String,
+
+    /// Keyed by field name, in that name's order.
+    pub(crate) expected: BTreeMap<String, String>,
 }
 
 impl Field {

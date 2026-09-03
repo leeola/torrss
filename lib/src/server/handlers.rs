@@ -1244,6 +1244,9 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         fields: ruleset
             .map(|ruleset| ruleset.fields.clone())
             .unwrap_or_default(),
+        tests: ruleset
+            .map(|ruleset| ruleset.tests.clone())
+            .unwrap_or_default(),
     }
     .encode();
     let initial_rows = initial_draft.clone();
@@ -1830,6 +1833,7 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             template: posted.template,
             based_on: posted.based_on,
             fields: posted.fields,
+            tests: posted.tests,
         })
         .await
         .map_err(write_failed)?;
@@ -1869,6 +1873,7 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
             template: posted.template,
             based_on: posted.based_on,
             fields: posted.fields,
+            tests: posted.tests,
         })
         .await;
 

@@ -130,6 +130,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            tests: Vec::new(),
         },
         Ruleset {
             id: "feature-films".to_owned(),
@@ -203,6 +204,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            tests: Vec::new(),
         },
         Ruleset {
             id: "archive-talks".to_owned(),
@@ -260,6 +262,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            tests: Vec::new(),
         },
         Ruleset {
             id: "series-hollow-meridian".to_owned(),
@@ -285,6 +288,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            tests: Vec::new(),
         },
         Ruleset {
             id: "series-ashfall-county".to_owned(),
@@ -310,6 +314,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            tests: Vec::new(),
         },
     ]
 }
