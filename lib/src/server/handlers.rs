@@ -108,11 +108,17 @@ window.torrssRows = {
 /// one filter survives a re-render that lists other rows. The signal beside
 /// it only mirrors the set for the server.
 ///
-/// Every operation returns the list the grab procedure receives, so one
-/// handler writes one signal from one call.
+/// Every selection operation returns the list the grab procedure receives, so
+/// one handler writes one signal from one call.
+///
+/// The view operations keep the address bar in step with the signals that
+/// drive the listing, so a reader shares the view they found. They replace
+/// the entry rather than push one, because restoring the signals on a back
+/// step needs a handler of its own and a shared link is what the URL is for.
 const FEED_ACTIONS: &str = r"
 window.torrssFeed = {
   chosen: new Set(),
+  view: new URLSearchParams(location.search),
   boxes: () => [...document.querySelectorAll('#listing input[name=\'item\']')],
   list: () => [...window.torrssFeed.chosen].join(','),
   toggle: (value) => {
@@ -142,6 +148,24 @@ window.torrssFeed = {
     return '';
   },
   count: () => window.torrssFeed.chosen.size,
+  show: (feed) => {
+    window.torrssFeed.view.set('feed', feed);
+    window.torrssFeed.sync();
+  },
+  flip: () => {
+    window.torrssFeed.view.set('all', window.torrssFeed.view.get('all') === '1' ? '' : '1');
+    window.torrssFeed.sync();
+  },
+  sync: () => {
+    for (const key of ['feed', 'all']) {
+      if (!window.torrssFeed.view.get(key)) {
+        window.torrssFeed.view.delete(key);
+      }
+    }
+
+    const query = window.torrssFeed.view.toString();
+    history.replaceState(null, '', query ? '/?' + query : '/');
+  },
 };
 ";
 
@@ -227,15 +251,20 @@ async fn feed(cx: &Cx) -> Result {
     let active_id = view.active().unwrap_or_default().to_owned();
     let show_all = view.show_all();
 
-    // Named `registered` rather than `feeds`, because the `#[page]` attribute
-    // on the admin list below puts a unit struct named `feeds` in this scope.
-    let registered = app_context::<Arc<FeedRegistry>>(cx).entries();
-    let active = view.active();
-
-    let mode = if show_all { "1" } else { "" };
-    let back = query::url("/", &[("feed", &active_id), ("all", mode)], "#results");
+    // The Fetch now post still leaves the page, so it carries the view it
+    // returns to. The procedure that replaces it drops this.
+    let back = query::url(
+        "/",
+        &[
+            ("feed", &active_id),
+            ("all", if show_all { "1" } else { "" }),
+        ],
+        "#results",
+    );
 
     view! {
+        signal filter = active_id;
+        signal all = show_all;
         signal selected = String::new();
         signal kept = String::new();
         signal count = 0.0;
@@ -246,27 +275,10 @@ async fn feed(cx: &Cx) -> Result {
 
         <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
 
-        <nav class="mt-6 flex flex-wrap gap-2">
-            // No chip carries a selection. The browser holds it, so a filter
-            // change re-renders the rows and leaves the set alone.
-            components::filter_chip(
-                href: query::url("/", &[("feed", ""), ("all", mode)], ""),
-                label: "All",
-                current: active.is_none(),
-            )
-            for entry in &registered {
-                components::filter_chip(
-                    href: query::url("/", &[("feed", &entry.id), ("all", mode)], ""),
-                    label: entry.name.as_str(),
-                    current: active == Some(entry.id.as_str()),
-                )
-            }
-        </nav>
-
         <div
             id="listing"
-            // A row's checkbox is rendered by the shard, so its change is
-            // caught here, where the signals live.
+            // Every control the shard renders is caught here, where the
+            // signals live.
             @change=$(|e: Event| {
                 if e.target.name == "item" {
                     selected.set(raw!(
@@ -276,6 +288,22 @@ async fn feed(cx: &Cx) -> Result {
                 }
 
                 count.set(raw!("cx.hydrate(window.torrssFeed.count())", 0.0));
+            })
+            // A view change re-renders the rows the shard lists. `kept` takes
+            // the selection first and changes in the same tick, so the shard
+            // checks the same rows again from one request.
+            @click=$(|e: Event| {
+                if e.target.name == "feed-filter" {
+                    kept.set(selected.get());
+                    filter.set(e.target.value);
+                    raw!("window.torrssFeed.show(String(${e}.target.value))");
+                }
+
+                if e.target.name == "show-all" {
+                    kept.set(selected.get());
+                    all.toggle();
+                    raw!("window.torrssFeed.flip()");
+                }
             })
         >
             <div
@@ -293,19 +321,6 @@ async fn feed(cx: &Cx) -> Result {
                     >
                         "Select all"
                     </button>
-                    // A link among the buttons: the mode is a query key the
-                    // page reads, and the browser keeps the selection across
-                    // the navigation it costs.
-                    <a
-                        href=(query::url(
-                            "/",
-                            &[("feed", &active_id), ("all", if show_all { "" } else { "1" })],
-                            "#results",
-                        ))
-                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                    >
-                        if show_all { "Show wanted only" } else { "Show all" }
-                    </a>
                     <span class="text-sm text-slate-300">
                         $(if count.get() == 0.0 { "Nothing selected" } else { "" })
                         <span :hidden=$(count.get() == 0.0)>$(count.get()) " selected"</span>
@@ -355,8 +370,8 @@ async fn feed(cx: &Cx) -> Result {
             </div>
 
             feed_listing(
-                filter: $(active_id),
-                all: $(show_all),
+                filter: $(filter.get()),
+                all: $(all.get()),
                 kept: $(kept.get()),
                 version: $(version.get()),
             )
@@ -381,6 +396,8 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
     let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
+    // Named `registered` rather than `feeds`, because the `#[page]` attribute
+    // on the admin list below puts a unit struct named `feeds` in this scope.
     let registered = registry.entries();
 
     // A bookmark outlives the registration it names, because a restart empties
@@ -434,7 +451,24 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
         .collect();
 
     view! {
-        <p class="mt-1 text-sm text-slate-400">
+        // The chips belong to the shard, because only a re-render presses the
+        // one the reader picked. A component takes concrete values, so a chip
+        // reads no signal of the page's own.
+        //
+        // No chip carries a selection. The browser holds it, so a filter
+        // change re-renders the rows and leaves the set alone.
+        <nav class="mt-6 flex flex-wrap gap-2">
+            components::filter_chip(value: "", label: "All", current: active.is_none())
+            for entry in &registered {
+                components::filter_chip(
+                    value: entry.id.as_str(),
+                    label: entry.name.as_str(),
+                    current: active == Some(entry.id.as_str()),
+                )
+            }
+        </nav>
+
+        <p class="mt-3 text-sm text-slate-400">
             if all {
                 (format::count(ids.len(), "item", "items"))
             } else {
@@ -448,6 +482,14 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
                 (unmatched_count) " unmatched"
             }
             "."
+            " "
+            <button
+                type="button"
+                name="show-all"
+                class="underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
+            >
+                if all { "Show wanted only" } else { "Show all" }
+            </button>
             if registered.is_empty() {
                 " "
                 <a

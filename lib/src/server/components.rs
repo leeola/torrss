@@ -36,12 +36,18 @@ pub(crate) async fn filename(segments: &[Segment<'_>], ruleset: &str) -> Result 
     }
 }
 
-/// One feed filter, linking to the feed narrowed to a single ruleset.
+/// One feed filter, naming the feed it narrows the listing to.
+///
+/// The chip carries its feed in its own value, so one delegated handler reads
+/// every chip. An empty value is the whole set rather than a feed.
 #[component]
-pub(crate) async fn filter_chip(#[into] href: String, label: &str, current: bool) -> Result {
+pub(crate) async fn filter_chip(value: &str, label: &str, current: bool) -> Result {
     view! {
-        <a
-            href=(href)
+        <button
+            type="button"
+            name="feed-filter"
+            value=(value)
+            aria-pressed=(if current { "true" } else { "false" })
             class=(class!(
                 "rounded-full border px-3 py-1 text-xs transition-colors",
                 "border-slate-600 bg-slate-800 text-slate-100" if current
@@ -49,7 +55,7 @@ pub(crate) async fn filter_chip(#[into] href: String, label: &str, current: bool
             ))
         >
             (label)
-        </a>
+        </button>
     }
 }
 
