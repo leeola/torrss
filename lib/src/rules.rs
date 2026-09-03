@@ -253,6 +253,9 @@ mod tests {
     /// A client names a multi-file torrent after its folder, which carries the
     /// release name and no suffix.
     const HOLLOW_FOLDER: &str = "The.Hollow.Meridian.S04E06.1080p.Broadcast";
+    /// A whole season announced as one release. It is a folder like
+    /// [`HOLLOW_FOLDER`], so it carries no extension, and it names no episode.
+    const HOLLOW_PACK: &str = "The.Hollow.Meridian.S01.1080p.Broadcast.AAC.Stereo.H.264-PublicWave";
     const OTHER_EPISODE: &str =
         "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
     const FILM: &str = "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
@@ -322,6 +325,46 @@ mod tests {
     #[test]
     fn another_episode_differs() {
         assert_ne!(identity(OTHER_EPISODE), identity(HOLLOW_1080));
+    }
+
+    #[test]
+    fn season_pack_parses_with_an_empty_episode() {
+        let parsed = ENGINE.parse(HOLLOW_PACK).expect("claimed");
+
+        assert_eq!(
+            parsed.ruleset, "series-hollow-meridian",
+            "a pack names its show and resolution, so the child claims it"
+        );
+        assert_eq!(
+            parsed.identity,
+            Identity {
+                ruleset: "series-episodes".to_owned(),
+                key: vec![
+                    "the hollow meridian".to_owned(),
+                    "1".to_owned(),
+                    String::new(),
+                ],
+            },
+            "the missing episode holds its position in the key"
+        );
+    }
+
+    #[test]
+    fn season_pack_renders_with_a_trailing_empty_part() {
+        assert_eq!(
+            identity(HOLLOW_PACK).to_string(),
+            "series-episodes|the hollow meridian|1|",
+            "the form the library stores"
+        );
+    }
+
+    #[test]
+    fn single_digit_season_and_episode_share_identity() {
+        assert_eq!(
+            identity("The.Hollow.Meridian.S4E6.1080p.Broadcast"),
+            identity(HOLLOW_1080),
+            "a tracker writes S4E6 where another writes S04E06"
+        );
     }
 
     #[test]

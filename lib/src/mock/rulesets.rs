@@ -1,12 +1,18 @@
-//! Mock rulesets that stand in for the real matching configuration.
+//! The matching configuration every parse runs against.
 //!
-//! The titles and release groups in each `sample` are invented, matching the
-//! ones in [`super::releases`]. The patterns are plausible but untested: no
-//! code runs them, so they exist to fill the editor rather than to parse.
+//! [`crate::rules`] compiles these rulesets at startup and runs their patterns
+//! over each release name, so a pattern here decides what the application
+//! claims. The titles, release groups, and feed names are invented, matching
+//! the ones in [`super::releases`], and each `sample` is the highlighting the
+//! editor shows for one of them.
+//!
+//! [`super::FieldKind::Season`] and [`super::FieldKind::Episode`] arrive under
+//! an alias, because [`super::Part`] names those two parts as well and the
+//! parts are used far more often in this file.
 
 use super::{
     Field,
-    FieldKind::{Enum, Number, Text},
+    FieldKind::{Enum, Episode as EpisodeKind, Number, Season as SeasonKind, Text},
     Part::{
         Audio, Checksum, Codec, Episode, Extension, Movie, Publisher, Resolution, Season, Show,
         Source, Year,
@@ -40,24 +46,24 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 name: "show",
                 part: Show,
                 kind: Text,
-                pattern: Some(r"^(?<show>[\w.]+?)\.S\d{2}E\d{2}"),
+                pattern: Some(r"^(?<show>[\w.]+?)\.S\d"),
                 required: true,
                 identity: true,
             },
             Field {
                 name: "season",
                 part: Season,
-                kind: Number,
-                pattern: Some(r"S(?<season>\d{2})"),
+                kind: SeasonKind,
+                pattern: None,
                 required: true,
                 identity: true,
             },
             Field {
                 name: "episode",
                 part: Episode,
-                kind: Number,
-                pattern: Some(r"E(?<episode>\d{2})"),
-                required: true,
+                kind: EpisodeKind,
+                pattern: None,
+                required: false,
                 identity: true,
             },
             Field {
@@ -296,7 +302,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 name: "show",
                 part: Show,
                 kind: Text,
-                pattern: Some(r"^(?<show>The\.Hollow\.Meridian)\.S\d{2}E\d{2}"),
+                pattern: Some(r"^(?<show>The\.Hollow\.Meridian)\.S\d"),
                 required: true,
                 identity: true,
             },
@@ -336,7 +342,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 name: "show",
                 part: Show,
                 kind: Text,
-                pattern: Some(r"^(?<show>Ashfall\.County)\.S\d{2}E\d{2}"),
+                pattern: Some(r"^(?<show>Ashfall\.County)\.S\d"),
                 required: true,
                 identity: true,
             },

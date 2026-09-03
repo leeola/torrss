@@ -138,6 +138,8 @@ mod tests {
     const HOLLOW_720: &str =
         "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
     const NONSENSE: &str = "just some words with no structure at all";
+    /// A whole season announced as one release, named after its folder.
+    const HOLLOW_PACK: &str = "The.Hollow.Meridian.S01.1080p.Broadcast.AAC.Stereo.H.264-PublicWave";
 
     fn parsed(title: &str) -> Standing {
         Standing::Wanted(ENGINE.parse(title).expect("claimed"))
@@ -254,6 +256,21 @@ mod tests {
                 ("publisher", "PublicWave".to_owned(), false),
                 ("extension", ".mkv".to_owned(), false),
             ],
+        );
+    }
+
+    #[test]
+    fn a_season_pack_lists_no_episode_value() {
+        let parsed = ENGINE.parse(HOLLOW_PACK).expect("claimed");
+
+        assert_eq!(
+            parsed_values(&parsed)
+                .iter()
+                .map(|value| value.name)
+                .collect::<Vec<_>>(),
+            ["show", "season", "resolution", "source", "audio", "codec"],
+            "a pack names no episode, and the publisher pattern needs an \
+             extension after the group, which a folder name has not got"
         );
     }
 
