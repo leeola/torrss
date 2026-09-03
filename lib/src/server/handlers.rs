@@ -1548,12 +1548,14 @@ fn compute_matches<'a>(
     let matched = items
         .iter()
         .map(|item| {
-            let (diff, segments) = matches::diff(before, &after, &item.item.title);
+            let diffed = matches::diff(before, &after, &item.item.title);
 
             Match {
                 id: item.id,
-                segments,
-                diff,
+                title: &item.item.title,
+                segments: diffed.segments,
+                values: diffed.values,
+                diff: diffed.diff,
                 feed: feed_name(registry, item),
             }
         })

@@ -54,6 +54,13 @@ struct FieldEdit {
 pub(super) struct Rule {
     name: String,
     part: Part,
+
+    /// What the captured text converts to before anything compares it.
+    ///
+    /// A saved test asserts the normalized value, which is also what the
+    /// identity stores, so the kind has to reach [`values`].
+    kind: FieldKind,
+
     required: bool,
     regex: Option<Regex>,
 }
@@ -70,12 +77,23 @@ pub(super) struct PatternError {
 
 /// One stored title as the Matches section shows it.
 ///
-/// The segments borrow the title, so a match costs no copy of the name it
-/// describes.
+/// The title and the segments both borrow it, so a match costs no copy of the
+/// name it describes.
 #[derive(Debug)]
 pub(super) struct Match<'a> {
     pub(super) id: i64,
+
+    /// The whole title, which a reader saving this row as a test names.
+    #[allow(dead_code, reason = "the Save as test control on a match row")]
+    pub(super) title: &'a str,
+
     pub(super) segments: Vec<Segment<'a>>,
+
+    /// What each claiming rule read, normalized, which is what a test
+    /// saved from this row asserts.
+    #[allow(dead_code, reason = "the Save as test control on a match row")]
+    pub(super) values: Vec<(String, String)>,
+
     pub(super) diff: Diff,
     pub(super) feed: String,
 }
@@ -195,6 +213,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<Pattern
         rules.push(Rule {
             name,
             part: field.part,
+            kind,
             required,
             regex,
         });
@@ -203,18 +222,24 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<Pattern
     (rules, errors)
 }
 
+/// What one title became under the saved rules and the edited ones.
+pub(super) struct Diffed<'a> {
+    pub(super) diff: Diff,
+    pub(super) segments: Vec<Segment<'a>>,
+
+    /// Each claiming rule's name and the normalized text it read.
+    pub(super) values: Vec<(String, String)>,
+}
+
 /// Reports how `title` moved between the saved rules and the edited ones.
 ///
-/// The segments come from `after` when the edit claims the title, and from
-/// `before` otherwise, so a removed title keeps the highlighting the edit
-/// gives up. That is what [`Diff::Removed`] promises the reader.
-pub(super) fn diff<'a>(
-    before: &[Rule],
-    after: &[Rule],
-    title: &'a str,
-) -> (Diff, Vec<Segment<'a>>) {
-    let was = spans(before, title);
-    let now = spans(after, title);
+/// The segments and the values both come from `after` when the edit claims
+/// the title, and from `before` otherwise, so a removed title keeps the
+/// highlighting and the values the edit gives up. That is what
+/// [`Diff::Removed`] promises the reader.
+pub(super) fn diff<'a>(before: &[Rule], after: &[Rule], title: &'a str) -> Diffed<'a> {
+    let was = captures(before, title);
+    let now = captures(after, title);
 
     let diff = match (was.is_some(), now.is_some()) {
         (false, true) => Diff::Added,
@@ -225,13 +250,34 @@ pub(super) fn diff<'a>(
 
     let claimed = now.or(was).unwrap_or_default();
 
-    (diff, segments(title, claimed))
+    Diffed {
+        diff,
+        values: read(title, &claimed),
+        segments: segments(title, claimed),
+    }
+}
+
+/// Returns each rule's name and the normalized text it read from `title`, or
+/// nothing when the rules do not claim it.
+///
+/// The value is normalized rather than raw, because that is the form a saved
+/// test asserts and the form the identity stores. A test on the raw capture
+/// passes on a title the library files elsewhere.
+#[allow(dead_code, reason = "the verdict that checks a saved test")]
+pub(super) fn values(rules: &[Rule], title: &str) -> Option<Vec<(String, String)>> {
+    Some(read(title, &captures(rules, title)?))
+}
+
+/// Where one rule landed in a title.
+struct Capture<'a> {
+    rule: &'a Rule,
+    range: Range<usize>,
 }
 
 /// Returns where each rule matched in `title`, or nothing when a required
 /// rule missed.
-fn spans(rules: &[Rule], title: &str) -> Option<Vec<(Range<usize>, Part)>> {
-    let mut spans = Vec::new();
+fn captures<'a>(rules: &'a [Rule], title: &str) -> Option<Vec<Capture<'a>>> {
+    let mut captured = Vec::new();
 
     for rule in rules {
         // The capture group carries the rule's name by convention, but a
@@ -243,13 +289,29 @@ fn spans(rules: &[Rule], title: &str) -> Option<Vec<(Range<usize>, Part)>> {
         });
 
         match matched {
-            Some(found) => spans.push((found.range(), rule.part)),
+            Some(found) => captured.push(Capture {
+                rule,
+                range: found.range(),
+            }),
             None if rule.required => return None,
             None => {}
         }
     }
 
-    Some(spans)
+    Some(captured)
+}
+
+/// Reads each capture out of `title` in the form its kind produces.
+fn read(title: &str, captured: &[Capture<'_>]) -> Vec<(String, String)> {
+    captured
+        .iter()
+        .map(|capture| {
+            (
+                capture.rule.name.clone(),
+                capture.rule.kind.normalize(&title[capture.range.clone()]),
+            )
+        })
+        .collect()
 }
 
 /// Cuts `title` into claimed and unclaimed runs.
@@ -257,13 +319,15 @@ fn spans(rules: &[Rule], title: &str) -> Option<Vec<(Range<usize>, Part)>> {
 /// Two rules sometimes claim overlapping text. The one that starts earlier
 /// keeps its run and the later one drops out, because a character belongs to
 /// one part and a twice-rendered character breaks the title.
-fn segments(title: &str, mut spans: Vec<(Range<usize>, Part)>) -> Vec<Segment<'_>> {
-    spans.sort_by_key(|(range, _)| range.start);
+fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'a>> {
+    captured.sort_by_key(|capture| capture.range.start);
 
     let mut segments = Vec::new();
     let mut cut = 0;
 
-    for (range, part) in spans {
+    for Capture { rule, range } in captured {
+        let part = rule.part;
+
         if range.start < cut {
             continue;
         }
@@ -294,7 +358,7 @@ fn segments(title: &str, mut spans: Vec<(Range<usize>, Part)>) -> Vec<Segment<'_
 
 #[cfg(test)]
 mod tests {
-    use super::{Edits, PatternError, diff, rules};
+    use super::{Edits, PatternError, diff, rules, values};
     use crate::ruleset::{
         Diff, Field, FieldKind,
         FieldKind::{Season, Text},
@@ -347,6 +411,26 @@ mod tests {
     }
 
     #[test]
+    fn values_are_normalized_by_kind() {
+        let declared = declared();
+        let fields = resolved(&declared);
+
+        assert_eq!(
+            values(&saved(&fields), TITLE),
+            Some(vec![
+                ("show".to_owned(), "the hollow meridian".to_owned()),
+                ("season".to_owned(), "4".to_owned()),
+            ]),
+            "the show collapses its dots and the season drops its leading zero"
+        );
+        assert_eq!(
+            values(&saved(&fields), "just some words"),
+            None,
+            "a title the rules do not claim reads no value at all"
+        );
+    }
+
+    #[test]
     fn parse_reads_each_attribute_and_ignores_the_editor_controls() {
         let edits =
             Edits::parse("show.pattern=%5Ecoast&show.required=on&season.kind=season&diff=new");
@@ -392,12 +476,12 @@ mod tests {
 
         assert_eq!(errors, Vec::new(), "both patterns compile");
         assert_eq!(
-            diff(&saved(&fields), &edited, spaced).0,
+            diff(&saved(&fields), &edited, spaced).diff,
             Diff::Added,
             "the saved pattern needs a dot before the season, the edit a space"
         );
         assert_eq!(
-            diff(&saved(&fields), &edited, "Ashfall.County.S01E10").0,
+            diff(&saved(&fields), &edited, "Ashfall.County.S01E10").diff,
             Diff::Removed,
             "the edit gives up the dot-separated names the saved pattern claims"
         );
@@ -417,7 +501,7 @@ mod tests {
             "the message names the field the reader is typing in"
         );
         assert_eq!(
-            diff(&saved(&fields), &edited, TITLE).0,
+            diff(&saved(&fields), &edited, TITLE).diff,
             Diff::Removed,
             "a required rule with no regex turns every title away"
         );
@@ -465,7 +549,7 @@ mod tests {
             "The.Hollow.Meridian.S04E06.720p",
         ]
         .iter()
-        .map(|title| diff(&saved(&fields), &narrowed, title).0)
+        .map(|title| diff(&saved(&fields), &narrowed, title).diff)
         .collect();
 
         assert_eq!(
@@ -480,7 +564,7 @@ mod tests {
         let declared = declared();
         let fields = resolved(&declared);
 
-        let (_, segments) = diff(&saved(&fields), &saved(&fields), TITLE);
+        let segments = diff(&saved(&fields), &saved(&fields), TITLE).segments;
 
         assert_eq!(
             segments
@@ -514,7 +598,7 @@ mod tests {
             "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow)&season.pattern=(%3F%3Cseason%3EHollow)",
         );
         let (edited, _) = rules(&fields, &edits);
-        let (_, segments) = diff(&edited, &edited, TITLE);
+        let segments = diff(&edited, &edited, TITLE).segments;
 
         assert_eq!(
             segments
