@@ -46,32 +46,32 @@ path_param!(feed_id);
 /// The structural edits the field rows make to the form.
 ///
 /// The row buttons are rendered by a shard, which cannot reach the signals
-/// the editor declared, so one delegated handler there calls this and writes
-/// what it returns. It lives in the page rather than inside `raw!` because
-/// `raw!` takes a string literal, and every handler would otherwise carry
-/// its own copy of the same work.
+/// the editor declared, so one delegated handler there names the action and
+/// this carries it out. It lives in the page because `raw!` takes a string
+/// literal, and three handlers would otherwise carry three copies.
 ///
-/// Each function returns the form serialized, which is what both the rows
-/// and the matches read.
+/// An action arrives as a plain string, because the event vocabulary carries
+/// a target's name and value and nothing structural: the button says what to
+/// do in its own `value` rather than the handler reading the DOM around it.
+///
+/// Every branch returns the form serialized, which is what both the rows and
+/// the matches read.
 const ROW_ACTIONS: &str = r"
 window.torrssRows = {
   form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
   next: (params) => [...params.keys()].filter((key) => key.endsWith('.name')).length,
   serialize: () => window.torrssRows.form().toString(),
-  add: () => {
+  apply: (action) => {
     const params = window.torrssRows.form();
-    params.append(`field.${window.torrssRows.next(params)}.name`, '');
-    return params.toString();
-  },
-  clicked: (target) => {
-    const button = target.closest('[data-row-action]');
-    if (!button) {
-      return document.getElementById('field-rows').dataset.rows;
+    const index = window.torrssRows.next(params);
+
+    if (action === 'add') {
+      params.append(`field.${index}.name`, '');
+      return params.toString();
     }
 
-    const params = window.torrssRows.form();
-    if (button.dataset.rowAction === 'remove') {
-      const prefix = `field.${button.dataset.rowIndex}.`;
+    if (action.startsWith('remove:')) {
+      const prefix = `field.${action.slice('remove:'.length)}.`;
       for (const key of [...params.keys()]) {
         if (key.startsWith(prefix)) {
           params.delete(key);
@@ -81,10 +81,15 @@ window.torrssRows = {
       return params.toString();
     }
 
-    const row = button.closest('[data-name]');
-    const index = window.torrssRows.next(params);
-    for (const name of ['name', 'part', 'kind', 'pattern']) {
-      params.append(`field.${index}.${name}`, row.dataset[name]);
+    const name = action.slice('replace:'.length);
+    const row = [...document.querySelectorAll('#field-rows [data-name]')]
+      .find((one) => one.dataset.name === name);
+    if (!row) {
+      return params.toString();
+    }
+
+    for (const attribute of ['name', 'part', 'kind', 'pattern']) {
+      params.append(`field.${index}.${attribute}`, row.dataset[attribute]);
     }
     for (const flag of ['required', 'identity']) {
       if (row.dataset[flag]) {
@@ -1121,16 +1126,28 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
             method="post"
             action=(&action)
             // FormData skips a disabled input, so an inherited row stays out
-            // of the draft and the parent's field keeps applying.
+            // of the draft and the parent's field keeps applying. A `raw!`
+            // result enters the signal as the JavaScript value it is, and the
+            // shard dehydrates every argument before it fetches, so a plain
+            // string has to be hydrated on the way in.
             @input=$(|_e: Event| draft.set(raw!(
-                "window.torrssRows.serialize()",
+                "cx.hydrate(window.torrssRows.serialize())",
                 String::new()
             )))
             // A row button is rendered by the shard, so its click is caught
-            // here, where the signals live.
-            @click=$(|_e: Event| {
-                rows.set(raw!("window.torrssRows.clicked(${_e}.target)", String::new()));
-                draft.set(raw!("window.torrssRows.clicked(${_e}.target)", String::new()));
+            // here, where the signals live. The button names its action in
+            // its own value, because the event vocabulary carries a target's
+            // name and value and nothing structural. The guard keeps a click
+            // on an input from re-rendering the rows under the cursor.
+            @click=$(|e: Event| if e.target.name == "row-action" {
+                rows.set(raw!(
+                    "cx.hydrate(window.torrssRows.apply(String(${e}.target.value)))",
+                    String::new()
+                ));
+                draft.set(raw!(
+                    "cx.hydrate(window.torrssRows.apply(String(${e}.target.value)))",
+                    String::new()
+                ));
             })
         >
             <div id="top" class="mt-3 flex scroll-mt-24 flex-wrap items-start justify-between gap-4">
@@ -1156,8 +1173,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
                         id="inherits"
                         name="inherits"
                         @input=$(|_e: Event| {
-                            rows.set(raw!("window.torrssRows.serialize()", String::new()));
-                            draft.set(raw!("window.torrssRows.serialize()", String::new()));
+                            rows.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
+                            draft.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
                         })
                         class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
@@ -1178,10 +1195,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
                     <button
                         type="button"
                         class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
-                        @click=$(|_e: Event| {
-                            rows.set(raw!("window.torrssRows.add()", String::new()));
-                            draft.set(raw!("window.torrssRows.add()", String::new()));
-                        })
+                        name="row-action"
+                        value="add"
                     >
                         "Add field"
                     </button>
@@ -1221,7 +1236,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
 
             <div
                 id="field-rows"
-                :data-rows=$(rows.get())
                 class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
             >
                 <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">

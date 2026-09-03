@@ -452,8 +452,14 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
                 <label class="block text-xs text-slate-500">"Source"</label>
                 <button
                     type="button"
-                    data-row-action=(if locked { "replace" } else { "remove" })
-                    data-row-index=(index.to_string())
+                    // A `type="button"` never joins `FormData`, so the name
+                    // stays out of the form encoding the shard parses.
+                    name="row-action"
+                    value=(if locked {
+                        format!("replace:{}", field.name)
+                    } else {
+                        format!("remove:{index}")
+                    })
                     class=(class!(
                         "mt-1 inline-block rounded-md border px-2 py-1 text-xs transition-colors",
                         "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200" if locked
