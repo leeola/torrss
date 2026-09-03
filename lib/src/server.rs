@@ -16,5 +16,6 @@ mod router;
 mod serve;
 mod templates;
 mod trace;
+mod verdict;
 
 pub use serve::{Config, DEFAULT_HOST, DEFAULT_PORT, serve};

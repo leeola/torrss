@@ -357,7 +357,7 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::{Edits, PatternError, diff, rules, values};
     use crate::ruleset::{
         Diff, Field, FieldKind,
@@ -385,7 +385,7 @@ mod tests {
     }
 
     /// The saved fields every edit below is measured against.
-    fn declared() -> Vec<Field> {
+    pub(in crate::server) fn declared() -> Vec<Field> {
         vec![
             field(
                 "show",
@@ -399,14 +399,14 @@ mod tests {
         ]
     }
 
-    fn resolved(fields: &[Field]) -> Vec<&Field> {
+    pub(in crate::server) fn resolved(fields: &[Field]) -> Vec<&Field> {
         fields.iter().collect()
     }
 
-    const TITLE: &str = "The.Hollow.Meridian.S04E06.1080p";
+    pub(in crate::server) const TITLE: &str = "The.Hollow.Meridian.S04E06.1080p";
 
     /// The rules the saved fields produce, with no edit applied.
-    fn saved(fields: &[&Field]) -> Vec<super::Rule> {
+    pub(in crate::server) fn saved(fields: &[&Field]) -> Vec<super::Rule> {
         rules(fields, &Edits::default()).0
     }
 
