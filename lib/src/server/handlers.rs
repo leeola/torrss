@@ -24,7 +24,7 @@ use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
     rules::Engine,
-    ruleset::form::{self, RulesetForm},
+    ruleset::form::{self, EditorRows, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
     ruleset::{Diff, Field, FieldSource, ResolvedField, Ruleset},
     server::{
@@ -1644,16 +1644,7 @@ fn compute_matches<'a>(
 async fn field_rows(cx: &Cx, rows: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
-    let posted = match RulesetForm::parse(&rows) {
-        Ok(posted) => posted,
-        Err(error) => {
-            return view! {
-                <p class="border-t border-slate-800 px-4 py-3 text-xs text-rose-300">
-                    (error.to_string())
-                </p>
-            };
-        }
-    };
+    let posted = EditorRows::parse(&rows);
 
     let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
 
@@ -1707,19 +1698,16 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
 async fn test_rows(cx: &Cx, rows: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
-    let posted = match RulesetForm::parse(&rows) {
-        Ok(posted) => posted,
-        Err(error) => {
-            return view! {
-                <p class="border-t border-slate-800 px-4 py-3 text-xs text-rose-300">
-                    (error.to_string())
-                </p>
-            };
-        }
-    };
+    let posted = EditorRows::parse(&rows);
 
     let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
-    let fields = draft_fields(template, &posted.fields);
+
+    // A row the reader just added has no name to expect a value under, so it
+    // carries no input until they name it.
+    let fields = draft_fields(template, &posted.fields)
+        .into_iter()
+        .filter(|field| !field.name.is_empty())
+        .collect::<Vec<_>>();
 
     view! {
         for (index, test) in posted.tests.iter().enumerate() {

@@ -85,6 +85,62 @@ struct TestRow {
     expected: BTreeMap<String, String>,
 }
 
+/// A posted body sorted into its parts, before anything judges it.
+///
+/// Both reads of a form start here and part company after. One drops what a
+/// stored ruleset never carries. The other keeps every row the editor showed.
+#[derive(Default)]
+struct Posted {
+    name: String,
+    based_on: String,
+    template: bool,
+
+    /// Ordered by index, so the fields come out in the order the editor
+    /// showed them however the browser ordered the pairs.
+    rows: BTreeMap<usize, Row>,
+
+    tests: BTreeMap<usize, TestRow>,
+}
+
+/// The rows the editor holds, kept exactly as the form posted them.
+///
+/// A row the reader just added has a blank name and names no part or kind
+/// yet. [`RulesetForm::parse`] drops it, because a stored ruleset carries no
+/// nameless field. The row shards read this instead, so the row the reader
+/// asked for appears.
+///
+/// A blank ruleset name is no error here either. The new page has none until
+/// the reader types one, and the rows list before that.
+///
+/// A row that posted no part or kind comes back under the first option each
+/// select renders, which is the option the browser showed.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct EditorRows {
+    pub(crate) based_on: Option<String>,
+    pub(crate) fields: Vec<Field>,
+    pub(crate) tests: Vec<RulesetTest>,
+}
+
+impl EditorRows {
+    /// Reads every row a form-encoded body carries, refusing none of them.
+    pub(crate) fn parse(body: &str) -> Self {
+        let posted = read(body);
+
+        Self {
+            based_on: Some(posted.based_on.trim().to_owned()).filter(|id| !id.is_empty()),
+            fields: posted.rows.into_values().map(draft_field).collect(),
+            tests: posted
+                .tests
+                .into_values()
+                .map(|row| RulesetTest {
+                    title: row.title.trim().to_owned(),
+                    expected: row.expected,
+                })
+                .collect(),
+        }
+    }
+}
+
 impl RulesetForm {
     /// Reads a ruleset out of a form-encoded body.
     ///
@@ -96,37 +152,22 @@ impl RulesetForm {
     /// built on it to fill.
     ///
     /// A row with an empty name is skipped rather than refused, because that
-    /// is what an added row looks like before the reader fills it in.
+    /// is what an added row looks like before the reader fills it in. The
+    /// editor lists such a row through [`EditorRows`], which keeps it.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
-        let mut name = String::new();
-        let mut based_on = String::new();
-        let mut template = false;
+        let posted = read(body);
 
-        // Ordered by index, so the fields and the tests come out in the order
-        // the editor showed them however the browser ordered the pairs.
-        let mut rows: BTreeMap<usize, Row> = BTreeMap::new();
-        let mut tests: BTreeMap<usize, TestRow> = BTreeMap::new();
-
-        for (key, value) in form_urlencoded::parse(body.as_bytes()) {
-            match key.as_ref() {
-                "name" => name = value.into_owned(),
-                "based_on" => based_on = value.into_owned(),
-                "template" => template = true,
-                _ => {
-                    read_test(&mut tests, &key, &value);
-                    read_row(&mut rows, &key, &value);
-                }
-            }
-        }
-
-        let name = name.trim().to_owned();
+        let name = posted.name.trim().to_owned();
         ensure!(!name.is_empty(), EmptyNameSnafu);
+
+        let template = posted.template;
 
         Ok(Self {
             name,
             template,
-            based_on: Some(based_on.trim().to_owned()).filter(|id| !id.is_empty()),
-            fields: rows
+            based_on: Some(posted.based_on.trim().to_owned()).filter(|id| !id.is_empty()),
+            fields: posted
+                .rows
                 .into_values()
                 .filter(|row| !row.name.trim().is_empty())
                 .map(|row| field(row, template))
@@ -134,7 +175,8 @@ impl RulesetForm {
             // A blank title is a row the reader added and has not filled in,
             // and a blank expectation is an input they left alone. Neither
             // asserts that the value is empty.
-            tests: tests
+            tests: posted
+                .tests
                 .into_values()
                 .filter(|row| !row.title.trim().is_empty())
                 .map(|row| RulesetTest {
@@ -291,6 +333,54 @@ fn read_row(rows: &mut BTreeMap<usize, Row>, key: &str, value: &str) {
     }
 }
 
+/// Sorts a form-encoded body into its parts, judging none of them.
+fn read(body: &str) -> Posted {
+    let mut posted = Posted::default();
+
+    for (key, value) in form_urlencoded::parse(body.as_bytes()) {
+        match key.as_ref() {
+            "name" => posted.name = value.into_owned(),
+            "based_on" => posted.based_on = value.into_owned(),
+            "template" => posted.template = true,
+            _ => {
+                read_test(&mut posted.tests, &key, &value);
+                read_row(&mut posted.rows, &key, &value);
+            }
+        }
+    }
+
+    posted
+}
+
+/// The pattern a row stores for itself, or nothing when it stores none.
+///
+/// A premade kind carries its own regex, so a row of that kind keeps no copy
+/// of what the editor rendered. A blank pattern is no pattern.
+fn own_pattern(kind: FieldKind, pattern: Option<String>) -> Option<String> {
+    if kind.pattern().is_some() {
+        return None;
+    }
+
+    pattern.filter(|pattern| !pattern.trim().is_empty())
+}
+
+/// Resolves one posted row into a field, refusing nothing.
+///
+/// A part or a kind this build does not know falls back to the first option
+/// its select renders, which is what a row that named neither posted.
+fn draft_field(row: Row) -> Field {
+    let kind = FieldKind::from_label(&row.kind).unwrap_or(FieldKind::Text);
+
+    Field {
+        name: row.name.trim().to_owned(),
+        part: Part::from_slug(&row.part).unwrap_or(Part::ALL[0]),
+        kind,
+        pattern: own_pattern(kind, row.pattern),
+        required: row.required,
+        identity: row.identity,
+    }
+}
+
 /// Resolves one posted row into a field.
 ///
 /// The pattern is dropped when the kind supplies one, so a premade kind keeps
@@ -303,20 +393,11 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
     let kind = FieldKind::from_label(&row.kind).context(UnknownKindSnafu { kind: &row.kind })?;
     let part = Part::from_slug(&row.part).context(UnknownPartSnafu { part: &row.part })?;
 
-    let pattern = match kind.pattern() {
-        Some(_) => None,
-        None => {
-            let pattern = row.pattern.unwrap_or_default();
+    let pattern = own_pattern(kind, row.pattern);
 
-            if pattern.trim().is_empty() {
-                ensure!(template, MissingPatternSnafu { field: &row.name });
-
-                None
-            } else {
-                Some(pattern)
-            }
-        }
-    };
+    if pattern.is_none() && kind.pattern().is_none() {
+        ensure!(template, MissingPatternSnafu { field: &row.name });
+    }
 
     Ok(Field {
         name: row.name.trim().to_owned(),
@@ -332,7 +413,7 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{FormError, RulesetForm, slug, unique_slug};
+    use super::{EditorRows, FormError, RulesetForm, slug, unique_slug};
     use crate::ruleset::{Field, FieldKind, Part, RulesetTest};
 
     fn text(name: &str, part: Part, pattern: &str, required: bool, identity: bool) -> Field {
@@ -549,6 +630,35 @@ mod tests {
             RulesetForm::parse(&form.encode()),
             Ok(form),
             "what the editor seeds its draft with is what a post reads back"
+        );
+    }
+
+    #[test]
+    fn editor_rows_keep_a_blank_row_and_need_no_name() {
+        assert_eq!(
+            EditorRows::parse(
+                "name=&field.0.name=show&field.0.part=show&field.0.kind=text\
+                 &field.0.pattern=%5E.%2B&field.1.name=&test.0.title="
+            ),
+            EditorRows {
+                based_on: None,
+                fields: vec![
+                    text("show", Part::Show, "^.+", false, false),
+                    Field {
+                        name: String::new(),
+                        part: Part::Show,
+                        kind: FieldKind::Text,
+                        pattern: None,
+                        required: false,
+                        identity: false,
+                    },
+                ],
+                tests: vec![RulesetTest {
+                    title: String::new(),
+                    expected: BTreeMap::new(),
+                }],
+            },
+            "an added row lists under the first part and kind, and the page needs no name yet"
         );
     }
 }
