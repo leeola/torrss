@@ -2,13 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use topcoat::{
     Error, Result,
     context::Cx,
     context::app_context,
     router::{
-        content::{Form, RawForm},
+        content::RawForm,
         error::{
             RouterErrorExt, SeeOther, bad_request, internal_server_error, not_found, see_other,
         },
@@ -686,6 +685,11 @@ async fn admin(cx: &Cx) -> Result {
 async fn feeds() -> Result {
     view! {
         signal version = 0.0;
+        // The two inputs are bound rather than posted, so an accepted add
+        // clears them and a refused one keeps what the reader typed.
+        signal entry_name = String::new();
+        signal entry_url = String::new();
+        signal add_error = String::new();
 
         <h1 class="text-2xl font-semibold tracking-tight">"Feeds"</h1>
         <p class="mt-1 text-sm text-slate-400">
@@ -702,17 +706,32 @@ async fn feeds() -> Result {
             feed_list(version: $(version.get()))
         </div>
 
+        // The form carries no action. Its submit is caught here and stopped,
+        // so Enter in either field reaches the procedure like the button.
         <form
-            method="post"
-            action="/admin/feeds"
             class="mt-6 flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4"
+            @submit=$(async |e: Event| {
+                e.prevent_default();
+
+                let outcome = add_feed_now(entry_name.get(), entry_url.get()).await;
+
+                if outcome.is_ok() {
+                    entry_name.set("".to_owned());
+                    entry_url.set("".to_owned());
+                    add_error.set("".to_owned());
+                    version.increment();
+                } else {
+                    add_error.set(outcome.unwrap_err());
+                }
+            })
         >
             <div>
                 <label for="name" class="block text-xs text-slate-500">"Name"</label>
                 <input
                     id="name"
                     type="text"
-                    name="name"
+                    :value=$(entry_name.get())
+                    @input=$(|e: Event| entry_name.set(e.target.value))
                     placeholder="Public Wave series"
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
@@ -723,11 +742,16 @@ async fn feeds() -> Result {
                 <input
                     id="url"
                     type="text"
-                    name="url"
+                    :value=$(entry_url.get())
+                    @input=$(|e: Event| entry_url.set(e.target.value))
                     placeholder="https://tracker.example/rss"
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
             </div>
+
+            <p :hidden=$(add_error.get().is_empty()) class="text-xs text-rose-300">
+                $(add_error.get())
+            </p>
 
             <button
                 type="submit"
@@ -1056,22 +1080,25 @@ async fn test_feed(cx: &Cx) -> Result {
     }
 }
 
-/// What the add form posts.
-#[derive(Deserialize)]
-struct NewFeed {
-    name: String,
-    url: String,
-}
-
-/// Registers a feed, then returns to the list.
+/// Registers a feed, and reports its id or why it was refused.
 ///
 /// A blank name falls back to the URL host, then to the whole URL, so a
 /// registration always has something to show in a chip and a row.
-#[route(POST "/admin/feeds")]
-async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<SeeOther> {
-    let url = Url::parse(input.url.trim()).map_err(|_| bad_request("the feed URL is not valid"))?;
+///
+/// A refusal arrives inside [`Ok`] rather than as an error. A procedure's
+/// [`Err`] reaches no expression in the browser, so a caller that reads one
+/// never learns why the list gained no row.
+///
+/// A failed write reports one sentence and logs the cause. A database that
+/// refuses the row is nothing the reader acts on, so the message names what
+/// did not happen rather than how.
+#[procedure]
+async fn add_feed_now(cx: &Cx, name: String, url: String) -> Result<Result<String, String>> {
+    let Ok(url) = Url::parse(url.trim()) else {
+        return Ok(Err("the feed URL is not valid".to_owned()));
+    };
 
-    let name = match input.name.trim() {
+    let name = match name.trim() {
         "" => url
             .host_str()
             .map_or_else(|| url.to_string(), str::to_owned),
@@ -1080,12 +1107,17 @@ async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<SeeOther> {
 
     // The form never carries credentials, so it passes none and the feed
     // keeps whatever a configuration file gave it.
-    app_context::<Arc<FeedRegistry>>(cx)
+    match app_context::<Arc<FeedRegistry>>(cx)
         .add(name, url, None)
         .await
-        .map_err(internal_server_error)?;
+    {
+        Ok(id) => Ok(Ok(id)),
+        Err(error) => {
+            error!(error = %error, "add failed");
 
-    Ok(see_other("/admin/feeds"))
+            Ok(Err("the feed was not stored".to_owned()))
+        }
+    }
 }
 
 /// Removes a feed, and reports whether one was registered under that id.
