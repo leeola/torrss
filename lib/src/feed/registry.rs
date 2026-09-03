@@ -20,7 +20,7 @@ use tracing::field::{Empty, display};
 use tracing::{Span, info, instrument, warn};
 use url::Url;
 
-use crate::clock::Clock;
+use crate::clock::{self, Clock};
 use crate::feed::store::{FeedCheck, FeedStore};
 use crate::feed::{Feed, FeedAuth, FeedError, FeedSource, redacted};
 use crate::store;
@@ -345,9 +345,60 @@ pub async fn check_all(
     }
 }
 
-/// Checks every feed forever, pausing `interval` between passes.
+/// Checks every feed whose last check is older than `interval`, and returns
+/// how long to wait before one falls due again.
 ///
-/// The pause runs after a pass rather than on a fixed schedule, so a slow
+/// A feed never checked is due at once. A feed checked recently is left
+/// alone. The checks persist, so this reads what the last process already
+/// did, which is what makes a restart cheap.
+///
+/// The wait is measured after the pass, over the checks it just wrote, so a
+/// pass that took minutes shortens the wait by what it spent. It never drops
+/// below [`clock::MIN_PAUSE`]. A check that fails to store leaves its feed
+/// due forever, and the floor is what keeps that from spinning the loop.
+pub async fn check_due(
+    registry: &FeedRegistry,
+    pool: &SqlitePool,
+    source: &dyn FeedSource,
+    clock: &dyn Clock,
+    interval: Duration,
+) -> Duration {
+    let now = clock.now();
+    let due = registry
+        .entries()
+        .into_iter()
+        .filter(|entry| match &entry.check {
+            None => true,
+            Some(check) => clock::remaining(interval, check.at, now).is_zero(),
+        });
+
+    for entry in due {
+        check(registry, pool, source, clock, &entry.id).await;
+    }
+
+    // Read again, because the pass above spent time the wait has to account
+    // for.
+    let now = clock.now();
+
+    registry
+        .entries()
+        .into_iter()
+        .map(|entry| match entry.check {
+            None => Duration::ZERO,
+            Some(check) => clock::remaining(interval, check.at, now),
+        })
+        .min()
+        .unwrap_or(interval)
+        .max(clock::MIN_PAUSE)
+}
+
+/// Checks every feed forever, waiting until the next one falls due.
+///
+/// The first turn skips a feed the last process checked within `interval`,
+/// and the wait ends when the oldest check reaches it. A restart therefore
+/// neither fetches everything at once nor waits a whole interval.
+///
+/// The wait runs after a pass rather than on a fixed schedule, so a slow
 /// tracker delays the next pass instead of stacking passes on top of each
 /// other.
 #[instrument(name = "poll", skip_all, fields(interval_secs = interval.as_secs()))]
@@ -359,20 +410,22 @@ pub async fn poll(
     interval: Duration,
 ) {
     loop {
-        check_all(&registry, &pool, source.as_ref(), clock.as_ref()).await;
-        clock.sleep(interval).await;
+        let pause = check_due(&registry, &pool, source.as_ref(), clock.as_ref(), interval).await;
+
+        clock.sleep(pause).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::time::Duration;
 
-    use chrono::{DateTime, TimeZone, Utc};
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use sqlx::SqlitePool;
     use url::Url;
 
-    use super::{FeedEntry, FeedRegistry, check, check_all, preview};
+    use super::{FeedEntry, FeedRegistry, check, check_all, check_due, preview};
     use crate::clock::Clock;
     use crate::feed::store::{FeedCheck, FeedStore};
     use crate::feed::{Feed, FeedAuth, FeedError, fake};
@@ -708,6 +761,112 @@ mod tests {
         assert!(
             registry.entries().iter().all(|entry| entry.check.is_some()),
             "every feed was checked"
+        );
+    }
+
+    const INTERVAL: Duration = Duration::from_secs(900);
+
+    /// Registers `FEED` and records a check `minutes` before now.
+    ///
+    /// The clock is the one the pass under test reads, so the check ages
+    /// against the same instant `check_due` measures from.
+    async fn checked_ago(services: &Services, minutes: i64) -> FeedRegistry {
+        let registry = registry(&services.db).await;
+        let id = registry
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
+
+        registry
+            .record(
+                &id,
+                FeedCheck {
+                    at: services.clock.now() - TimeDelta::minutes(minutes),
+                    outcome: Ok(Ingest { items: 1, added: 0 }),
+                },
+            )
+            .await
+            .expect("record");
+
+        registry
+    }
+
+    async fn due(services: &Services, registry: &FeedRegistry) -> Duration {
+        check_due(
+            registry,
+            &services.db,
+            services.feeds.as_ref(),
+            services.clock.as_ref(),
+            INTERVAL,
+        )
+        .await
+    }
+
+    #[sqlx::test]
+    async fn check_due_skips_a_feed_checked_within_the_interval(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = checked_ago(&services, 5).await;
+
+        assert_eq!(
+            due(&services, &registry).await,
+            Duration::from_secs(600),
+            "ten of the fifteen minutes are left to run"
+        );
+        assert_eq!(
+            fakes.feeds.fetched(),
+            Vec::new(),
+            "a feed checked five minutes ago is not due"
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_due_fetches_a_feed_never_checked(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = checked_ago(&services, 5).await;
+        registry
+            .add("Other".to_owned(), url(OTHER), None)
+            .await
+            .expect("add");
+        fakes.feeds.feed(OTHER, vec![fake::item("B.Release")]);
+
+        assert_eq!(
+            due(&services, &registry).await,
+            Duration::from_secs(600),
+            "the fresh feed's remainder decides the wait once the new one is checked"
+        );
+        assert_eq!(
+            fakes.feeds.fetched(),
+            vec![url(OTHER)],
+            "a feed never checked is due, and its neighbour is left alone"
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_due_fetches_a_feed_older_than_the_interval(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let registry = checked_ago(&services, 20).await;
+
+        assert_eq!(
+            due(&services, &registry).await,
+            INTERVAL,
+            "the check it just wrote starts the interval over"
+        );
+        assert_eq!(
+            fakes.feeds.fetched(),
+            vec![url(FEED)],
+            "a check older than the interval is due"
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_due_pauses_an_interval_with_no_feed(pool: SqlitePool) {
+        let (services, _fakes) = Services::fake(pool);
+        let registry = registry(&services.db).await;
+
+        assert_eq!(
+            due(&services, &registry).await,
+            INTERVAL,
+            "nothing to check means nothing falls due sooner"
         );
     }
 

@@ -10,6 +10,24 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
+/// The shortest a poll ever sleeps.
+///
+/// A poll works out its pause from the records it just wrote. A record that
+/// fails to land leaves its work due at once, so without a floor the loop
+/// turns into a tight fetch against whatever refused the write.
+pub const MIN_PAUSE: Duration = Duration::from_secs(1);
+
+/// How much of `interval` is left for something last done at `at`.
+///
+/// Zero once the interval has run, which is what makes the work due.
+///
+/// A record stamped after `now` counts as fresh and gets the whole interval.
+/// Only a clock set back produces one, and refetching on a clock fault helps
+/// nobody.
+pub fn remaining(interval: Duration, at: DateTime<Utc>, now: DateTime<Utc>) -> Duration {
+    interval.saturating_sub((now - at).to_std().unwrap_or(Duration::ZERO))
+}
+
 /// The source of the current time and of every delay.
 ///
 /// [`Duration`] is the standard library type rather than a chrono one,
@@ -129,9 +147,9 @@ mod fake {
 mod tests {
     use std::time::Duration;
 
-    use chrono::{DateTime, TimeZone, Utc};
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 
-    use super::{Clock, FakeClock};
+    use super::{Clock, FakeClock, remaining};
 
     fn start() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2025, 3, 4, 9, 15, 0)
@@ -168,6 +186,28 @@ mod tests {
                 Duration::from_secs(60),
             ],
             "advance never counts as a sleep"
+        );
+    }
+
+    #[test]
+    fn remaining_counts_down_to_zero() {
+        let interval = Duration::from_secs(900);
+        let now = start();
+
+        assert_eq!(
+            remaining(interval, now - TimeDelta::minutes(5), now),
+            Duration::from_secs(600),
+            "five minutes into a fifteen-minute interval leaves ten"
+        );
+        assert_eq!(
+            remaining(interval, now + TimeDelta::minutes(5), now),
+            interval,
+            "a timestamp in the future reads as fresh, not as an error"
+        );
+        assert_eq!(
+            remaining(interval, now - TimeDelta::hours(1), now),
+            Duration::ZERO,
+            "an hour past a fifteen-minute interval is due, never negative"
         );
     }
 }

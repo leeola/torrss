@@ -33,13 +33,14 @@ pub struct Config {
     /// directory here to serve a bundle from a deployment-specific location.
     pub assets: Option<PathBuf>,
 
-    /// Pause between two passes, for the feed poll and the library scan
-    /// alike.
+    /// How old a feed's last check must be before the poll fetches it again,
+    /// and the same for the library scan.
     ///
-    /// Measured from the end of one pass to the start of the next, so a slow
-    /// tracker or client delays its own next pass rather than stacking passes
-    /// on top of each other. The two loops run independently, so neither
-    /// waits on the other.
+    /// The checks persist, so a restart resumes the schedule rather than
+    /// starting it over. A feed checked recently is skipped, and the wait
+    /// ends when the oldest one falls due. A slow tracker or client delays
+    /// its own next pass rather than stacking passes on top of each other.
+    /// The two loops run independently, so neither waits on the other.
     pub poll_interval: Duration,
 }
 
