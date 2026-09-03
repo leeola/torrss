@@ -36,7 +36,7 @@ struct Inner {
     /// Counts every id ever issued, so a removal never frees one for reuse.
     ///
     /// Numbering from the current length instead reissues a live id after a
-    /// removal, which leaves `remove` and `set_state` acting on the wrong
+    /// removal, which leaves `forget` and `set_state` acting on the wrong
     /// torrent.
     issued: u32,
 }
@@ -93,6 +93,30 @@ impl FakeTorrents {
         });
 
         id
+    }
+
+    /// Drops the torrent `id`, as if it left the client.
+    ///
+    /// The counterpart to [`Self::seed`]: one states what the client already
+    /// held, the other what it no longer holds. Neither records a request,
+    /// because a torrent leaving the client is nothing the application asked
+    /// for.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no torrent carries `id`. A test holds an id from
+    /// [`Self::seed`] or [`Self::ids`], so an unknown one is a test bug.
+    pub fn forget(&self, id: &TorrentId) {
+        let mut inner = self.lock();
+        let before = inner.torrents.len();
+
+        inner.torrents.retain(|torrent| &torrent.id != id);
+
+        assert!(
+            inner.torrents.len() < before,
+            "no fake torrent carries the id {}",
+            id.0
+        );
     }
 
     /// Moves the torrent `id` into `state`.
@@ -183,20 +207,6 @@ impl TorrentClient for FakeTorrents {
         Ok(inner.torrents.clone())
     }
 
-    async fn remove(&self, id: &TorrentId, _delete_files: bool) -> Result<(), TorrentError> {
-        let mut inner = self.lock();
-        inner.take_failure()?;
-
-        let before = inner.torrents.len();
-        inner.torrents.retain(|torrent| &torrent.id != id);
-
-        if inner.torrents.len() == before {
-            return Err(TorrentError::NotFound);
-        }
-
-        Ok(())
-    }
-
     async fn check(&self) -> Result<ClientInfo, TorrentError> {
         self.lock().take_failure()?;
 
@@ -269,13 +279,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn removed_id_is_never_reused() {
+    async fn forgotten_id_is_never_reused() {
         let torrents = FakeTorrents::new();
         torrents.add(&magnet("First.Release")).await.expect("add");
-        torrents
-            .remove(&TorrentId("t1".to_owned()), false)
-            .await
-            .expect("remove");
+        torrents.forget(&TorrentId("t1".to_owned()));
         torrents.add(&magnet("Second.Release")).await.expect("add");
 
         assert_eq!(
@@ -319,16 +326,6 @@ mod tests {
             torrents.list().await,
             Ok(vec![queued("t1", "First.Release")]),
             "the rejected add leaves no torrent behind"
-        );
-    }
-
-    #[tokio::test]
-    async fn remove_unknown_is_not_found() {
-        let torrents = FakeTorrents::new();
-
-        assert_eq!(
-            torrents.remove(&TorrentId("t404".to_owned()), false).await,
-            Err(TorrentError::NotFound)
         );
     }
 

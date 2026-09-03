@@ -181,7 +181,7 @@ mod tests {
     use crate::mock::fixture::ENGINE;
     use crate::services::Services;
     use crate::store::library;
-    use crate::torrent::{TorrentClient, TorrentError};
+    use crate::torrent::TorrentError;
 
     const HOLLOW: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -343,11 +343,7 @@ mod tests {
         )
         .await;
 
-        fakes
-            .torrents
-            .remove(&removed, false)
-            .await
-            .expect("remove the seeded torrent");
+        fakes.torrents.forget(&removed);
         fakes.torrents.seed(NEXT_EPISODE);
 
         let status = scan(

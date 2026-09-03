@@ -59,13 +59,6 @@ impl TorrentClient for Qbit {
         Ok(raw.into_iter().filter_map(torrent).collect())
     }
 
-    async fn remove(&self, id: &TorrentId, delete_files: bool) -> Result<(), TorrentError> {
-        self.client
-            .delete_torrents(vec![id.0.clone()], delete_files)
-            .await
-            .map_err(error)
-    }
-
     async fn check(&self) -> Result<ClientInfo, TorrentError> {
         let version = self.client.get_version().await.map_err(error)?;
 
@@ -169,8 +162,6 @@ fn error(error: QbitError) -> TorrentError {
         QbitError::ApiError(
             ApiError::BadCredentials | ApiError::NotLoggedIn | ApiError::IpBanned,
         ) => TorrentError::Unauthorized,
-
-        QbitError::ApiError(ApiError::TorrentNotFound) => TorrentError::NotFound,
 
         QbitError::ApiError(
             ApiError::TorrentAddFailed
@@ -322,10 +313,6 @@ mod tests {
         assert_eq!(
             error(QbitError::ApiError(ApiError::BadCredentials)),
             TorrentError::Unauthorized
-        );
-        assert_eq!(
-            error(QbitError::ApiError(ApiError::TorrentNotFound)),
-            TorrentError::NotFound
         );
         assert!(
             matches!(

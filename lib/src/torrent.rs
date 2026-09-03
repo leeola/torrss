@@ -1,9 +1,14 @@
 //! The torrent client that downloads a matched release.
 //!
 //! A tracker feed only names a release. Something has to download it.
-//! [`TorrentClient`] is the whole surface the application uses to add, list,
-//! and remove torrents, so the qBittorrent wire format never reaches a
-//! handler or a rule.
+//! [`TorrentClient`] is the whole surface the application uses to add and
+//! list torrents, so the qBittorrent wire format never reaches a handler or
+//! a rule.
+//!
+//! The application writes to the client in one place, `grab::grab`, which
+//! the feed page's `/grab` form reaches when a reader accepts one or more
+//! items. Every other call, the library scan and the connection check, only
+//! reads.
 //!
 //! [`TorrentError`] carries plain data rather than the client library's error
 //! type. A test fake then produces any failure the application handles,
@@ -189,11 +194,6 @@ pub enum TorrentError {
     #[snafu(display("the torrent client rejected the request: {reason}"))]
     Rejected { reason: String },
 
-    /// No torrent carries the requested id. A torrent removed outside the
-    /// application produces this.
-    #[snafu(display("the torrent client has no such torrent"))]
-    NotFound,
-
     /// The client answered in a shape this adapter does not understand,
     /// which points at a version mismatch rather than at the request.
     #[snafu(display("the torrent client answered unexpectedly: {message}"))]
@@ -214,11 +214,6 @@ pub trait TorrentClient: Send + Sync {
 
     /// Returns every torrent the client holds, in the client's own order.
     async fn list(&self) -> Result<Vec<Torrent>, TorrentError>;
-
-    /// Removes one torrent, and its downloaded data when `delete_files` is set.
-    ///
-    /// Returns [`TorrentError::NotFound`] when no torrent carries `id`.
-    async fn remove(&self, id: &TorrentId, delete_files: bool) -> Result<(), TorrentError>;
 
     /// Confirms the client is reachable and the credentials work.
     ///
