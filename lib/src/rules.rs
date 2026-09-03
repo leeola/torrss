@@ -260,7 +260,7 @@ impl Compiled {
             root: root.id.clone(),
             depth,
             fields: ruleset
-                .resolved_fields(parent, &[])
+                .resolved_fields(parent)
                 .into_iter()
                 .map(|resolved| CompiledField::new(resolved.field, &ruleset.id))
                 .collect::<Result<Vec<_>, _>>()?,

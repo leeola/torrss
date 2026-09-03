@@ -79,7 +79,7 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
         return Vec::new();
     };
 
-    let fields = ruleset.resolved_fields(engine.parent(ruleset), &[]);
+    let fields = ruleset.resolved_fields(engine.parent(ruleset));
 
     parsed
         .values

@@ -15,6 +15,7 @@ use topcoat::{
         page, path_param, query_params, route,
     },
     runtime::{Event, shard},
+    view::Unescaped,
     view::{class, component, view},
 };
 use url::Url;
@@ -25,7 +26,7 @@ use crate::{
     rules::Engine,
     ruleset::form::{self, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
-    ruleset::{Diff, Field, Ruleset},
+    ruleset::{Diff, Field, FieldSource, ResolvedField, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format,
@@ -41,6 +42,60 @@ use crate::{
 
 path_param!(ruleset_id);
 path_param!(feed_id);
+
+/// The structural edits the field rows make to the form.
+///
+/// The row buttons are rendered by a shard, which cannot reach the signals
+/// the editor declared, so one delegated handler there calls this and writes
+/// what it returns. It lives in the page rather than inside `raw!` because
+/// `raw!` takes a string literal, and every handler would otherwise carry
+/// its own copy of the same work.
+///
+/// Each function returns the form serialized, which is what both the rows
+/// and the matches read.
+const ROW_ACTIONS: &str = r"
+window.torrssRows = {
+  form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
+  next: (params) => [...params.keys()].filter((key) => key.endsWith('.name')).length,
+  serialize: () => window.torrssRows.form().toString(),
+  add: () => {
+    const params = window.torrssRows.form();
+    params.append(`field.${window.torrssRows.next(params)}.name`, '');
+    return params.toString();
+  },
+  clicked: (target) => {
+    const button = target.closest('[data-row-action]');
+    if (!button) {
+      return document.getElementById('field-rows').dataset.rows;
+    }
+
+    const params = window.torrssRows.form();
+    if (button.dataset.rowAction === 'remove') {
+      const prefix = `field.${button.dataset.rowIndex}.`;
+      for (const key of [...params.keys()]) {
+        if (key.startsWith(prefix)) {
+          params.delete(key);
+        }
+      }
+
+      return params.toString();
+    }
+
+    const row = button.closest('[data-name]');
+    const index = window.torrssRows.next(params);
+    for (const name of ['name', 'part', 'kind', 'pattern']) {
+      params.append(`field.${index}.${name}`, row.dataset[name]);
+    }
+    for (const flag of ['required', 'identity']) {
+      if (row.dataset[flag]) {
+        params.append(`field.${index}.${flag}`, 'on');
+      }
+    }
+
+    return params.toString();
+  },
+};
+";
 
 /// Controls which stored items show and which of them are selected.
 #[query_params(error = bad_request)]
@@ -952,10 +1007,6 @@ struct MatchView {
     /// The ids are the feed items the section matches against, so a pin
     /// survives an edit that changes which rules claim the title.
     pinned: Option<String>,
-
-    /// Comma-separated [`ruleset::Field::name`] values flipped between
-    /// inherited and replaced since the last save.
-    replaced: Option<String>,
 }
 
 impl MatchView {
@@ -968,7 +1019,6 @@ impl MatchView {
         EditorQuery {
             diff: self.filter(),
             pinned: IdList::new(self.pinned.as_deref()),
-            replaced: IdList::new(self.replaced.as_deref()),
         }
     }
 }
@@ -976,42 +1026,29 @@ impl MatchView {
 /// Every key the editor carries in its URL.
 ///
 /// A control rebuilds the whole struct with one field changed rather than
-/// editing a single query key. Changing the filter therefore never drops the
-/// pins, and replacing a field never drops the filter.
+/// editing a single query key, so changing the filter never drops the pins.
 #[derive(Clone, Copy)]
 struct EditorQuery<'a> {
     diff: Option<Diff>,
     pinned: IdList<'a>,
-    replaced: IdList<'a>,
 }
 
 impl EditorQuery<'_> {
     fn url(&self, ruleset: &str, anchor: &str) -> String {
-        self.build(
-            ruleset,
-            anchor,
-            self.pinned.as_str(),
-            self.replaced.as_str(),
-        )
+        self.build(ruleset, anchor, self.pinned.as_str())
     }
 
     /// The same query with the pin list replaced.
     fn with_pins(&self, pins: &str, ruleset: &str, anchor: &str) -> String {
-        self.build(ruleset, anchor, pins, self.replaced.as_str())
+        self.build(ruleset, anchor, pins)
     }
 
-    /// The same query with the replaced-field list replaced.
-    fn with_replaced(&self, replaced: &str, ruleset: &str, anchor: &str) -> String {
-        self.build(ruleset, anchor, self.pinned.as_str(), replaced)
-    }
-
-    fn build(&self, ruleset: &str, anchor: &str, pinned: &str, replaced: &str) -> String {
+    fn build(&self, ruleset: &str, anchor: &str, pinned: &str) -> String {
         query::url(
             &format!("/admin/rulesets/{ruleset}"),
             &[
                 ("diff", self.diff.map_or("", Diff::slug)),
                 ("pinned", pinned),
-                ("replaced", replaced),
             ],
             anchor,
         )
@@ -1051,12 +1088,6 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'_>) -> Result {
     let parent = ruleset.and_then(|ruleset| engine.parent(ruleset));
 
-    let replacements = query.replaced.entries();
-    let fields = ruleset
-        .map(|ruleset| ruleset.resolved_fields(parent, &replacements))
-        .unwrap_or_default();
-
-    let inheriting = parent.is_some();
     let name = ruleset
         .map(|ruleset| ruleset.name.clone())
         .unwrap_or_default();
@@ -1073,8 +1104,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
         .map(|ruleset| ruleset.id.clone())
         .unwrap_or_default();
 
-    // The shard takes the id by value, so the row links hold their own copy.
-    let row_id = ruleset_id.clone();
     let diff_slug = query
         .diff
         .map_or_else(String::new, |state| state.slug().to_owned());
@@ -1090,9 +1119,15 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
             .unwrap_or_default(),
     }
     .encode();
+    let initial_rows = initial_draft.clone();
 
     view! {
         signal draft = initial_draft;
+        signal rows = initial_rows;
+
+        // The row buttons the shard renders reach the signals above through
+        // this, which one delegated handler on the form below calls.
+        <script>(Unescaped::new_unchecked(ROW_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
             <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
@@ -1109,9 +1144,15 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
             // FormData skips a disabled input, so an inherited row stays out
             // of the draft and the parent's field keeps applying.
             @input=$(|_e: Event| draft.set(raw!(
-                "new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))).toString()",
+                "window.torrssRows.serialize()",
                 String::new()
             )))
+            // A row button is rendered by the shard, so its click is caught
+            // here, where the signals live.
+            @click=$(|_e: Event| {
+                rows.set(raw!("window.torrssRows.clicked(${_e}.target)", String::new()));
+                draft.set(raw!("window.torrssRows.clicked(${_e}.target)", String::new()));
+            })
         >
             <div id="top" class="mt-3 flex scroll-mt-24 flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0 flex-1">
@@ -1135,6 +1176,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
                     <select
                         id="inherits"
                         name="inherits"
+                        @input=$(|_e: Event| {
+                            rows.set(raw!("window.torrssRows.serialize()", String::new()));
+                            draft.set(raw!("window.torrssRows.serialize()", String::new()));
+                        })
                         class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
                         <option value="" selected=(inherits.is_empty())>
@@ -1154,6 +1199,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
                     <button
                         type="button"
                         class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                        @click=$(|_e: Event| {
+                            rows.set(raw!("window.torrssRows.add()", String::new()));
+                            draft.set(raw!("window.torrssRows.add()", String::new()));
+                        })
                     >
                         "Add field"
                     </button>
@@ -1191,32 +1240,19 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'
                 None => "",
             }
 
-            <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
+            <div
+                id="field-rows"
+                :data-rows=$(rows.get())
+                class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
+            >
                 <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                    <h2 class="text-sm font-semibold text-slate-100">
-                        "Fields " <span class="text-slate-500">"(" (fields.len()) ")"</span>
-                    </h2>
+                    <h2 class="text-sm font-semibold text-slate-100">"Fields"</h2>
                     <p class="text-xs text-slate-500">
-                        if inheriting {
-                            "A greyed field is inherited. Use the source column to replace it."
-                        } else {
-                            "Each field names a capture group and the type its value parses as."
-                        }
+                        "A greyed field is inherited. Replace one to give this ruleset its own."
                     </p>
                 </div>
 
-                for (index, resolved) in fields.iter().enumerate() {
-                    components::field_row(
-                        index: index,
-                        resolved: *resolved,
-                        inheriting: inheriting,
-                        toggle_href: query.with_replaced(
-                                &query.replaced.toggled(&resolved.field.name),
-                                &row_id,
-                                &format!("#field-{}", resolved.field.part.slug()),
-                            ),
-                    )
-                }
+                field_rows(rows: $(rows.get()))
             </div>
         </form>
 
@@ -1259,6 +1295,70 @@ fn compute_matches<'a>(
         .collect();
 
     (matched, errors)
+}
+
+/// Re-renders the field rows from the draft the editor holds.
+///
+/// The rows follow the form rather than the save, so a row the reader added
+/// and a parent they just picked both appear without a round trip through
+/// the database.
+///
+/// Only a structural change re-renders these. A keystroke moves the matches
+/// alone, because re-rendering a row under the cursor takes the focus with
+/// it.
+#[shard]
+async fn field_rows(cx: &Cx, rows: String) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+
+    let posted = match RulesetForm::parse(&rows) {
+        Ok(posted) => posted,
+        Err(error) => {
+            return view! {
+                <p class="border-t border-slate-800 px-4 py-3 text-xs text-rose-300">
+                    (error.to_string())
+                </p>
+            };
+        }
+    };
+
+    let parent = posted.inherits.as_deref().and_then(|id| engine.ruleset(id));
+
+    // The inherited rows come first and carry no index, because they submit
+    // nothing. An own row's index is its place among the rows that do.
+    let inherited = parent.map_or_else(Vec::new, |parent| {
+        parent
+            .fields
+            .iter()
+            .filter(|field| !posted.fields.iter().any(|own| own.name == field.name))
+            .collect::<Vec<_>>()
+    });
+
+    view! {
+        for field in inherited {
+            components::field_row(
+                index: 0,
+                resolved: ResolvedField {
+                    field,
+                    source: FieldSource::Inherited,
+                },
+            )
+        }
+
+        for (index, field) in posted.fields.iter().enumerate() {
+            components::field_row(
+                index: index,
+                resolved: ResolvedField {
+                    field,
+                    source: match parent.and_then(|parent| {
+                        parent.fields.iter().find(|one| one.name == field.name)
+                    }) {
+                        Some(parent) => FieldSource::Overridden { parent },
+                        None => FieldSource::Own,
+                    },
+                },
+            )
+        }
+    }
 }
 
 /// The fields a draft describes, resolved against the parent it names.
@@ -1326,7 +1426,7 @@ async fn live_matches(
     // A ruleset with nothing saved has no rules to lose, so the whole draft
     // reads as gained.
     let before = saved.map_or_else(Vec::new, |saved| {
-        let fields = saved.resolved_fields(engine.parent(saved), &[]);
+        let fields = saved.resolved_fields(engine.parent(saved));
         let fields = fields.iter().map(|field| field.field).collect::<Vec<_>>();
 
         matches::rules(&fields, &Edits::default()).0
@@ -1347,7 +1447,6 @@ async fn live_matches(
             query: EditorQuery {
                 diff: Diff::from_slug(&diff),
                 pinned: IdList::new(Some(&pinned)),
-                replaced: IdList::new(None),
             },
         )
     }

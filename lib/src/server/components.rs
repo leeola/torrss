@@ -360,12 +360,7 @@ pub(crate) async fn checkbox(#[into] href: String, checked: bool, label: &str) -
 /// hold. The trailing column is the way in: it replaces the parent's value
 /// with one this ruleset owns.
 #[component]
-pub(crate) async fn field_row(
-    index: usize,
-    resolved: ResolvedField<'_>,
-    #[into] toggle_href: String,
-    inheriting: bool,
-) -> Result {
+pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Result {
     let field = resolved.field;
     let locked = resolved.is_inherited();
 
@@ -376,6 +371,14 @@ pub(crate) async fn field_row(
                 "grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center",
                 "opacity-45" if locked,
             ))
+            // The replace button copies these into a new own row, so an
+            // inherited field becomes one this ruleset holds.
+            data-name=(&field.name)
+            data-part=(field.part.slug())
+            data-kind=(field.kind.label())
+            data-pattern=(field.matcher())
+            data-required=(if field.required { "on" } else { "" })
+            data-identity=(if field.identity { "on" } else { "" })
         >
             <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Name"</label>
@@ -421,7 +424,7 @@ pub(crate) async fn field_row(
                 </select>
             </div>
 
-            <div class=(class!("md:col-span-2" if inheriting else "md:col-span-4"))>
+            <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Pattern"</label>
                 <input
                     type="text"
@@ -469,21 +472,21 @@ pub(crate) async fn field_row(
                 >
             </div>
 
-            if inheriting {
-                <div class="md:col-span-2 md:justify-self-end">
-                    <label class="block text-xs text-slate-500">"Source"</label>
-                    <a
-                        href=(toggle_href)
-                        class=(class!(
-                            "mt-1 inline-block rounded-md border px-2 py-1 text-xs transition-colors",
-                            "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200" if locked
-                                else "border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/20",
-                        ))
-                    >
-                        if locked { "inherited" } else { "replaced" }
-                    </a>
-                </div>
-            }
+            <div class="md:col-span-2 md:justify-self-end">
+                <label class="block text-xs text-slate-500">"Source"</label>
+                <button
+                    type="button"
+                    data-row-action=(if locked { "replace" } else { "remove" })
+                    data-row-index=(index.to_string())
+                    class=(class!(
+                        "mt-1 inline-block rounded-md border px-2 py-1 text-xs transition-colors",
+                        "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200" if locked
+                            else "border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/20",
+                    ))
+                >
+                    if locked { "replace" } else { "remove" }
+                    </button>
+            </div>
         </div>
     }
 }

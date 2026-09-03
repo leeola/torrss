@@ -200,16 +200,9 @@ impl Ruleset {
     /// `parent` is the ruleset this one narrows, which the caller resolves
     /// through [`crate::rules::Engine`]. Passing it in is what keeps a
     /// ruleset from reaching for a global list to find its own parent.
-    ///
-    /// `toggled` names the fields switched since the last save. Each named
-    /// field flips to the other state. An inherited field starts overriding,
-    /// and an overriding field drops back to the inherited value. The
-    /// parent's field seeds a fresh override, so the reader edits a working
-    /// pattern rather than a blank.
     pub(crate) fn resolved_fields<'a>(
         &'a self,
         parent: Option<&'a Ruleset>,
-        toggled: &[&str],
     ) -> Vec<ResolvedField<'a>> {
         let Some(parent) = parent else {
             return self
@@ -225,24 +218,18 @@ impl Ruleset {
         parent
             .fields
             .iter()
-            .map(|inherited| {
-                let own = self.fields.iter().find(|own| own.name == inherited.name);
-
-                match (own, toggled.contains(&inherited.name.as_str())) {
-                    (Some(field), false) => ResolvedField {
+            .map(
+                |inherited| match self.fields.iter().find(|own| own.name == inherited.name) {
+                    Some(field) => ResolvedField {
                         field,
                         source: FieldSource::Overridden { parent: inherited },
                     },
-                    (None, true) => ResolvedField {
-                        field: inherited,
-                        source: FieldSource::Overridden { parent: inherited },
-                    },
-                    (_, _) => ResolvedField {
+                    None => ResolvedField {
                         field: inherited,
                         source: FieldSource::Inherited,
                     },
-                }
-            })
+                },
+            )
             .collect()
     }
 }
