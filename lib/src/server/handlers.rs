@@ -54,36 +54,58 @@ path_param!(feed_id);
 /// a target's name and value and nothing structural: the button says what to
 /// do in its own `value` rather than the handler reading the DOM around it.
 ///
+/// An action splits at its first `:`, so an argument holding one survives.
+/// A field name is the reader's own text and reaches `replace` as that
+/// argument.
+///
+/// The two counters match a whole key rather than its suffix. A test
+/// expectation on a field named `name` ends `.name` too, and counting it
+/// opens the next row at an index another row already holds.
+///
 /// Every branch returns the form serialized, which is what both the rows and
 /// the matches read.
 const ROW_ACTIONS: &str = r"
 window.torrssRows = {
   form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
-  next: (params) => [...params.keys()].filter((key) => key.endsWith('.name')).length,
+  next: (params) => [...params.keys()].filter((key) => /^field\.\d+\.name$/.test(key)).length,
+  nextTest: (params) => [...params.keys()].filter((key) => /^test\.\d+\.title$/.test(key)).length,
   serialize: () => window.torrssRows.form().toString(),
+  drop: (params, prefix) => {
+    for (const key of [...params.keys()]) {
+      if (key.startsWith(prefix)) {
+        params.delete(key);
+      }
+    }
+  },
   apply: (action) => {
     const params = window.torrssRows.form();
     const index = window.torrssRows.next(params);
+    const cut = action.indexOf(':');
+    const name = cut === -1 ? action : action.slice(0, cut);
+    const argument = cut === -1 ? '' : action.slice(cut + 1);
 
-    if (action === 'add') {
+    if (name === 'add') {
       params.append(`field.${index}.name`, '');
       return params.toString();
     }
 
-    if (action.startsWith('remove:')) {
-      const prefix = `field.${action.slice('remove:'.length)}.`;
-      for (const key of [...params.keys()]) {
-        if (key.startsWith(prefix)) {
-          params.delete(key);
-        }
-      }
-
+    if (name === 'add-test') {
+      params.append(`test.${window.torrssRows.nextTest(params)}.title`, '');
       return params.toString();
     }
 
-    const name = action.slice('replace:'.length);
+    if (name === 'remove') {
+      window.torrssRows.drop(params, `field.${argument}.`);
+      return params.toString();
+    }
+
+    if (name === 'remove-test') {
+      window.torrssRows.drop(params, `test.${argument}.`);
+      return params.toString();
+    }
+
     const row = [...document.querySelectorAll('#field-rows [data-name]')]
-      .find((one) => one.dataset.name === name);
+      .find((one) => one.dataset.name === argument);
     if (!row) {
       return params.toString();
     }
@@ -1513,6 +1535,30 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
                 field_rows(rows: $(rows.get()))
             </div>
+
+            <div
+                id="tests"
+                class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
+            >
+                <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <h2 class="text-sm font-semibold text-slate-100">"Tests"</h2>
+                    <button
+                        type="button"
+                        class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                        name="row-action"
+                        value="add-test"
+                    >
+                        "Add test"
+                    </button>
+                </div>
+                <p class="px-4 pb-3 text-xs text-slate-500">
+                    "An expected value is compared in its normalized form: a number without
+                    leading zeros, text lowercased with separators collapsed to spaces. An
+                    empty value asserts nothing."
+                </p>
+
+                test_rows(rows: $(rows.get()))
+            </div>
         </form>
 
         // The chips are rendered by the shard, so their click is caught here,
@@ -1624,6 +1670,39 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
                     },
                 },
             )
+        }
+    }
+}
+
+/// Re-renders the test rows from the draft the editor holds.
+///
+/// The rows follow the form rather than the save, as the field rows do, so a
+/// test the reader just added carries an input for a field they added in the
+/// same breath.
+///
+/// Only a structural change re-renders these. A keystroke takes the focus
+/// out of the input under the cursor.
+#[shard]
+async fn test_rows(cx: &Cx, rows: String) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+
+    let posted = match RulesetForm::parse(&rows) {
+        Ok(posted) => posted,
+        Err(error) => {
+            return view! {
+                <p class="border-t border-slate-800 px-4 py-3 text-xs text-rose-300">
+                    (error.to_string())
+                </p>
+            };
+        }
+    };
+
+    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
+    let fields = draft_fields(template, &posted.fields);
+
+    view! {
+        for (index, test) in posted.tests.iter().enumerate() {
+            components::test_row(index: index, test: test, fields: &fields)
         }
     }
 }

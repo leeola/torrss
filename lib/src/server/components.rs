@@ -8,7 +8,9 @@ use super::listing::ParsedValue;
 use super::matches::Match;
 use crate::feed::store::FeedCheck;
 use crate::rules::Engine;
-use crate::ruleset::{FieldKind, FieldSource, Part, ResolvedField, Ruleset, Segment};
+use crate::ruleset::{
+    Field, FieldKind, FieldSource, Part, ResolvedField, Ruleset, RulesetTest, Segment,
+};
 use crate::store::StoredItem;
 
 /// Renders a filename with every claimed run tinted by its part.
@@ -467,6 +469,64 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
                 >
                     if locked { "replace" } else { "remove" }
                     </button>
+            </div>
+        </div>
+    }
+}
+
+/// One saved test inside the ruleset editor.
+///
+/// The row is anchored by its index rather than its title, because the title
+/// is what the reader types and an anchor that moves with every keystroke
+/// links to nothing.
+///
+/// One input per field, so the reader names the values they mean to assert
+/// and leaves the rest alone. An empty input is not an assertion that the
+/// field reads nothing.
+#[component]
+pub(crate) async fn test_row(index: usize, test: &RulesetTest, fields: &[&Field]) -> Result {
+    view! {
+        <div
+            id=(format!("test-{index}"))
+            class="grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center"
+        >
+            <div class="md:col-span-5">
+                <label class="block text-xs text-slate-500">"Title"</label>
+                <input
+                    type="text"
+                    name=(format!("test.{index}.title"))
+                    value=(&test.title)
+                    placeholder="The.Hollow.Meridian.S04E06.1080p"
+                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-100 focus:border-slate-600 focus:outline-none"
+                >
+            </div>
+
+            for field in fields {
+                <div class="md:col-span-2">
+                    <label class="flex items-center gap-2 text-xs text-slate-500">
+                        <span class=(class!("size-2 shrink-0 rounded-full", field.part.dot()))></span>
+                        (&field.name)
+                    </label>
+                    <input
+                        type="text"
+                        name=(format!("test.{index}.expect.{}", field.name))
+                        value=(test.expected.get(&field.name).map_or("", String::as_str))
+                        class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
+                    >
+                </div>
+            }
+
+            <div class="md:col-span-1 md:justify-self-end">
+                <button
+                    type="button"
+                    // A `type="button"` never joins `FormData`, so the name
+                    // stays out of the form encoding the shard parses.
+                    name="row-action"
+                    value=(format!("remove-test:{index}"))
+                    class="mt-5 inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
+                >
+                    "remove"
+                </button>
             </div>
         </div>
     }
