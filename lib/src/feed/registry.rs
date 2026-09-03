@@ -284,7 +284,7 @@ pub async fn check(
 ///
 /// Returns `None` when `id` names no feed, which the handler answers as a
 /// 404. A fetch that fails comes back as the `Err`, never as a recorded
-/// check, so the clients page keeps showing the last real poll.
+/// check, so the status page keeps showing the last real poll.
 #[instrument(name = "preview_feed", skip_all, fields(feed.id = %id, feed.url = Empty))]
 pub async fn preview(
     registry: &FeedRegistry,

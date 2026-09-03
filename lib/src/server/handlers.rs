@@ -586,8 +586,8 @@ async fn feeds(cx: &Cx) -> Result {
     }
 }
 
-#[page("/admin/clients")]
-async fn clients(cx: &Cx) -> Result {
+#[page("/admin/status")]
+async fn status(cx: &Cx) -> Result {
     let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
@@ -595,7 +595,7 @@ async fn clients(cx: &Cx) -> Result {
     let synced = app_context::<Arc<SyncState>>(cx).last();
 
     view! {
-        <h1 class="text-2xl font-semibold tracking-tight">"Clients"</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">"Status"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "What this application talks to, and how each one last answered."
         </p>
@@ -625,16 +625,19 @@ async fn clients(cx: &Cx) -> Result {
                 <p class="mt-1 text-xs text-slate-500">
                     match &synced {
                         None => "never synced",
-                        Some(status) => match &status.outcome {
+                        // Bound as `last` rather than `status`, because the
+                        // `#[page]` attribute above puts a unit struct named
+                        // `status` in scope.
+                        Some(last) => match &last.outcome {
                             Ok(report) => {
                                 (report.matched) " of "
                                 (format::count(report.torrents, "torrent", "torrents"))
                                 " matched a ruleset, synced "
-                                (format::age(now, Some(status.at)))
+                                (format::age(now, Some(last.at)))
                             },
                             Err(error) => {
                                 "sync failed: " (error) ", "
-                                (format::age(now, Some(status.at)))
+                                (format::age(now, Some(last.at)))
                             },
                         },
                     }
@@ -642,7 +645,7 @@ async fn clients(cx: &Cx) -> Result {
             </div>
 
             components::action_button(
-                action: "/admin/torrents/sync?back=/admin/clients",
+                action: "/admin/torrents/sync?back=/admin/status",
                 label: "Sync now",
             )
         </div>
@@ -696,7 +699,7 @@ async fn clients(cx: &Cx) -> Result {
 
                         components::action_button(
                             action: format!(
-                                "/admin/feeds/{}/check?back=/admin/clients",
+                                "/admin/feeds/{}/check?back=/admin/status",
                                 entry.id,
                             ),
                             label: "Test",
@@ -721,7 +724,7 @@ async fn sync_library(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
-        .unwrap_or_else(|| "/admin/clients".to_owned());
+        .unwrap_or_else(|| "/admin/status".to_owned());
 
     let services = app_context::<Services>(cx);
 
@@ -747,7 +750,7 @@ async fn check_feed(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
-        .unwrap_or_else(|| "/admin/clients".to_owned());
+        .unwrap_or_else(|| "/admin/status".to_owned());
 
     let services = app_context::<Services>(cx);
 
@@ -769,7 +772,7 @@ async fn check_feed(cx: &Cx) -> Result<SeeOther> {
 
 /// Fetches one feed now and shows what it carries.
 ///
-/// This stores nothing and records no check, so `feed_items` and the clients
+/// This stores nothing and records no check, so `feed_items` and the status
 /// page read the same after a test as before it. A fetch that fails renders
 /// on the page rather than as an error status, because the request itself
 /// succeeded: the tracker is what did not answer.
