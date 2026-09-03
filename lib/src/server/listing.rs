@@ -79,7 +79,7 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
         return Vec::new();
     };
 
-    let fields = ruleset.resolved_fields(engine.parent(ruleset));
+    let fields = ruleset.resolved_fields(engine.template_of(ruleset));
 
     parsed
         .values
@@ -102,9 +102,9 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 
 /// Decides where `title` stands.
 ///
-/// Interest follows the most specific claimant alone. A disabled child hides
-/// its show even while its base stays enabled, because the child is what
-/// describes this release and an enabled base never rescues it.
+/// Interest follows the most specific claimant alone. A disabled ruleset
+/// hides its show even while its template stays enabled, because the ruleset
+/// is what describes this release and an enabled template never rescues it.
 ///
 /// A release counts as owned when the library holds it or any span around it.
 /// A stored season pack therefore owns each episode of that season, while a
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_child_hides_what_its_enabled_base_claims() {
+    fn a_disabled_ruleset_hides_what_its_enabled_template_claims() {
         let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
             unreachable!()
         };
@@ -240,12 +240,12 @@ mod tests {
                 HOLLOW_1080,
             ),
             Standing::Disabled(expected),
-            "the child claims this title, so an enabled base changes nothing"
+            "the ruleset claims this title, so an enabled template changes nothing"
         );
     }
 
     #[test]
-    fn enabled_base_wants_what_its_child_refuses() {
+    fn an_enabled_template_wants_what_the_ruleset_on_it_refuses() {
         assert_eq!(
             standing(
                 &ENGINE,
@@ -254,7 +254,7 @@ mod tests {
                 HOLLOW_720,
             ),
             parsed(HOLLOW_720),
-            "the child requires 1080p, so the base is the most specific claimant"
+            "the ruleset requires 1080p, so its template is the most specific claimant"
         );
     }
 

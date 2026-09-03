@@ -22,11 +22,12 @@ use super::{Field, FieldKind, Part, Ruleset};
 /// runtime decision about a ruleset, not part of the rules they edit, so
 /// saving an edit never turns a running ruleset off.
 const UPSERT: &str = "
-    INSERT INTO rulesets (id, name, inherits, enabled)
-    VALUES (?1, ?2, ?3, ?4)
+    INSERT INTO rulesets (id, name, based_on, template, enabled)
+    VALUES (?1, ?2, ?3, ?4, ?5)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
-        inherits = excluded.inherits
+        based_on = excluded.based_on,
+        template = excluded.template
 ";
 
 /// Reads every ruleset by name, which is the order the admin index lists them.
@@ -34,7 +35,8 @@ const UPSERT: &str = "
 /// The name orders them rather than the id. The id is a slug the reader
 /// never sees, and ordering by it leaves a renamed ruleset where its old
 /// name sorted.
-const SELECT_RULESETS: &str = "SELECT id, name, inherits, enabled FROM rulesets ORDER BY name";
+const SELECT_RULESETS: &str =
+    "SELECT id, name, based_on, template, enabled FROM rulesets ORDER BY name";
 
 /// Reads every field of every ruleset, grouped by ruleset and in order.
 ///
@@ -65,15 +67,16 @@ impl RulesetStore {
     /// written, so the row is corrupt rather than merely unexpected.
     pub(crate) async fn list(&self) -> Result<Vec<Ruleset>, sqlx::Error> {
         let mut rulesets =
-            sqlx::query_as::<_, (String, String, Option<String>, bool)>(SELECT_RULESETS)
+            sqlx::query_as::<_, (String, String, Option<String>, bool, bool)>(SELECT_RULESETS)
                 .fetch_all(&self.pool)
                 .await?
                 .into_iter()
-                .map(|(id, name, inherits, enabled)| Ruleset {
+                .map(|(id, name, based_on, template, enabled)| Ruleset {
                     id,
                     name,
                     enabled,
-                    inherits,
+                    template,
+                    based_on,
                     fields: Vec::new(),
                 })
                 .collect::<Vec<_>>();
@@ -108,7 +111,8 @@ impl RulesetStore {
         sqlx::query(UPSERT)
             .bind(&ruleset.id)
             .bind(&ruleset.name)
-            .bind(ruleset.inherits.as_deref())
+            .bind(ruleset.based_on.as_deref())
+            .bind(ruleset.template)
             .bind(ruleset.enabled)
             .execute(&mut *tx)
             .await?;
@@ -144,9 +148,9 @@ impl RulesetStore {
     ///
     /// # Errors
     ///
-    /// Returns a database error when another ruleset still narrows this one.
-    /// A child that points at nothing parses no title, so the delete fails
-    /// instead.
+    /// Returns a database error while another ruleset is based on this one.
+    /// A ruleset whose template is gone resolves no field, so the delete
+    /// fails instead.
     pub(crate) async fn remove(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM rulesets WHERE id = ?1")
             .bind(id)
@@ -205,20 +209,22 @@ mod tests {
         }
     }
 
-    fn ruleset(id: &str, inherits: Option<&str>, fields: Vec<Field>) -> Ruleset {
+    fn ruleset(id: &str, template: bool, based_on: Option<&str>, fields: Vec<Field>) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            inherits: inherits.map(ToOwned::to_owned),
+            template,
+            based_on: based_on.map(ToOwned::to_owned),
             fields,
         }
     }
 
-    /// A base with two fields, whose order is what the position column keeps.
-    fn base() -> Ruleset {
+    /// A template with two fields, whose order the position column keeps.
+    fn template() -> Ruleset {
         ruleset(
             "series",
+            true,
             None,
             vec![
                 field("show", Part::Show, Some(r"^(?<show>\w+)")),
@@ -238,25 +244,27 @@ mod tests {
     #[sqlx::test]
     async fn upsert_then_list_round_trips_each_ruleset(pool: SqlitePool) {
         let store = RulesetStore::new(pool);
-        store.upsert(&base()).await.expect("the base");
+        store.upsert(&template()).await.expect("the base");
         store
             .upsert(&ruleset(
                 "archive",
+                false,
                 Some("series"),
                 vec![field("show", Part::Show, Some("^Ashfall"))],
             ))
             .await
-            .expect("the child");
+            .expect("the ruleset on it");
 
         assert_eq!(
             store.list().await.expect("list"),
             vec![
                 ruleset(
                     "archive",
+                    false,
                     Some("series"),
                     vec![field("show", Part::Show, Some("^Ashfall"))]
                 ),
-                base(),
+                template(),
             ],
             "ordered by name, each with its fields in position order"
         );
@@ -265,11 +273,12 @@ mod tests {
     #[sqlx::test]
     async fn a_second_upsert_replaces_the_fields_and_keeps_enabled(pool: SqlitePool) {
         let store = RulesetStore::new(pool);
-        store.upsert(&base()).await.expect("the base");
+        store.upsert(&template()).await.expect("the template");
         store.set_enabled("series", true).await.expect("enable");
 
         let mut edited = ruleset(
             "series",
+            true,
             None,
             vec![field("title", Part::Movie, Some("^."))],
         );
@@ -286,7 +295,7 @@ mod tests {
     #[sqlx::test]
     async fn remove_reports_the_row_and_cascades_the_fields(pool: SqlitePool) {
         let store = RulesetStore::new(pool);
-        store.upsert(&base()).await.expect("the base");
+        store.upsert(&template()).await.expect("the base");
 
         assert!(
             store.remove("series").await.expect("remove"),
@@ -304,24 +313,24 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn removing_a_base_a_child_narrows_fails(pool: SqlitePool) {
+    async fn removing_a_template_a_ruleset_is_based_on_fails(pool: SqlitePool) {
         let store = RulesetStore::new(pool);
-        store.upsert(&base()).await.expect("the base");
+        store.upsert(&template()).await.expect("the base");
         store
-            .upsert(&ruleset("archive", Some("series"), Vec::new()))
+            .upsert(&ruleset("archive", false, Some("series"), Vec::new()))
             .await
-            .expect("the child");
+            .expect("the ruleset on it");
 
         assert!(
             store.remove("series").await.is_err(),
-            "a child pointing at nothing parses no title"
+            "a ruleset whose template is gone parses no title"
         );
     }
 
     #[sqlx::test]
     async fn set_enabled_flips_and_reports(pool: SqlitePool) {
         let store = RulesetStore::new(pool);
-        store.upsert(&base()).await.expect("the base");
+        store.upsert(&template()).await.expect("the base");
 
         assert!(
             store.set_enabled("series", true).await.expect("enable"),

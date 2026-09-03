@@ -175,36 +175,40 @@ pub(crate) struct Ruleset {
     /// feed.
     pub(crate) enabled: bool,
 
-    /// [`Ruleset::id`] of the ruleset this one narrows, or [`None`] for a base.
+    /// Whether this ruleset only serves as a foundation for others.
     ///
-    /// One base ruleset describes a whole family, such as every episode name.
-    /// A child narrows it to a single series by replacing one field with a
-    /// constant, which saves restating the eight fields that do not change.
-    pub(crate) inherits: Option<String>,
+    /// A template claims no title and filters no feed. It exists so several
+    /// rulesets share one set of fields and replace only what differs.
+    pub(crate) template: bool,
+
+    /// [`Ruleset::id`] of the template this ruleset is built on, or [`None`]
+    /// for a ruleset that declares every field itself.
+    pub(crate) based_on: Option<String>,
 
     /// The fields this ruleset declares itself.
     ///
-    /// For a child this holds only the overrides, so a parent's later edit
-    /// reaches every child that did not replace that field. Use
-    /// [`Ruleset::resolved_fields`] to get the full list the editor shows.
+    /// A ruleset on a template holds only the fields it replaces, so an edit
+    /// to the template reaches every ruleset that did not replace that
+    /// field. Use [`Ruleset::resolved_fields`] to get the full list the
+    /// editor shows.
     pub(crate) fields: Vec<Field>,
 }
 
 impl Ruleset {
     /// Every field the editor shows, each tagged with where it came from.
     ///
-    /// A base ruleset returns its own fields untouched. A child returns the
-    /// parent's fields in the parent's order, so the two editors read the
-    /// same way down the page.
+    /// A ruleset with no template returns its own fields untouched. One
+    /// built on a template returns the template's fields in the template's
+    /// order, so the two editors read the same way down the page.
     ///
-    /// `parent` is the ruleset this one narrows, which the caller resolves
-    /// through [`crate::rules::Engine`]. Passing it in is what keeps a
-    /// ruleset from reaching for a global list to find its own parent.
+    /// `template` is the ruleset this one is built on, which the caller
+    /// resolves through [`crate::rules::Engine`]. Passing it in is what
+    /// keeps a ruleset from reaching for a global list to find its own.
     pub(crate) fn resolved_fields<'a>(
         &'a self,
-        parent: Option<&'a Ruleset>,
+        template: Option<&'a Ruleset>,
     ) -> Vec<ResolvedField<'a>> {
-        let Some(parent) = parent else {
+        let Some(template) = template else {
             return self
                 .fields
                 .iter()
@@ -215,14 +219,16 @@ impl Ruleset {
                 .collect();
         };
 
-        parent
+        template
             .fields
             .iter()
             .map(
                 |inherited| match self.fields.iter().find(|own| own.name == inherited.name) {
                     Some(field) => ResolvedField {
                         field,
-                        source: FieldSource::Overridden { parent: inherited },
+                        source: FieldSource::Overridden {
+                            template: inherited,
+                        },
                     },
                     None => ResolvedField {
                         field: inherited,
@@ -234,7 +240,7 @@ impl Ruleset {
     }
 }
 
-/// A field as the editor shows it, once inheritance is applied.
+/// A field as the editor shows it, once the template is applied.
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedField<'a> {
     /// The value in effect, whether inherited or replaced.
@@ -253,16 +259,16 @@ impl ResolvedField<'_> {
 /// Where a resolved field came from.
 #[derive(Clone, Copy)]
 pub(crate) enum FieldSource<'a> {
-    /// Declared by a ruleset that inherits nothing.
+    /// Declared by a ruleset with no template.
     Own,
 
-    /// Carried unchanged from the parent.
+    /// Carried from the template.
     Inherited,
 
-    /// Replaces the parent's field, usually narrowing a pattern to a constant.
+    /// Replaces the template's field.
     Overridden {
-        /// The parent's field, shown beside the override it replaced.
-        parent: &'a Field,
+        /// The template's field, shown beside the override it replaced.
+        template: &'a Field,
     },
 }
 
@@ -344,7 +350,7 @@ pub(crate) struct Field {
     /// pattern its kind supplies.
     ///
     /// A pattern declared on a premade kind wins over the built-in one. That
-    /// is how a child ruleset narrows a season to a single constant while
+    /// is how a ruleset replaces a season with a single constant while
     /// keeping the kind's normalization.
     pub(crate) pattern: Option<String>,
 

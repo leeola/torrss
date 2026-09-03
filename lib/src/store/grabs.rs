@@ -288,7 +288,7 @@ mod tests {
                     ],
                 }
             )]),
-            "the engine ranked the child first, and the order survives the join"
+            "the engine ranked the ruleset first, and the order survives the join"
         );
     }
 

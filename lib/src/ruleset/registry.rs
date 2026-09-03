@@ -46,8 +46,8 @@ pub(crate) enum SaveError {
     #[snafu(display("the ruleset does not compile: {source}"))]
     Engine { source: EngineError },
 
-    #[snafu(display("ruleset {id} is narrowed by another ruleset"))]
-    HasChildren { id: String },
+    #[snafu(display("ruleset {id} is the template of another ruleset"))]
+    InUse { id: String },
 }
 
 impl Rulesets {
@@ -101,9 +101,9 @@ impl Rulesets {
     ///
     /// # Errors
     ///
-    /// Returns [`SaveError::HasChildren`] when another ruleset narrows this
-    /// one. A child whose parent is gone resolves no inherited field, so the
-    /// reader removes the children first.
+    /// Returns [`SaveError::InUse`] while another ruleset is based on this
+    /// one. A ruleset whose template is gone resolves no field, so the
+    /// reader removes those first.
     #[allow(
         dead_code,
         reason = "the ruleset editor's Delete posts to a route that writes through this"
@@ -116,8 +116,8 @@ impl Rulesets {
                 return Ok(false);
             };
 
-            if engine.children(ruleset).next().is_some() {
-                return HasChildrenSnafu { id }.fail();
+            if engine.derived(ruleset).next().is_some() {
+                return InUseSnafu { id }.fail();
             }
         }
 
@@ -150,8 +150,8 @@ impl Rulesets {
     /// Compiles the running set with `ruleset` replaced or appended.
     ///
     /// The whole set compiles rather than the one ruleset alone, because a
-    /// child inherits its parent's fields and an edit to a parent changes
-    /// what every child parses.
+    /// ruleset carries its template's fields by reference and an edit to a
+    /// template changes what every ruleset on it parses.
     fn rebuilt_with(&self, ruleset: Ruleset) -> Result<Arc<Engine>, SaveError> {
         let mut rulesets = self
             .read()
@@ -205,12 +205,13 @@ mod tests {
     use crate::ruleset::store::RulesetStore;
     use crate::ruleset::{Field, FieldKind, Part, Ruleset};
 
-    fn ruleset(id: &str, inherits: Option<&str>, pattern: &str) -> Ruleset {
+    fn ruleset(id: &str, based_on: Option<&str>, pattern: &str) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            inherits: inherits.map(ToOwned::to_owned),
+            template: false,
+            based_on: based_on.map(ToOwned::to_owned),
             fields: vec![Field {
                 name: "show".to_owned(),
                 part: Part::Show,
@@ -270,7 +271,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn removing_a_base_a_child_narrows_is_refused(pool: SqlitePool) {
+    async fn removing_a_template_a_ruleset_is_based_on_is_refused(pool: SqlitePool) {
         let rulesets = loaded(&pool).await;
         rulesets
             .save(ruleset("series", None, r"^(?<show>\w+)"))
@@ -279,18 +280,18 @@ mod tests {
         rulesets
             .save(ruleset("archive", Some("series"), "^Ashfall"))
             .await
-            .expect("the child");
+            .expect("the ruleset on it");
 
         assert!(
             matches!(
                 rulesets.remove("series").await,
-                Err(SaveError::HasChildren { .. })
+                Err(SaveError::InUse { .. })
             ),
-            "a child with no parent resolves no inherited field"
+            "a ruleset whose template is gone resolves no field"
         );
         assert!(
-            rulesets.remove("archive").await.expect("the child goes"),
-            "the child itself removes"
+            rulesets.remove("archive").await.expect("it goes"),
+            "the ruleset itself removes"
         );
         assert!(
             !rulesets.remove("archive").await.expect("nothing left"),
@@ -326,8 +327,8 @@ mod tests {
 
     /// A cycle is the only shape a stored set takes that does not compile.
     ///
-    /// The `inherits` foreign key already refuses a parent no row carries, so
-    /// a dangling parent never reaches the table. Two rulesets that narrow
+    /// The `based_on` foreign key already refuses a template no row carries,
+    /// so a dangling template never reaches the table. Two rulesets based on
     /// each other satisfy the key and still describe no chain.
     #[sqlx::test]
     async fn a_stored_cycle_fails_the_load(pool: SqlitePool) {

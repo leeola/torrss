@@ -30,10 +30,10 @@ pub(crate) struct Parsed {
 
 /// What makes two releases the same thing.
 ///
-/// The ruleset here is the root of the inheritance chain rather than the one
-/// that claimed the name. A child only narrows what its base describes, so an
-/// episode claimed by the base and the same episode claimed by a child are
-/// one release, not two.
+/// The ruleset here is the template when the claimant has one, rather than
+/// the ruleset that claimed the name. Every ruleset built on one template
+/// therefore shares one namespace of releases, so an episode claimed by the
+/// template and the same episode claimed by a ruleset on it are one release.
 ///
 /// A trailing empty part makes the identity a span rather than one release. A
 /// season pack captures a show and a season and no episode, so its key ends
@@ -115,20 +115,20 @@ pub(crate) enum EngineError {
         source: regex::Error,
     },
 
-    #[snafu(display("ruleset {ruleset} narrows {parent}, which does not exist"))]
-    UnknownParent { ruleset: String, parent: String },
+    #[snafu(display("ruleset {ruleset} is based on {template}, which does not exist"))]
+    UnknownTemplate { ruleset: String, template: String },
 
-    #[snafu(display("ruleset {ruleset} narrows itself through a cycle"))]
+    #[snafu(display("ruleset {ruleset} is based on itself through a cycle"))]
     Cycle { ruleset: String },
 }
 
 struct Compiled {
     id: String,
 
-    /// The base of the inheritance chain, which names the identity.
+    /// The template at the root, which names the identity.
     root: String,
 
-    /// How many rulesets this one narrows, which is what orders the list.
+    /// How many templates this one is built on, which orders the list.
     depth: usize,
 
     fields: Vec<CompiledField>,
@@ -145,13 +145,13 @@ struct CompiledField {
 impl Engine {
     /// Compiles every ruleset, most specific first.
     ///
-    /// The sort is stable and by depth, so a child precedes the base it
-    /// narrows while declaration order still breaks ties among equals.
+    /// The sort is stable and by depth, so a ruleset precedes the template
+    /// it is based on while declaration order breaks ties among equals.
     ///
     /// # Errors
     ///
-    /// Returns the first ruleset that names a parent no other ruleset
-    /// declares, that narrows itself through a cycle, or that carries a
+    /// Returns the first ruleset that names a template no other ruleset
+    /// declares, that is based on itself through a cycle, or that carries a
     /// pattern the regex engine rejects.
     pub(crate) fn from_rulesets(rulesets: Vec<Ruleset>) -> Result<Self, EngineError> {
         let mut compiled = rulesets
@@ -177,23 +177,27 @@ impl Engine {
         self.source.iter().find(|ruleset| ruleset.id == id)
     }
 
-    /// The ruleset `ruleset` narrows, or [`None`] when it is a base.
-    pub(crate) fn parent(&self, ruleset: &Ruleset) -> Option<&Ruleset> {
-        self.ruleset(ruleset.inherits.as_deref()?)
+    /// The template `ruleset` is built on, or [`None`] when it has none.
+    pub(crate) fn template_of(&self, ruleset: &Ruleset) -> Option<&Ruleset> {
+        self.ruleset(ruleset.based_on.as_deref()?)
     }
 
-    /// Every ruleset that narrows nothing, which is where the editor starts.
-    pub(crate) fn bases(&self) -> impl Iterator<Item = &Ruleset> {
+    /// Every ruleset based on nothing, template or not, which is where the
+    /// index starts.
+    pub(crate) fn roots(&self) -> impl Iterator<Item = &Ruleset> {
         self.source
             .iter()
-            .filter(|ruleset| ruleset.inherits.is_none())
+            .filter(|ruleset| ruleset.based_on.is_none())
     }
 
-    /// Every ruleset that narrows `base`.
-    pub(crate) fn children<'a>(&'a self, base: &'a Ruleset) -> impl Iterator<Item = &'a Ruleset> {
+    /// Every ruleset built on `template`.
+    pub(crate) fn derived<'a>(
+        &'a self,
+        template: &'a Ruleset,
+    ) -> impl Iterator<Item = &'a Ruleset> {
         self.source
             .iter()
-            .filter(move |child| child.inherits.as_deref() == Some(base.id.as_str()))
+            .filter(move |one| one.based_on.as_deref() == Some(template.id.as_str()))
     }
 
     /// Lists every ruleset that claims `title`, most specific first.
@@ -220,18 +224,18 @@ impl Engine {
 }
 
 impl Compiled {
-    /// Walks `ruleset` to the base of its chain and compiles its fields.
+    /// Walks `ruleset` to the template at the root and compiles its fields.
     ///
     /// The walk is bounded by the number of rulesets, because a stored set
-    /// can name a parent chain that loops back on itself. An unbounded walk
-    /// would hang the process on data a reader saved.
+    /// can name a chain of templates that loops back on itself. An unbounded
+    /// walk would hang the process on data a reader saved.
     fn new(ruleset: &Ruleset, rulesets: &[Ruleset]) -> Result<Self, EngineError> {
         let find = |id: &str| rulesets.iter().find(|candidate| candidate.id == id);
 
-        let parent = match &ruleset.inherits {
-            Some(id) => Some(find(id).context(UnknownParentSnafu {
+        let template = match &ruleset.based_on {
+            Some(id) => Some(find(id).context(UnknownTemplateSnafu {
                 ruleset: ruleset.id.clone(),
-                parent: id.clone(),
+                template: id.clone(),
             })?),
             None => None,
         };
@@ -239,10 +243,10 @@ impl Compiled {
         let mut root = ruleset;
         let mut depth = 0;
 
-        while let Some(id) = &root.inherits {
-            root = find(id).context(UnknownParentSnafu {
+        while let Some(id) = &root.based_on {
+            root = find(id).context(UnknownTemplateSnafu {
                 ruleset: root.id.clone(),
-                parent: id.clone(),
+                template: id.clone(),
             })?;
 
             depth += 1;
@@ -260,7 +264,7 @@ impl Compiled {
             root: root.id.clone(),
             depth,
             fields: ruleset
-                .resolved_fields(parent)
+                .resolved_fields(template)
                 .into_iter()
                 .map(|resolved| CompiledField::new(resolved.field, &ruleset.id))
                 .collect::<Result<Vec<_>, _>>()?,
@@ -397,11 +401,11 @@ mod tests {
     }
 
     #[test]
-    fn claimants_lists_child_before_base() {
+    fn claimants_lists_a_ruleset_before_its_template() {
         assert_eq!(
             ENGINE.claimants(HOLLOW_1080),
             vec!["series-hollow-meridian", "series-episodes"],
-            "a child narrows its base, so both claim it"
+            "the ruleset and the template it is based on both claim it"
         );
     }
 
@@ -415,7 +419,7 @@ mod tests {
         assert_eq!(
             ENGINE.parse(HOLLOW_720).expect("claimed").ruleset,
             "series-episodes",
-            "the child requires 1080p, so the base claims this one"
+            "the ruleset requires 1080p, so its template claims this one"
         );
         assert_eq!(
             identity(HOLLOW_720),
@@ -451,7 +455,7 @@ mod tests {
 
         assert_eq!(
             parsed.ruleset, "series-hollow-meridian",
-            "a pack names its show and resolution, so the child claims it"
+            "a pack names its show and resolution, so the ruleset claims it"
         );
         assert_eq!(
             parsed.identity,
@@ -534,23 +538,24 @@ mod tests {
         );
     }
 
-    /// Names a ruleset that narrows `inherits` and declares no field of its
-    /// own, which is all a parent walk reads.
-    fn narrowing(id: &str, inherits: Option<&str>) -> Ruleset {
+    /// Names a ruleset built on `based_on` that declares no field of its
+    /// own, which is all a template walk reads.
+    fn based_on(id: &str, based_on: Option<&str>) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            inherits: inherits.map(ToOwned::to_owned),
+            template: false,
+            based_on: based_on.map(ToOwned::to_owned),
             fields: Vec::new(),
         }
     }
 
     #[test]
-    fn a_parent_chain_that_loops_is_an_error() {
+    fn a_base_chain_that_loops_is_an_error() {
         let Err(error) = Engine::from_rulesets(vec![
-            narrowing("first", Some("second")),
-            narrowing("second", Some("first")),
+            based_on("first", Some("second")),
+            based_on("second", Some("first")),
         ]) else {
             panic!("a loop never compiles");
         };
@@ -562,16 +567,16 @@ mod tests {
     }
 
     #[test]
-    fn a_parent_no_ruleset_declares_is_an_error() {
-        let Err(error) = Engine::from_rulesets(vec![narrowing("child", Some("absent"))]) else {
-            panic!("an unknown parent never compiles");
+    fn a_template_no_ruleset_declares_is_an_error() {
+        let Err(error) = Engine::from_rulesets(vec![based_on("derived", Some("absent"))]) else {
+            panic!("an unknown template never compiles");
         };
 
         assert!(
             matches!(
                 error,
-                EngineError::UnknownParent { ref ruleset, ref parent }
-                    if ruleset == "child" && parent == "absent"
+                EngineError::UnknownTemplate { ref ruleset, ref template }
+                    if ruleset == "derived" && template == "absent"
             ),
             "the message names both ends: {error}"
         );

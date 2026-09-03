@@ -124,9 +124,9 @@ pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
 pub(crate) struct ItemDetails {
     /// Every ruleset that claims the title, most specific first.
     ///
-    /// A base and the child that narrows it both claim the same release.
-    /// Listing only the winner makes the base read as a ruleset that never
-    /// fires.
+    /// A ruleset and the template it is based on both claim the same
+    /// release. Listing only the winner makes the template read as a ruleset
+    /// that never fires.
     pub rulesets: Vec<Claimant>,
 
     /// What the claiming ruleset read out of the title, in its field order.
@@ -332,9 +332,9 @@ pub(crate) async fn checkbox(#[into] href: String, checked: bool, label: &str) -
 /// part makes the anchor ambiguous, and the anchor must move to the name.
 ///
 /// An inherited row dims and locks its inputs. The value shown is the
-/// parent's, and editing it here would suggest a change this ruleset does not
-/// hold. The trailing column is the way in: it replaces the parent's value
-/// with one this ruleset owns.
+/// template's, and editing it here would suggest a change this ruleset does
+/// not hold. The trailing column is the way in: it replaces the template's
+/// value with one this ruleset owns.
 #[component]
 pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Result {
     let field = resolved.field;
@@ -411,11 +411,11 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
                 >
                 match resolved.source {
-                    FieldSource::Overridden { parent } => <p
+                    FieldSource::Overridden { template } => <p
                         class="mt-1 truncate font-mono text-[11px] text-slate-600"
-                        title=(parent.matcher())
+                        title=(template.matcher())
                     >
-                        "replaces " (parent.matcher())
+                        "replaces " (template.matcher())
                     </p>,
                     _ => "",
                 }
@@ -538,7 +538,7 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
 
 /// One ruleset on the admin index.
 ///
-/// A `nested` card is a child, indented under the base it narrows.
+/// A `nested` card is indented under the template it is based on.
 ///
 /// The whole card is one link, so the badge here reports the state rather than
 /// changing it. An anchor inside an anchor is not something a browser resolves
@@ -547,7 +547,7 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
 #[component]
 pub(crate) async fn ruleset_card(
     ruleset: &Ruleset,
-    parent: Option<&Ruleset>,
+    template: Option<&Ruleset>,
     nested: bool,
     enabled: bool,
 ) -> Result {
@@ -567,18 +567,18 @@ pub(crate) async fn ruleset_card(
                 <div class="flex flex-wrap items-center gap-3">
                     <h2 class="text-sm font-semibold text-slate-100">(&ruleset.name)</h2>
                     status_badge(enabled: enabled)
-                    match parent {
-                        Some(parent) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
-                            "narrows " (&parent.name)
+                    match template {
+                        Some(template) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                            "based on " (&template.name)
                         </span>,
                         None => "",
                     }
                 </div>
 
                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    match parent {
-                        Some(parent) => <span>
-                            (ruleset.fields.len()) " replaced of " (format::count(parent.fields.len(), "field", "fields"))
+                    match template {
+                        Some(template) => <span>
+                            (ruleset.fields.len()) " replaced of " (format::count(template.fields.len(), "field", "fields"))
                         </span>,
                         None => <span>(format::count(ruleset.fields.len(), "field", "fields"))</span>,
                     }

@@ -24,11 +24,17 @@ use super::{Field, FieldKind, Part};
 pub(crate) struct RulesetForm {
     pub(crate) name: String,
 
-    /// The ruleset this one narrows, or [`None`] for a base.
+    /// Whether this ruleset only serves as a foundation for others.
+    ///
+    /// A checkbox posts its name only when checked, so absence is `false`.
+    pub(crate) template: bool,
+
+    /// The template this ruleset is built on, or [`None`] for a ruleset that
+    /// declares every field itself.
     ///
     /// An empty value means none. A select posts its empty option rather than
     /// omitting the key.
-    pub(crate) inherits: Option<String>,
+    pub(crate) based_on: Option<String>,
 
     pub(crate) fields: Vec<Field>,
 }
@@ -78,7 +84,8 @@ impl RulesetForm {
     /// what an added row looks like before the reader fills it in.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
         let mut name = String::new();
-        let mut inherits = String::new();
+        let mut based_on = String::new();
+        let mut template = false;
 
         // Ordered by index, so the fields come out in the order the editor
         // showed them however the browser ordered the pairs.
@@ -87,7 +94,8 @@ impl RulesetForm {
         for (key, value) in form_urlencoded::parse(body.as_bytes()) {
             match key.as_ref() {
                 "name" => name = value.into_owned(),
-                "inherits" => inherits = value.into_owned(),
+                "based_on" => based_on = value.into_owned(),
+                "template" => template = true,
                 _ => read_row(&mut rows, &key, &value),
             }
         }
@@ -97,7 +105,8 @@ impl RulesetForm {
 
         Ok(Self {
             name,
-            inherits: Some(inherits.trim().to_owned()).filter(|id| !id.is_empty()),
+            template,
+            based_on: Some(based_on.trim().to_owned()).filter(|id| !id.is_empty()),
             fields: rows
                 .into_values()
                 .filter(|row| !row.name.trim().is_empty())
@@ -117,7 +126,11 @@ impl RulesetForm {
         let mut pairs = form_urlencoded::Serializer::new(String::new());
 
         pairs.append_pair("name", &self.name);
-        pairs.append_pair("inherits", self.inherits.as_deref().unwrap_or_default());
+        pairs.append_pair("based_on", self.based_on.as_deref().unwrap_or_default());
+
+        if self.template {
+            pairs.append_pair("template", "on");
+        }
 
         for (index, field) in self.fields.iter().enumerate() {
             pairs.append_pair(&format!("field.{index}.name"), &field.name);
@@ -260,7 +273,7 @@ mod tests {
     #[test]
     fn rows_come_out_in_index_order_across_a_gap() {
         let form = RulesetForm::parse(
-            "name=Series&inherits=\
+            "name=Series&based_on=\
              &field.2.name=season&field.2.part=season&field.2.kind=text&field.2.pattern=S%5Cd%2B\
              &field.0.name=show&field.0.part=show&field.0.kind=text&field.0.pattern=%5E.%2B\
              &field.0.required=on&field.0.identity=on",
@@ -271,7 +284,8 @@ mod tests {
             form,
             RulesetForm {
                 name: "Series".to_owned(),
-                inherits: None,
+                template: false,
+                based_on: None,
                 fields: vec![
                     text("show", Part::Show, "^.+", true, true),
                     text("season", Part::Season, r"S\d+", false, false),
@@ -313,13 +327,13 @@ mod tests {
 
     #[test]
     fn an_inherited_ruleset_keeps_the_parent_it_names() {
-        let form = RulesetForm::parse("name=Ashfall&inherits=series").expect("the body parses");
+        let form = RulesetForm::parse("name=Ashfall&based_on=series").expect("the body parses");
 
-        assert_eq!(form.inherits, Some("series".to_owned()));
+        assert_eq!(form.based_on, Some("series".to_owned()));
         assert_eq!(
             form.fields,
             Vec::new(),
-            "a child declares no field of its own"
+            "a ruleset on a template declares no field of its own"
         );
     }
 
@@ -379,7 +393,8 @@ mod tests {
     fn an_encoded_form_parses_back_to_itself() {
         let form = RulesetForm {
             name: "Series Episodes".to_owned(),
-            inherits: Some("series".to_owned()),
+            template: true,
+            based_on: Some("series".to_owned()),
             fields: vec![
                 text("show", Part::Show, "^.+", true, true),
                 Field {

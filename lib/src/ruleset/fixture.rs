@@ -6,9 +6,10 @@
 //!
 //! Five rulesets, every name invented:
 //!
-//! - `series-episodes`, a base that claims any episode name.
-//! - `series-hollow-meridian`, a child narrowing it to one show at 1080p.
-//! - `series-ashfall-county`, a second child, narrowed by publisher.
+//! - `series-episodes`, a template that claims nothing and holds the fields
+//!   an episode name breaks into.
+//! - `series-hollow-meridian`, a ruleset on it for one show at 1080p.
+//! - `series-ashfall-county`, a second, told apart by publisher.
 //! - `feature-films`, a title followed by a production year.
 //! - `archive-talks`, a publisher-prefixed session number.
 //!
@@ -67,7 +68,8 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             id: "series-episodes".to_owned(),
             name: "Series Episodes".to_owned(),
             enabled: false,
-            inherits: None,
+            template: true,
+            based_on: None,
             fields: vec![
                 field(
                     "show",
@@ -133,7 +135,8 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             id: "feature-films".to_owned(),
             name: "Feature Films".to_owned(),
             enabled: false,
-            inherits: None,
+            template: false,
+            based_on: None,
             fields: vec![
                 field(
                     "title",
@@ -205,7 +208,8 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             id: "archive-talks".to_owned(),
             name: "Archive Talks".to_owned(),
             enabled: false,
-            inherits: None,
+            template: false,
+            based_on: None,
             fields: vec![
                 field(
                     "publisher",
@@ -261,7 +265,8 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             id: "series-hollow-meridian".to_owned(),
             name: "The Hollow Meridian".to_owned(),
             enabled: false,
-            inherits: Some("series-episodes".to_owned()),
+            template: false,
+            based_on: Some("series-episodes".to_owned()),
             fields: vec![
                 field(
                     "show",
@@ -285,7 +290,8 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             id: "series-ashfall-county".to_owned(),
             name: "Ashfall County".to_owned(),
             enabled: false,
-            inherits: Some("series-episodes".to_owned()),
+            template: false,
+            based_on: Some("series-episodes".to_owned()),
             fields: vec![
                 field(
                     "show",

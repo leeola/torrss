@@ -380,7 +380,7 @@ mod tests {
                     ],
                 }
             )]),
-            "the child ranks ahead of the base it narrows"
+            "the ruleset ranks ahead of the template it is based on"
         );
     }
 

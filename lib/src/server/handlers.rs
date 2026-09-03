@@ -575,26 +575,26 @@ async fn admin(cx: &Cx) -> Result {
             </a>
         </div>
 
-        if engine.bases().next().is_none() {
+        if engine.roots().next().is_none() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No ruleset is declared."
             </p>
         } else {
             <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
-                for base in engine.bases() {
+                for root in engine.roots() {
                     components::ruleset_card(
-                        ruleset: base,
-                        parent: engine.parent(base),
+                        ruleset: root,
+                        template: engine.template_of(root),
                         nested: false,
-                        enabled: base.enabled,
+                        enabled: root.enabled,
                     )
 
-                    for child in engine.children(base) {
+                    for derived in engine.derived(root) {
                         components::ruleset_card(
-                            ruleset: child,
-                            parent: Some(base),
+                            ruleset: derived,
+                            template: Some(root),
                             nested: true,
-                            enabled: child.enabled,
+                            enabled: derived.enabled,
                         )
                     }
                 }
@@ -1071,13 +1071,13 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 /// has nothing to switch on.
 #[component]
 async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) -> Result {
-    let parent = ruleset.and_then(|ruleset| engine.parent(ruleset));
+    let template = ruleset.and_then(|ruleset| engine.template_of(ruleset));
 
     let name = ruleset
         .map(|ruleset| ruleset.name.clone())
         .unwrap_or_default();
-    let inherits = ruleset
-        .and_then(|ruleset| ruleset.inherits.clone())
+    let based_on = ruleset
+        .and_then(|ruleset| ruleset.based_on.clone())
         .unwrap_or_default();
 
     let action = ruleset.map_or_else(
@@ -1097,7 +1097,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
     // because a disabled inherited input sends nothing.
     let initial_draft = RulesetForm {
         name: name.clone(),
-        inherits: ruleset.and_then(|ruleset| ruleset.inherits.clone()),
+        template: ruleset.is_some_and(|ruleset| ruleset.template),
+        based_on: ruleset.and_then(|ruleset| ruleset.based_on.clone()),
         fields: ruleset
             .map(|ruleset| ruleset.fields.clone())
             .unwrap_or_default(),
@@ -1126,7 +1127,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
             method="post"
             action=(&action)
             // FormData skips a disabled input, so an inherited row stays out
-            // of the draft and the parent's field keeps applying. A `raw!`
+            // of the draft and the template's field keeps applying. A `raw!`
             // result enters the signal as the JavaScript value it is, and the
             // shard dehydrates every argument before it fetches, so a plain
             // string has to be hydrated on the way in.
@@ -1166,26 +1167,27 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
                         }
                     </div>
 
-                    <label for="inherits" class="mt-3 block text-xs text-slate-500">
-                        "Narrows"
+                    <label for="based_on" class="mt-3 block text-xs text-slate-500">
+                        "Template"
                     </label>
                     <select
-                        id="inherits"
-                        name="inherits"
+                        id="based_on"
+                        name="based_on"
                         @input=$(|_e: Event| {
                             rows.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
                             draft.set(raw!("cx.hydrate(window.torrssRows.serialize())", String::new()));
                         })
                         class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
-                        <option value="" selected=(inherits.is_empty())>
-                            "Nothing. Declare every field here."
+                        <option value="" selected=(based_on.is_empty())>
+                            "None. Declare every field here."
                         </option>
-                        // Only a base is offered, and a base inherits nothing,
-                        // so the one chain a choice here closes is onto itself.
-                        for base in engine.bases().filter(|base| base.id != ruleset_id) {
-                            <option value=(&base.id) selected=(base.id == inherits)>
-                                (&base.name) " (" (base.fields.len()) " fields)"
+                        // Only a root is offered, and a root is based on
+                        // nothing, so the one chain a choice here closes is
+                        // onto itself.
+                        for root in engine.roots().filter(|root| root.id != ruleset_id) {
+                            <option value=(&root.id) selected=(root.id == based_on)>
+                                (&root.name) " (" (root.fields.len()) " fields)"
                             </option>
                         }
                     </select>
@@ -1222,14 +1224,14 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
                 </div>
             </div>
 
-            match parent {
-                Some(parent) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
-                    "Narrows "
+            match template {
+                Some(template) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+                    "Based on "
                     <a
-                        href=(format!("/admin/rulesets/{}", parent.id))
+                        href=(format!("/admin/rulesets/{}", template.id))
                         class="text-slate-200 underline decoration-slate-700 underline-offset-2 hover:text-white"
-                    >(&parent.name)</a>
-                    ". A greyed field carries the parent's value. Replace one to give this ruleset its own."
+                    >(&template.name)</a>
+                    ". A greyed field carries the template's value. Replace one to give this ruleset its own."
                 </p>,
                 None => "",
             }
@@ -1241,7 +1243,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
                 <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                     <h2 class="text-sm font-semibold text-slate-100">"Fields"</h2>
                     <p class="text-xs text-slate-500">
-                        "A greyed field is inherited. Replace one to give this ruleset its own."
+                        "A greyed field comes from the template. Replace one to give this ruleset its own."
                     </p>
                 </div>
 
@@ -1292,7 +1294,7 @@ fn compute_matches<'a>(
 /// Re-renders the field rows from the draft the editor holds.
 ///
 /// The rows follow the form rather than the save, so a row the reader added
-/// and a parent they just picked both appear without a round trip through
+/// and a template they just picked both appear without a round trip through
 /// the database.
 ///
 /// Only a structural change re-renders these. A keystroke moves the matches
@@ -1313,12 +1315,12 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
         }
     };
 
-    let parent = posted.inherits.as_deref().and_then(|id| engine.ruleset(id));
+    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
 
     // The inherited rows come first and carry no index, because they submit
     // nothing. An own row's index is its place among the rows that do.
-    let inherited = parent.map_or_else(Vec::new, |parent| {
-        parent
+    let inherited = template.map_or_else(Vec::new, |template| {
+        template
             .fields
             .iter()
             .filter(|field| !posted.fields.iter().any(|own| own.name == field.name))
@@ -1341,10 +1343,10 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
                 index: index,
                 resolved: ResolvedField {
                     field,
-                    source: match parent.and_then(|parent| {
-                        parent.fields.iter().find(|one| one.name == field.name)
+                    source: match template.and_then(|template| {
+                        template.fields.iter().find(|one| one.name == field.name)
                     }) {
-                        Some(parent) => FieldSource::Overridden { parent },
+                        Some(template) => FieldSource::Overridden { template },
                         None => FieldSource::Own,
                     },
                 },
@@ -1353,17 +1355,17 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
     }
 }
 
-/// The fields a draft describes, resolved against the parent it names.
+/// The fields a draft describes, resolved against the template it names.
 ///
-/// A child posts only the rows it overrides, so the parent supplies the
+/// A ruleset posts only the rows it replaces, so the template supplies the
 /// rest. Matching by name rather than by position is what lets the reader
 /// reorder or drop a row without the override landing on a different field.
-fn draft_fields<'a>(parent: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Field> {
-    let Some(parent) = parent else {
+fn draft_fields<'a>(template: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Field> {
+    let Some(template) = template else {
         return own.iter().collect();
     };
 
-    parent
+    template
         .fields
         .iter()
         .map(|inherited| {
@@ -1403,8 +1405,8 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String) -> 
         }
     };
 
-    let parent = posted.inherits.as_deref().and_then(|id| engine.ruleset(id));
-    let after = draft_fields(parent, &posted.fields);
+    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
+    let after = draft_fields(template, &posted.fields);
 
     let services = app_context::<Services>(cx);
 
@@ -1412,7 +1414,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String) -> 
     // A ruleset with nothing saved has no rules to lose, so the whole draft
     // reads as gained.
     let before = saved.map_or_else(Vec::new, |saved| {
-        let fields = saved.resolved_fields(engine.parent(saved));
+        let fields = saved.resolved_fields(engine.template_of(saved));
         let fields = fields.iter().map(|field| field.field).collect::<Vec<_>>();
 
         matches::rules(&fields, &Edits::default()).0
@@ -1526,9 +1528,7 @@ fn posted(RawForm(body): &RawForm) -> Result<RulesetForm> {
 /// problem, not theirs.
 fn write_failed(error: SaveError) -> Error {
     match error {
-        SaveError::Engine { .. } | SaveError::HasChildren { .. } => {
-            bad_request(error.to_string()).into()
-        }
+        SaveError::Engine { .. } | SaveError::InUse { .. } => bad_request(error.to_string()).into(),
         SaveError::Store { .. } => internal_server_error(error).into(),
     }
 }
@@ -1555,7 +1555,8 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             id: id.clone(),
             name: posted.name,
             enabled: false,
-            inherits: posted.inherits,
+            template: posted.template,
+            based_on: posted.based_on,
             fields: posted.fields,
         })
         .await
@@ -1582,7 +1583,8 @@ async fn save_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             id: id.to_owned(),
             name: posted.name,
             enabled,
-            inherits: posted.inherits,
+            template: posted.template,
+            based_on: posted.based_on,
             fields: posted.fields,
         })
         .await
