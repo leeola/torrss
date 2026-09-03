@@ -140,6 +140,9 @@ pub(crate) struct Ruleset {
     pub(crate) summary: &'static str,
     /// Whether the ruleset runs when the process starts.
     ///
+    /// Every shipped ruleset declares `false`, so the wanted list stays empty
+    /// until the reader chooses what to follow.
+    ///
     /// A disabled ruleset filters nothing, so its releases stay out of the
     /// feed. [`crate::server`] holds the live value, which a reader flips at
     /// runtime without editing this declaration.

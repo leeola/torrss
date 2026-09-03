@@ -66,18 +66,19 @@ mod tests {
     use super::RulesetSwitches;
 
     #[test]
+    fn nothing_is_enabled_at_start() {
+        assert_eq!(
+            RulesetSwitches::new().snapshot(),
+            HashSet::new(),
+            "a shipped ruleset is a template until the reader switches it on"
+        );
+    }
+
+    #[test]
     fn snapshot_reflects_a_toggle() {
         let switches = RulesetSwitches::new();
         switches.toggle("archive-talks");
 
-        assert_eq!(
-            switches.snapshot(),
-            HashSet::from([
-                "series-episodes",
-                "feature-films",
-                "series-hollow-meridian",
-                "archive-talks",
-            ]),
-        );
+        assert_eq!(switches.snapshot(), HashSet::from(["archive-talks"]));
     }
 }

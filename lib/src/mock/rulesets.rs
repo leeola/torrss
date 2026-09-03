@@ -6,6 +6,11 @@
 //! the ones in [`super::releases`], and each `sample` is the highlighting the
 //! editor shows for one of them.
 //!
+//! Every ruleset ships disabled, so these are templates rather than
+//! subscriptions. An enabled ruleset the reader never chose fills the wanted
+//! list with releases they never subscribed to, because a base such as
+//! `series-episodes` claims any well-formed episode name a tracker announces.
+//!
 //! [`super::FieldKind::Season`] and [`super::FieldKind::Episode`] arrive under
 //! an alias, because [`super::Part`] names those two parts as well and the
 //! parts are used far more often in this file.
@@ -25,7 +30,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
         id: "series-episodes",
         name: "Series Episodes",
         summary: "Dot-separated episode names carrying a season and episode pair.",
-        enabled: true,
+        enabled: false,
         inherits: None,
         feeds: &["publicwave-series", "northlight-hd"],
         sample: &[
@@ -121,7 +126,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
         id: "feature-films",
         name: "Feature Films",
         summary: "Feature titles followed by a production year and a master source.",
-        enabled: true,
+        enabled: false,
         inherits: None,
         feeds: &["civicarchive-films"],
         sample: &[
@@ -280,7 +285,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
         id: "series-hollow-meridian",
         name: "The Hollow Meridian",
         summary: "Narrows the episode rules to one series at broadcast quality.",
-        enabled: true,
+        enabled: false,
         inherits: Some("series-episodes"),
         feeds: &["publicwave-series"],
         sample: &[
