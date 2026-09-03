@@ -814,14 +814,12 @@ async fn feed_list(cx: &Cx, version: f64) -> Result {
 #[page("/admin/client")]
 async fn client(cx: &Cx) -> Result {
     let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
-    let services = app_context::<Services>(cx);
-    let now = services.clock.now();
-    // Bound as `checked` rather than `client`, because the `#[page]`
-    // attribute above puts a unit struct named `client` in scope.
-    let checked = services.torrents.check().await;
-    let scanned = app_context::<Arc<ScanState>>(cx).last();
+    let now = app_context::<Services>(cx).clock.now();
 
     view! {
+        signal version = 0.0;
+        signal scanning = false;
+
         <h1 class="text-2xl font-semibold tracking-tight">"Client"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "What this application talks to, and how each one last answered."
@@ -830,48 +828,21 @@ async fn client(cx: &Cx) -> Result {
         <h2 class="mt-6 text-sm font-semibold text-slate-300">"Torrent client"</h2>
 
         <div class="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
-            <div class="min-w-0">
-                <div class="flex flex-wrap items-center gap-2">
-                    <span class="text-sm text-slate-200">"qBittorrent"</span>
-                    <span class=(class!(
-                        "rounded-full px-2 py-0.5 text-xs",
-                        "bg-emerald-500/15 text-emerald-300" if checked.is_ok()
-                            else "bg-rose-500/15 text-rose-300",
-                    ))>
-                        if checked.is_ok() { "ok" } else { "failed" }
-                    </span>
-                </div>
+            client_status(version: $(version.get()))
 
-                <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
-                    match &checked {
-                        Ok(info) => (&info.version),
-                        Err(error) => (error.to_string()),
-                    }
-                </p>
-
-                <p class="mt-1 text-xs text-slate-500">
-                    match &scanned {
-                        None => "never scanned",
-                        Some(last) => match &last.outcome {
-                            Ok(report) => {
-                                (report.matched) " of "
-                                (format::count(report.torrents, "torrent", "torrents"))
-                                " matched a ruleset, scanned "
-                                (format::age(now, Some(last.at)))
-                            },
-                            Err(error) => {
-                                "scan failed: " (error) ", "
-                                (format::age(now, Some(last.at)))
-                            },
-                        },
-                    }
-                </p>
-            </div>
-
-            components::action_button(
-                action: "/admin/torrents/scan?back=/admin/client",
-                label: "Scan now",
-            )
+            <button
+                type="button"
+                :disabled=$(scanning.get())
+                class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-600"
+                @click=$(async |_e: Event| {
+                    scanning.set(true);
+                    scan_now().await;
+                    scanning.set(false);
+                    version.increment();
+                })
+            >
+                $(if scanning.get() { "Scanning..." } else { "Scan now" })
+            </button>
         </div>
 
         <h2 class="mt-8 text-sm font-semibold text-slate-300">"Feeds"</h2>
@@ -935,7 +906,65 @@ async fn client(cx: &Cx) -> Result {
     }
 }
 
-/// Scans the library from the torrent client now, then returns to `back`.
+/// How the torrent client answered, and what the last scan found in it.
+///
+/// The block sits beside the Scan now button rather than holding it, because
+/// a shard cannot reach the signals its caller declared.
+#[shard]
+async fn client_status(cx: &Cx, version: f64) -> Result {
+    // This is read for its change alone. A scan bumps it so the counts below
+    // report the pass that just ran.
+    let _ = version;
+
+    let services = app_context::<Services>(cx);
+    let now = services.clock.now();
+    // Bound as `checked` rather than `client`, because the `#[page]`
+    // attribute above puts a unit struct named `client` in scope.
+    let checked = services.torrents.check().await;
+    let scanned = app_context::<Arc<ScanState>>(cx).last();
+
+    view! {
+        <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm text-slate-200">"qBittorrent"</span>
+                <span class=(class!(
+                    "rounded-full px-2 py-0.5 text-xs",
+                    "bg-emerald-500/15 text-emerald-300" if checked.is_ok()
+                        else "bg-rose-500/15 text-rose-300",
+                ))>
+                    if checked.is_ok() { "ok" } else { "failed" }
+                </span>
+            </div>
+
+            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
+                match &checked {
+                    Ok(info) => (&info.version),
+                    Err(error) => (error.to_string()),
+                }
+            </p>
+
+            <p class="mt-1 text-xs text-slate-500">
+                match &scanned {
+                    None => "never scanned",
+                    Some(last) => match &last.outcome {
+                        Ok(report) => {
+                            (report.matched) " of "
+                            (format::count(report.torrents, "torrent", "torrents"))
+                            " matched a ruleset, scanned "
+                            (format::age(now, Some(last.at)))
+                        },
+                        Err(error) => {
+                            "scan failed: " (error) ", "
+                            (format::age(now, Some(last.at)))
+                        },
+                    },
+                }
+            </p>
+        </div>
+    }
+}
+
+/// Scans the library from the torrent client now, and reports what matched.
 ///
 /// This runs the same pass the scan task runs, so a reader who just added a
 /// torrent by hand sees it counted without waiting out the interval.
@@ -943,18 +972,18 @@ async fn client(cx: &Cx) -> Result {
 /// A pass that overlaps the scan task is harmless. Each pass rewrites the
 /// whole table in one transaction, so two passes converge on the snapshot
 /// the client reported last.
-#[route(POST "/admin/torrents/scan")]
-async fn scan_library(cx: &Cx) -> Result<SeeOther> {
-    let back = query_params::<SwitchReturn>(cx)?
-        .back
-        .clone()
-        .unwrap_or_else(|| "/admin/client".to_owned());
-
+///
+/// A failed pass reports zero. The block the caller re-renders carries the
+/// reason, which is what the reader reads. This number only tells the button
+/// the call ended.
+#[procedure]
+async fn scan_now(cx: &Cx) -> Result<f64> {
+    let state = app_context::<Arc<ScanState>>(cx);
     let services = app_context::<Services>(cx);
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     scan::scan(
-        app_context::<Arc<ScanState>>(cx),
+        state,
         &services.db,
         services.torrents.as_ref(),
         services.clock.as_ref(),
@@ -962,7 +991,12 @@ async fn scan_library(cx: &Cx) -> Result<SeeOther> {
     )
     .await;
 
-    Ok(see_other(back))
+    let matched = state
+        .last()
+        .and_then(|last| last.outcome.ok())
+        .map_or(0, |report| report.matched);
+
+    Ok(matched as f64)
 }
 
 /// Checks one feed now, then returns to `back`.
