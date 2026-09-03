@@ -12,6 +12,7 @@ use crate::ruleset::{
     Field, FieldKind, FieldSource, Part, ResolvedField, Ruleset, RulesetTest, Segment,
 };
 use crate::store::StoredItem;
+use url::form_urlencoded;
 
 /// Renders a filename with every claimed run tinted by its part.
 ///
@@ -95,8 +96,27 @@ pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current:
 }
 
 /// One stored title in the editor, tinted by how the edit changed it.
+///
+/// The row carries what it read into the test it saves, so a reader states an
+/// expectation by naming a title the rules already parse rather than by
+/// typing the answer back in.
+///
+/// A row the draft does not claim saves too. It carries no expectations and
+/// fails until the ruleset claims it, which is how a reader says "make this
+/// match".
 #[component]
 pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
+    let payload = {
+        let mut pairs = form_urlencoded::Serializer::new(String::new());
+
+        pairs.append_pair("title", matched.title);
+        for (field, value) in &matched.values {
+            pairs.append_pair(&format!("expect.{field}"), value);
+        }
+
+        pairs.finish()
+    };
+
     view! {
         <li
             id=(format!("match-{}", matched.id))
@@ -118,6 +138,15 @@ pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
                     <span>(&matched.feed)</span>
                 </div>
             </div>
+
+            <button
+                type="button"
+                name="row-action"
+                value=(format!("test:{payload}"))
+                class="shrink-0 rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
+            >
+                "save as test"
+            </button>
         </li>
     }
 }

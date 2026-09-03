@@ -57,7 +57,7 @@ path_param!(feed_id);
 ///
 /// An action splits at its first `:`, so an argument holding one survives.
 /// A field name is the reader's own text and reaches `replace` as that
-/// argument.
+/// argument, and `test` carries a whole form encoding as its own.
 ///
 /// The two counters match a whole key rather than its suffix. A test
 /// expectation on a field named `name` ends `.name` too, and counting it
@@ -102,6 +102,18 @@ window.torrssRows = {
 
     if (name === 'remove-test') {
       window.torrssRows.drop(params, `test.${argument}.`);
+      return params.toString();
+    }
+
+    if (name === 'test') {
+      const slot = window.torrssRows.nextTest(params);
+      for (const [key, value] of new URLSearchParams(argument)) {
+        if (key === 'title') {
+          params.append(`test.${slot}.title`, value);
+        } else if (key.startsWith('expect.')) {
+          params.append(`test.${slot}.${key}`, value);
+        }
+      }
       return params.toString();
     }
 
@@ -1562,20 +1574,26 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
                 test_results(draft: $(draft.get()))
             </div>
-        </form>
 
-        // The chips are rendered by the shard, so their click is caught here,
-        // where the signal lives.
-        <div @click=$(|e: Event| if e.target.name == "diff-filter" {
-            diff.set(e.target.value);
-        })>
-            live_matches(
-                ruleset: $(ruleset_id),
-                diff: $(diff.get()),
-                draft: $(draft.get()),
-                saved: $(saved.get()),
-            )
-        </div>
+            // The section sits inside the form so the form's own `@click`
+            // catches a row's Save as test, which writes a test row. Every
+            // control the section renders is a `type="button"`, so none of
+            // them submits the form around them, and the section holds no
+            // input for the form's `@input` to read.
+            //
+            // The chips are rendered by the shard, so their click is caught
+            // here, where the signal lives.
+            <div @click=$(|e: Event| if e.target.name == "diff-filter" {
+                diff.set(e.target.value);
+            })>
+                live_matches(
+                    ruleset: $(ruleset_id),
+                    diff: $(diff.get()),
+                    draft: $(draft.get()),
+                    saved: $(saved.get()),
+                )
+            </div>
+        </form>
     }
 }
 

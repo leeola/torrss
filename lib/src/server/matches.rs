@@ -84,14 +84,12 @@ pub(super) struct Match<'a> {
     pub(super) id: i64,
 
     /// The whole title, which a reader saving this row as a test names.
-    #[allow(dead_code, reason = "the Save as test control on a match row")]
     pub(super) title: &'a str,
 
     pub(super) segments: Vec<Segment<'a>>,
 
     /// What each claiming rule read, normalized, which is what a test
     /// saved from this row asserts.
-    #[allow(dead_code, reason = "the Save as test control on a match row")]
     pub(super) values: Vec<(String, String)>,
 
     pub(super) diff: Diff,
