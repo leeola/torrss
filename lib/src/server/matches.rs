@@ -21,7 +21,7 @@ use std::ops::Range;
 use regex::Regex;
 use url::form_urlencoded;
 
-use crate::ruleset::{Diff, Field, FieldKind, Part, Segment};
+use crate::ruleset::{Diff, Field, FieldKind, Segment};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
@@ -53,7 +53,12 @@ struct FieldEdit {
 #[derive(Debug)]
 pub(super) struct Rule {
     name: String,
-    part: Part,
+
+    /// Where the field sits among the ruleset's resolved fields.
+    ///
+    /// The position is what tints the run this rule claims, and it anchors
+    /// the field's row in the editor.
+    position: usize,
 
     /// What the captured text converts to before anything compares it.
     ///
@@ -168,7 +173,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<Pattern
     let mut rules = Vec::with_capacity(fields.len());
     let mut errors = Vec::new();
 
-    for field in fields {
+    for (position, field) in fields.iter().enumerate() {
         let edit = edits.0.get(&field.name);
 
         let kind = edit.and_then(|edit| edit.kind).unwrap_or(field.kind);
@@ -210,7 +215,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<Pattern
 
         rules.push(Rule {
             name,
-            part: field.part,
+            position,
             kind,
             required,
             regex,
@@ -323,7 +328,7 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
     let mut cut = 0;
 
     for Capture { rule, range } in captured {
-        let part = rule.part;
+        let position = rule.position;
 
         if range.start < cut {
             continue;
@@ -332,21 +337,21 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
         if range.start > cut {
             segments.push(Segment {
                 text: &title[cut..range.start],
-                part: None,
+                field: None,
             });
         }
 
         cut = range.end;
         segments.push(Segment {
             text: &title[range.clone()],
-            part: Some(part),
+            field: Some(position),
         });
     }
 
     if cut < title.len() {
         segments.push(Segment {
             text: &title[cut..],
-            part: None,
+            field: None,
         });
     }
 
@@ -360,12 +365,11 @@ pub(super) mod tests {
         Diff, Field, FieldKind,
         FieldKind::{Season, Text},
         Part,
-        Part::{Season as SeasonPart, Show},
     };
 
+    /// A field of `kind`. The part is fixed, because nothing reads it.
     fn field(
         name: &str,
-        part: Part,
         kind: FieldKind,
         pattern: Option<&str>,
         required: bool,
@@ -373,7 +377,7 @@ pub(super) mod tests {
     ) -> Field {
         Field {
             name: name.to_owned(),
-            part,
+            part: Part::ALL[0],
             kind,
             pattern: pattern.map(ToOwned::to_owned),
             required,
@@ -384,15 +388,8 @@ pub(super) mod tests {
     /// The saved fields every edit below is measured against.
     pub(in crate::server) fn declared() -> Vec<Field> {
         vec![
-            field(
-                "show",
-                Show,
-                Text,
-                Some(r"^(?<show>[\w.]+?)\.S\d"),
-                true,
-                true,
-            ),
-            field("season", SeasonPart, Season, None, true, true),
+            field("show", Text, Some(r"^(?<show>[\w.]+?)\.S\d"), true, true),
+            field("season", Season, None, true, true),
         ]
     }
 
@@ -506,7 +503,7 @@ pub(super) mod tests {
 
     /// A text field with no pattern, which no kind stands in for.
     fn bare() -> Field {
-        field("bare", Show, Text, None, true, false)
+        field("bare", Text, None, true, false)
     }
 
     #[test]
@@ -574,12 +571,12 @@ pub(super) mod tests {
         assert_eq!(
             segments
                 .iter()
-                .map(|segment| (segment.text, segment.part))
+                .map(|segment| (segment.text, segment.field))
                 .collect::<Vec<_>>(),
             [
-                ("The.Hollow.Meridian", Some(Show)),
+                ("The.Hollow.Meridian", Some(0)),
                 (".S", None),
-                ("04", Some(SeasonPart)),
+                ("04", Some(1)),
                 ("E06.1080p", None),
             ],
             "a run covers the captured group, so the pattern's anchor text stays untinted"
@@ -600,9 +597,9 @@ pub(super) mod tests {
         assert_eq!(
             segments
                 .iter()
-                .map(|segment| (segment.text, segment.part))
+                .map(|segment| (segment.text, segment.field))
                 .collect::<Vec<_>>(),
-            [("The.Hollow", Some(Show)), (".Meridian.S04E06.1080p", None),],
+            [("The.Hollow", Some(0)), (".Meridian.S04E06.1080p", None)],
             "the season span starts inside the show span, so it is dropped"
         );
     }

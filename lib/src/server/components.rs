@@ -9,28 +9,29 @@ use super::matches::Match;
 use crate::feed::store::FeedCheck;
 use crate::rules::Engine;
 use crate::ruleset::{
-    Field, FieldKind, FieldSource, Part, ResolvedField, Ruleset, RulesetTest, Segment,
+    Field, FieldKind, FieldSource, Part, ResolvedField, Ruleset, RulesetTest, Segment, Tint,
 };
 use crate::store::StoredItem;
 use url::form_urlencoded;
 
-/// Renders a filename with every claimed run tinted by its part.
+/// Renders a filename with every claimed run tinted by the field that
+/// claimed it.
 ///
-/// Each claimed run links to the field that produced it, anchored inside
-/// `ruleset`'s editor, so a reader jumps from a value to the rule behind it.
+/// Each claimed run links to that field's row, anchored inside `ruleset`'s
+/// editor, so a reader jumps from a value to the rule behind it.
 #[component]
 pub(crate) async fn filename(segments: &[Segment<'_>], ruleset: &str) -> Result {
     view! {
         <span class="font-mono text-sm break-all">
             for segment in segments {
-                match segment.part {
-                    Some(part) => <a
-                        href=(format!("/admin/rulesets/{ruleset}#field-{}", part.slug()))
+                match segment.field {
+                    Some(position) => <a
+                        href=(format!("/admin/rulesets/{ruleset}#field-{position}"))
                         class=(class!(
                             "rounded-sm px-0.5 py-px hover:underline hover:decoration-dotted",
-                            part.classes(),
+                            Tint::at(position).classes(),
                         ))
-                        title=(format!("edit the {} rule", part.label()))
+                        title="edit the rule that claimed this"
                     >(segment.text)</a>,
                     None => <span class="text-slate-500">(segment.text)</span>,
                 }
@@ -278,7 +279,7 @@ pub(crate) async fn item_row(
                                 })
                                 class=(class!(
                                     "rounded-sm px-1.5 py-0.5 font-mono text-xs",
-                                    value.part.classes(),
+                                    Tint::at(value.position).classes(),
                                     "ring-1 ring-current/40" if value.identity else "opacity-70",
                                 ))
                             >
@@ -356,13 +357,17 @@ fn passed(engine: &Engine, rulesets: &[String]) -> String {
 /// not hold. The trailing column is the way in: it replaces the template's
 /// value with one this ruleset owns.
 #[component]
-pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Result {
+pub(crate) async fn field_row(
+    index: usize,
+    position: usize,
+    resolved: ResolvedField<'_>,
+) -> Result {
     let field = resolved.field;
     let locked = resolved.is_inherited();
 
     view! {
         <div
-            id=(format!("field-{}", field.part.slug()))
+            id=(format!("field-{position}"))
             class=(class!(
                 "grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center",
                 "opacity-45" if locked,
@@ -379,7 +384,7 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
             <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Name"</label>
                 <div class="mt-1 flex items-center gap-2">
-                    <span class=(class!("size-2 shrink-0 rounded-full", field.part.dot()))></span>
+                    <span class=(class!("size-2 shrink-0 rounded-full", Tint::at(position).dot()))></span>
                     <input
                         type="text"
                         name=(format!("field.{index}.name"))
@@ -530,10 +535,10 @@ pub(crate) async fn test_row(index: usize, test: &RulesetTest, fields: &[&Field]
                 >
             </div>
 
-            for field in fields {
+            for (position, field) in fields.iter().enumerate() {
                 <div class="md:col-span-2">
                     <label class="flex items-center gap-2 text-xs text-slate-500">
-                        <span class=(class!("size-2 shrink-0 rounded-full", field.part.dot()))></span>
+                        <span class=(class!("size-2 shrink-0 rounded-full", Tint::at(position).dot()))></span>
                         (&field.name)
                     </label>
                     <input

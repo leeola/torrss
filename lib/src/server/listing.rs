@@ -8,7 +8,6 @@
 use std::collections::HashSet;
 
 use crate::rules::{Engine, Parsed};
-use crate::ruleset::Part;
 
 /// Where one title stands against the rulesets and the library.
 #[derive(Debug, PartialEq, Eq)]
@@ -55,14 +54,17 @@ impl Standing {
 
 /// One value the claiming ruleset read out of a title.
 ///
-/// The part and the identity flag come from the field that captured the
-/// value, so a row can tint each value and mark the ones that decide
-/// sameness apart from the ones that only describe the release.
+/// The position and the identity flag come from the field that captured the
+/// value, so a row tints each value and marks the ones that decide sameness
+/// apart from the ones that only describe the release.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ParsedValue {
     pub(super) name: String,
     pub(super) value: String,
-    pub(super) part: Part,
+
+    /// Where the capturing field sits among the ruleset's resolved fields,
+    /// which is what tints the value.
+    pub(super) position: usize,
 
     /// Whether this value takes part in the key that decides whether two
     /// releases are the same item.
@@ -85,15 +87,15 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
         .values
         .iter()
         .filter_map(|(name, raw)| {
-            let field = fields
+            let position = fields
                 .iter()
-                .find(|resolved| resolved.field.name == *name)?
-                .field;
+                .position(|resolved| resolved.field.name == *name)?;
+            let field = fields[position].field;
 
             Some(ParsedValue {
                 name: field.name.clone(),
                 value: raw.clone(),
-                part: field.part,
+                position,
                 identity: field.identity,
             })
         })

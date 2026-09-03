@@ -1678,42 +1678,89 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
 
     let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
 
-    // The inherited rows come first and carry no index, because they submit
-    // nothing. An own row's index is its place among the rows that do.
-    let inherited = template.map_or_else(Vec::new, |template| {
-        template
-            .fields
-            .iter()
-            .filter(|field| !posted.fields.iter().any(|own| own.name == field.name))
-            .collect::<Vec<_>>()
-    });
+    let rows = draft_rows(template, &posted.fields);
 
     view! {
-        for field in inherited {
-            components::field_row(
-                index: 0,
-                resolved: ResolvedField {
-                    field,
-                    source: FieldSource::Inherited,
-                },
-            )
-        }
-
-        for (index, field) in posted.fields.iter().enumerate() {
-            components::field_row(
-                index: index,
-                resolved: ResolvedField {
-                    field,
-                    source: match template.and_then(|template| {
-                        template.fields.iter().find(|one| one.name == field.name)
-                    }) {
-                        Some(template) => FieldSource::Overridden { template },
-                        None => FieldSource::Own,
-                    },
-                },
-            )
+        for (position, (index, resolved)) in rows.iter().enumerate() {
+            components::field_row(index: *index, position: position, resolved: *resolved)
         }
     }
+}
+
+/// The rows the editor lists for a draft, each with the form index it posts
+/// under.
+///
+/// The order mirrors [`Ruleset::resolved_fields`], so a row's position names
+/// the same field in the editor, in Matches, and on the home page. That is
+/// what the tint and the row anchor both key on.
+///
+/// An inherited row submits nothing, so its index is unused. An own row keeps
+/// its index among the posted rows, which is what a remove or a replace names.
+fn draft_rows<'a>(
+    template: Option<&'a Ruleset>,
+    own: &'a [Field],
+) -> Vec<(usize, ResolvedField<'a>)> {
+    let Some(template) = template else {
+        return own
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                (
+                    index,
+                    ResolvedField {
+                        field,
+                        source: FieldSource::Own,
+                    },
+                )
+            })
+            .collect();
+    };
+
+    let mut rows: Vec<_> = template
+        .fields
+        .iter()
+        .map(|inherited| {
+            match own
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == inherited.name)
+            {
+                Some((index, field)) => (
+                    index,
+                    ResolvedField {
+                        field,
+                        source: FieldSource::Overridden {
+                            template: inherited,
+                        },
+                    },
+                ),
+                None => (
+                    0,
+                    ResolvedField {
+                        field: inherited,
+                        source: FieldSource::Inherited,
+                    },
+                ),
+            }
+        })
+        .collect();
+
+    rows.extend(
+        own.iter()
+            .enumerate()
+            .filter(|(_, field)| !template.fields.iter().any(|one| one.name == field.name))
+            .map(|(index, field)| {
+                (
+                    index,
+                    ResolvedField {
+                        field,
+                        source: FieldSource::Own,
+                    },
+                )
+            }),
+    );
+
+    rows
 }
 
 /// Re-renders the test rows from the draft the editor holds.

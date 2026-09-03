@@ -1,9 +1,10 @@
 //! What a ruleset is made of.
 //!
 //! A ruleset is a set of fields, and each field claims one part of a release
-//! filename. [`Part`] names the vocabulary of parts, and [`Segment`] tags the
-//! run of characters a part claimed. [`FieldKind`] says how a matched string
-//! converts, and a premade kind carries the pattern its fields match with.
+//! filename. [`Part`] names the vocabulary of parts, and [`Segment`] tags a
+//! run of characters with the position of the field that claimed it.
+//! [`FieldKind`] says how a matched string converts, and a premade kind
+//! carries the pattern its fields match with.
 //!
 //! [`Candidate`] and [`Diff`] belong here too. The editor tests a ruleset
 //! against filenames as the reader edits, and a diff state is what each row
@@ -22,8 +23,8 @@ use std::collections::BTreeMap;
 
 /// A named component that a ruleset pulls out of a release filename.
 ///
-/// The variant picks both the label and the highlight color, so a reader sees
-/// at a glance which part of a filename a rule claimed.
+/// The variant names the component and nothing else. A field's color comes
+/// from [`Tint`], which reads the field's position rather than its part.
 ///
 /// Only a ruleset declaration names a part, and the application declares
 /// none, so nothing constructs one outside the fixture and the tests. The
@@ -89,22 +90,23 @@ impl Part {
     pub(crate) fn from_slug(slug: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|part| part.slug() == slug)
     }
+}
 
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Show => "show",
-            Self::Movie => "movie",
-            Self::Season => "season",
-            Self::Episode => "episode",
-            Self::Year => "year",
-            Self::Resolution => "resolution",
-            Self::Source => "source",
-            Self::Codec => "codec",
-            Self::Audio => "audio",
-            Self::Publisher => "publisher",
-            Self::Checksum => "checksum",
-            Self::Extension => "extension",
-        }
+/// The color one field wears wherever the reader meets it.
+///
+/// A field takes its color from its position among a ruleset's resolved
+/// fields, so the same field reads the same in Matches, on the home page, and
+/// in the editor. A color by position never collides inside one ruleset, which
+/// a color hashed from the name does.
+///
+/// The twelve colors repeat past the twelfth field. A ruleset that long has
+/// already lost the reader's eye, and a repeat reads better than running out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Tint(usize);
+
+impl Tint {
+    pub(crate) fn at(position: usize) -> Self {
+        Self(position % 12)
     }
 
     /// Tailwind classes that tint a matched run inside a filename.
@@ -113,42 +115,45 @@ impl Part {
     /// text for class names. A list joined at runtime never reaches the
     /// generated stylesheet.
     pub(crate) fn classes(self) -> &'static str {
-        match self {
-            Self::Show => "bg-sky-500/15 text-sky-300",
-            Self::Movie => "bg-violet-500/15 text-violet-300",
-            Self::Season => "bg-amber-500/15 text-amber-300",
-            Self::Episode => "bg-orange-500/15 text-orange-300",
-            Self::Year => "bg-teal-500/15 text-teal-300",
-            Self::Resolution => "bg-emerald-500/15 text-emerald-300",
-            Self::Source => "bg-cyan-500/15 text-cyan-300",
-            Self::Codec => "bg-fuchsia-500/15 text-fuchsia-300",
-            Self::Audio => "bg-rose-500/15 text-rose-300",
-            Self::Publisher => "bg-lime-500/15 text-lime-300",
-            Self::Checksum => "bg-indigo-500/15 text-indigo-300",
-            Self::Extension => "bg-slate-500/20 text-slate-300",
+        match self.0 {
+            0 => "bg-sky-500/15 text-sky-300",
+            1 => "bg-violet-500/15 text-violet-300",
+            2 => "bg-amber-500/15 text-amber-300",
+            3 => "bg-orange-500/15 text-orange-300",
+            4 => "bg-teal-500/15 text-teal-300",
+            5 => "bg-emerald-500/15 text-emerald-300",
+            6 => "bg-cyan-500/15 text-cyan-300",
+            7 => "bg-fuchsia-500/15 text-fuchsia-300",
+            8 => "bg-rose-500/15 text-rose-300",
+            9 => "bg-lime-500/15 text-lime-300",
+            10 => "bg-indigo-500/15 text-indigo-300",
+            _ => "bg-slate-500/20 text-slate-300",
         }
     }
 
     /// Tailwind background for the solid dot beside a field name.
     pub(crate) fn dot(self) -> &'static str {
-        match self {
-            Self::Show => "bg-sky-400",
-            Self::Movie => "bg-violet-400",
-            Self::Season => "bg-amber-400",
-            Self::Episode => "bg-orange-400",
-            Self::Year => "bg-teal-400",
-            Self::Resolution => "bg-emerald-400",
-            Self::Source => "bg-cyan-400",
-            Self::Codec => "bg-fuchsia-400",
-            Self::Audio => "bg-rose-400",
-            Self::Publisher => "bg-lime-400",
-            Self::Checksum => "bg-indigo-400",
-            Self::Extension => "bg-slate-400",
+        match self.0 {
+            0 => "bg-sky-400",
+            1 => "bg-violet-400",
+            2 => "bg-amber-400",
+            3 => "bg-orange-400",
+            4 => "bg-teal-400",
+            5 => "bg-emerald-400",
+            6 => "bg-cyan-400",
+            7 => "bg-fuchsia-400",
+            8 => "bg-rose-400",
+            9 => "bg-lime-400",
+            10 => "bg-indigo-400",
+            _ => "bg-slate-400",
         }
     }
 }
 
-/// A run of characters in a filename, tagged with the part that claimed it.
+/// A run of characters in a filename, tagged with the field that claimed it.
+///
+/// The field is its position among the ruleset's resolved fields, which is
+/// also the anchor of that field's row in the editor.
 ///
 /// [`None`] marks separators and anything no rule matched. The `text` values
 /// in order reproduce the filename exactly, so the highlighted render never
@@ -156,7 +161,7 @@ impl Part {
 #[derive(Debug)]
 pub(crate) struct Segment<'a> {
     pub(crate) text: &'a str,
-    pub(crate) part: Option<Part>,
+    pub(crate) field: Option<usize>,
 }
 
 /// A set of field rules that together parse one family of filenames.
