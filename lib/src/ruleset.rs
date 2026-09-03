@@ -1,10 +1,9 @@
 //! What a ruleset is made of.
 //!
-//! A ruleset is a set of fields, and each field claims one part of a release
-//! filename. [`Part`] names the vocabulary of parts, and [`Segment`] tags a
-//! run of characters with the position of the field that claimed it.
-//! [`FieldKind`] says how a matched string converts, and a premade kind
-//! carries the pattern its fields match with.
+//! A ruleset is a set of fields, and each field claims one run of a release
+//! filename. [`Segment`] tags such a run with the position of the field that
+//! claimed it. [`FieldKind`] says how a matched string converts, and a
+//! premade kind carries the pattern its fields match with.
 //!
 //! [`Candidate`] and [`Diff`] belong here too. The editor tests a ruleset
 //! against filenames as the reader edits, and a diff state is what each row
@@ -20,77 +19,6 @@ pub(crate) mod registry;
 pub(crate) mod store;
 
 use std::collections::BTreeMap;
-
-/// A named component that a ruleset pulls out of a release filename.
-///
-/// The variant names the component and nothing else. A field's color comes
-/// from [`Tint`], which reads the field's position rather than its part.
-///
-/// Only a ruleset declaration names a part, and the application declares
-/// none, so nothing constructs one outside the fixture and the tests. The
-/// vocabulary stays whole because a stored ruleset has to name the same
-/// parts the editor already renders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "the parts a stored ruleset will name, ahead of a store to name them"
-)]
-pub(crate) enum Part {
-    Show,
-    Movie,
-    Season,
-    Episode,
-    Year,
-    Resolution,
-    Source,
-    Codec,
-    Audio,
-    Publisher,
-    Checksum,
-    Extension,
-}
-
-impl Part {
-    /// Every part, in the order the field editor lists them.
-    pub(crate) const ALL: &'static [Self] = &[
-        Self::Show,
-        Self::Movie,
-        Self::Season,
-        Self::Episode,
-        Self::Year,
-        Self::Resolution,
-        Self::Source,
-        Self::Codec,
-        Self::Audio,
-        Self::Publisher,
-        Self::Checksum,
-        Self::Extension,
-    ];
-
-    /// URL-safe name, used as the anchor that links a matched run in a
-    /// filename to the field rule that claimed it.
-    pub(crate) fn slug(self) -> &'static str {
-        match self {
-            Self::Show => "show",
-            Self::Movie => "movie",
-            Self::Season => "season",
-            Self::Episode => "episode",
-            Self::Year => "year",
-            Self::Resolution => "resolution",
-            Self::Source => "source",
-            Self::Codec => "codec",
-            Self::Audio => "audio",
-            Self::Publisher => "publisher",
-            Self::Checksum => "checksum",
-            Self::Extension => "extension",
-        }
-    }
-
-    /// The part named by `slug`, or [`None`] for anything else.
-    pub(crate) fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|part| part.slug() == slug)
-    }
-}
 
 /// The color one field wears wherever the reader meets it.
 ///
@@ -353,11 +281,10 @@ impl Diff {
     }
 }
 
-/// One extraction rule: the part it fills, and how its value is read.
+/// One extraction rule, naming the run it claims and how its value is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Field {
     pub(crate) name: String,
-    pub(crate) part: Part,
     pub(crate) kind: FieldKind,
 
     /// The regex this field reads its value with, or `None` to take the

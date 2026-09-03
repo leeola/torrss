@@ -203,7 +203,7 @@ mod tests {
 
     use super::{LoadError, Rulesets, SaveError};
     use crate::ruleset::store::RulesetStore;
-    use crate::ruleset::{Field, FieldKind, Part, Ruleset};
+    use crate::ruleset::{Field, FieldKind, Ruleset};
 
     /// The same shape as [`ruleset`], marked as a template so a ruleset is
     /// allowed to be based on it.
@@ -223,7 +223,6 @@ mod tests {
             based_on: based_on.map(ToOwned::to_owned),
             fields: vec![Field {
                 name: "show".to_owned(),
-                part: Part::Show,
                 kind: FieldKind::Text,
                 pattern: Some(pattern.to_owned()),
                 required: true,

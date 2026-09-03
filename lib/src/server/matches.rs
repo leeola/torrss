@@ -364,10 +364,8 @@ pub(super) mod tests {
     use crate::ruleset::{
         Diff, Field, FieldKind,
         FieldKind::{Season, Text},
-        Part,
     };
 
-    /// A field of `kind`. The part is fixed, because nothing reads it.
     fn field(
         name: &str,
         kind: FieldKind,
@@ -377,7 +375,6 @@ pub(super) mod tests {
     ) -> Field {
         Field {
             name: name.to_owned(),
-            part: Part::ALL[0],
             kind,
             pattern: pattern.map(ToOwned::to_owned),
             required,

@@ -398,7 +398,7 @@ fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
 mod tests {
     use super::{Engine, EngineError, Identity};
     use crate::ruleset::fixture::ENGINE;
-    use crate::ruleset::{Field, FieldKind, Part, Ruleset};
+    use crate::ruleset::{Field, FieldKind, Ruleset};
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -619,7 +619,6 @@ mod tests {
     fn show_field(pattern: Option<&str>) -> Field {
         Field {
             name: "show".to_owned(),
-            part: Part::Show,
             kind: FieldKind::Text,
             pattern: pattern.map(ToOwned::to_owned),
             required: true,

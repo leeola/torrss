@@ -12,21 +12,12 @@
 //! - `series-ashfall-county`, a second, told apart by publisher.
 //! - `feature-films`, a title followed by a production year.
 //! - `archive-talks`, a publisher-prefixed session number.
-//!
-//! [`super::FieldKind::Season`] and [`super::FieldKind::Episode`] arrive under
-//! an alias, because [`super::Part`] names those two parts as well and the
-//! parts are used far more often in this file.
 
 use std::sync::LazyLock;
 
 use super::{
     Field, FieldKind,
-    FieldKind::{Enum, Episode as EpisodeKind, Number, Season as SeasonKind, Text},
-    Part,
-    Part::{
-        Audio, Checksum, Codec, Episode, Extension, Movie, Publisher, Resolution, Season, Show,
-        Source, Year,
-    },
+    FieldKind::{Enum, Episode, Number, Season, Text},
     Ruleset,
 };
 use crate::rules::Engine;
@@ -35,7 +26,6 @@ use crate::rules::Engine;
 /// than a page of struct literals.
 fn field(
     name: &str,
-    part: Part,
     kind: FieldKind,
     pattern: Option<&str>,
     required: bool,
@@ -43,7 +33,6 @@ fn field(
 ) -> Field {
     Field {
         name: name.to_owned(),
-        part,
         kind,
         pattern: pattern.map(ToOwned::to_owned),
         required,
@@ -71,19 +60,11 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             template: true,
             based_on: None,
             fields: vec![
-                field(
-                    "show",
-                    Show,
-                    Text,
-                    Some(r"^(?<show>[\w.]+?)\.S\d"),
-                    true,
-                    true,
-                ),
-                field("season", Season, SeasonKind, None, true, true),
-                field("episode", Episode, EpisodeKind, None, false, true),
+                field("show", Text, Some(r"^(?<show>[\w.]+?)\.S\d"), true, true),
+                field("season", Season, None, true, true),
+                field("episode", Episode, None, false, true),
                 field(
                     "resolution",
-                    Resolution,
                     Enum,
                     Some(r"(?<resolution>480p|720p|1080p|2160p)"),
                     false,
@@ -91,7 +72,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "source",
-                    Source,
                     Enum,
                     Some(r"(?<source>[A-Z]{3}\.\w+|Broadcast|Webcast|Telecast)"),
                     false,
@@ -99,7 +79,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "audio",
-                    Audio,
                     Text,
                     Some(r"(?<audio>AAC\.(Mono|Stereo|5\.1)|PCM\.[\w.]+)"),
                     false,
@@ -107,7 +86,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "codec",
-                    Codec,
                     Enum,
                     Some(r"(?<codec>H\.26[45]|AV1|VP9)"),
                     false,
@@ -115,7 +93,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "publisher",
-                    Publisher,
                     Text,
                     Some(r"-(?<publisher>[A-Za-z0-9]+)\.\w+$"),
                     false,
@@ -123,7 +100,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "extension",
-                    Extension,
                     Enum,
                     Some(r"(?<extension>\.mkv|\.mp4|\.avi)$"),
                     false,
@@ -141,7 +117,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             fields: vec![
                 field(
                     "title",
-                    Movie,
                     Text,
                     Some(r"^(?<title>[\w.]+?)\.(?:19|20)\d{2}\."),
                     true,
@@ -149,7 +124,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "year",
-                    Year,
                     Number,
                     Some(r"\.(?<year>(19|20)\d{2})\."),
                     true,
@@ -157,7 +131,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "resolution",
-                    Resolution,
                     Enum,
                     Some(r"(?<resolution>720p|1080p|2160p)"),
                     false,
@@ -165,7 +138,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "source",
-                    Source,
                     Enum,
                     Some(r"(?<source>Studio\.Master|Remaster|Restoration|Archive)"),
                     true,
@@ -173,7 +145,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "codec",
-                    Codec,
                     Enum,
                     Some(r"(?<codec>H\.26[45]|AV1|VP9)"),
                     false,
@@ -181,7 +152,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "audio",
-                    Audio,
                     Text,
                     Some(r"(?<audio>PCM\.[\w.]+|AAC\.[\w.]+)"),
                     false,
@@ -189,7 +159,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "publisher",
-                    Publisher,
                     Text,
                     Some(r"-(?<publisher>[A-Za-z0-9]+)\.\w+$"),
                     false,
@@ -197,7 +166,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "extension",
-                    Extension,
                     Enum,
                     Some(r"(?<extension>\.mkv|\.mp4)$"),
                     false,
@@ -215,23 +183,14 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             fields: vec![
                 field(
                     "publisher",
-                    Publisher,
                     Text,
                     Some(r"^\[(?<publisher>[^\]]+)\]"),
                     true,
                     false,
                 ),
-                field(
-                    "show",
-                    Show,
-                    Text,
-                    Some(r"\]\s(?<show>.+?)\s-\s\d"),
-                    true,
-                    true,
-                ),
+                field("show", Text, Some(r"\]\s(?<show>.+?)\s-\s\d"), true, true),
                 field(
                     "episode",
-                    Episode,
                     Number,
                     Some(r"\s-\s(?<episode>\d{2,3})"),
                     true,
@@ -239,7 +198,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "resolution",
-                    Resolution,
                     Enum,
                     Some(r"[(\[](?<resolution>480p|720p|1080p)[)\]]"),
                     false,
@@ -247,7 +205,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "checksum",
-                    Checksum,
                     Text,
                     Some(r"\[(?<checksum>[0-9A-F]{8})\]"),
                     false,
@@ -255,7 +212,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "extension",
-                    Extension,
                     Enum,
                     Some(r"(?<extension>\.mkv|\.mp4)$"),
                     false,
@@ -273,7 +229,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             fields: vec![
                 field(
                     "show",
-                    Show,
                     Text,
                     Some(r"^(?<show>The\.Hollow\.Meridian)\.S\d"),
                     true,
@@ -281,7 +236,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "resolution",
-                    Resolution,
                     Enum,
                     Some(r"(?<resolution>1080p)"),
                     true,
@@ -299,7 +253,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             fields: vec![
                 field(
                     "show",
-                    Show,
                     Text,
                     Some(r"^(?<show>Ashfall\.County)\.S\d"),
                     true,
@@ -307,7 +260,6 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field(
                     "publisher",
-                    Publisher,
                     Text,
                     Some(r"-(?<publisher>PublicWave)\.\w+$"),
                     true,

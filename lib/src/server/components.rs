@@ -9,7 +9,7 @@ use super::matches::Match;
 use crate::feed::store::FeedCheck;
 use crate::rules::Engine;
 use crate::ruleset::{
-    Field, FieldKind, FieldSource, Part, ResolvedField, Ruleset, RulesetTest, Segment, Tint,
+    Field, FieldKind, FieldSource, ResolvedField, Ruleset, RulesetTest, Segment, Tint,
 };
 use crate::store::StoredItem;
 use crate::torrent::{Torrent, TorrentState};
@@ -376,7 +376,6 @@ pub(crate) async fn field_row(
             // The replace button copies these into a new own row, so an
             // inherited field becomes one this ruleset holds.
             data-name=(&field.name)
-            data-part=(field.part.slug())
             data-kind=(field.kind.label())
             data-pattern=(field.matcher().unwrap_or_default())
             data-required=(if field.required { "on" } else { "" })
@@ -397,21 +396,6 @@ pub(crate) async fn field_row(
             </div>
 
             <div class="md:col-span-2">
-                <label class="block text-xs text-slate-500">"Part"</label>
-                <select
-                    name=(format!("field.{index}.part"))
-                    disabled=(locked)
-                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-                >
-                    for part in Part::ALL {
-                        <option value=(part.slug()) selected=(*part == field.part)>
-                            (part.slug())
-                        </option>
-                    }
-                </select>
-            </div>
-
-            <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Type"</label>
                 <select
                     name=(format!("field.{index}.kind"))
@@ -426,7 +410,7 @@ pub(crate) async fn field_row(
                 </select>
             </div>
 
-            <div class="md:col-span-2">
+            <div class="md:col-span-4">
                 <label class="block text-xs text-slate-500">"Pattern"</label>
                 // The input locks only where the kind supplies the pattern and
                 // the field takes it. A blank has nothing to take, and an

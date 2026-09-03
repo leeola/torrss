@@ -145,7 +145,7 @@ window.torrssRows = {
       return params.toString();
     }
 
-    for (const attribute of ['name', 'part', 'kind', 'pattern']) {
+    for (const attribute of ['name', 'kind', 'pattern']) {
       params.append(`field.${index}.${attribute}`, row.dataset[attribute]);
     }
     for (const flag of ['required', 'identity']) {

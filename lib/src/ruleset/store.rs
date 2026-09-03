@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use sqlx::{Row, SqlitePool};
 
-use super::{Field, FieldKind, Part, Ruleset, RulesetTest};
+use super::{Field, FieldKind, Ruleset, RulesetTest};
 
 /// Adds a ruleset, or replaces the one already stored under its id.
 ///
@@ -45,7 +45,7 @@ const SELECT_RULESETS: &str =
 /// The fold below walks this once. A query per ruleset costs a round trip
 /// for each instead.
 const SELECT_FIELDS: &str = "
-    SELECT ruleset, name, part, kind, pattern, required, identity
+    SELECT ruleset, name, kind, pattern, required, identity
     FROM ruleset_fields
     ORDER BY ruleset, position
 ";
@@ -82,9 +82,9 @@ impl RulesetStore {
     ///
     /// # Errors
     ///
-    /// Returns a decode failure when a row names a part or a kind this build
-    /// does not know. Every stored value was one of those when it was
-    /// written, so the row is corrupt rather than merely unexpected.
+    /// Returns a decode failure when a row names a kind this build does not
+    /// know. Every stored value was one when it was written, so the row is
+    /// corrupt rather than merely unexpected.
     pub(crate) async fn list(&self) -> Result<Vec<Ruleset>, sqlx::Error> {
         let mut rulesets =
             sqlx::query_as::<_, (String, String, Option<String>, bool, bool)>(SELECT_RULESETS)
@@ -182,13 +182,12 @@ impl RulesetStore {
         for (position, field) in ruleset.fields.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO ruleset_fields
-                    (ruleset, position, name, part, kind, pattern, required, identity)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    (ruleset, position, name, kind, pattern, required, identity)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )
             .bind(&ruleset.id)
             .bind(position as i64)
             .bind(&field.name)
-            .bind(field.part.slug())
             .bind(field.kind.label())
             .bind(field.pattern.as_deref())
             .bind(field.required)
@@ -261,16 +260,13 @@ impl RulesetStore {
 
 /// Rebuilds one field from its row.
 ///
-/// The part and the kind are stored as the same text the editor's form posts,
-/// so one vocabulary serves the URL, the form, and the table.
+/// The kind is stored as the same text the editor's form posts, so one
+/// vocabulary serves the form and the table.
 fn field(row: &sqlx::sqlite::SqliteRow) -> Result<Field, sqlx::Error> {
-    let part: String = row.try_get("part")?;
     let kind: String = row.try_get("kind")?;
 
     Ok(Field {
         name: row.try_get("name")?,
-        part: Part::from_slug(&part)
-            .ok_or_else(|| sqlx::Error::decode(format!("unknown part {part}")))?,
         kind: FieldKind::from_label(&kind)
             .ok_or_else(|| sqlx::Error::decode(format!("unknown field kind {kind}")))?,
         pattern: row.try_get("pattern")?,
@@ -285,12 +281,11 @@ mod tests {
 
     use sqlx::SqlitePool;
 
-    use super::{Field, FieldKind, Part, Ruleset, RulesetStore, RulesetTest};
+    use super::{Field, FieldKind, Ruleset, RulesetStore, RulesetTest};
 
-    fn field(name: &str, part: Part, pattern: Option<&str>) -> Field {
+    fn field(name: &str, pattern: Option<&str>) -> Field {
         Field {
             name: name.to_owned(),
-            part,
             kind: FieldKind::Text,
             pattern: pattern.map(ToOwned::to_owned),
             required: true,
@@ -325,10 +320,7 @@ mod tests {
                 "series",
                 true,
                 None,
-                vec![
-                    field("show", Part::Show, Some(r"^(?<show>\w+)")),
-                    field("season", Part::Season, None),
-                ],
+                vec![field("show", Some(r"^(?<show>\w+)")), field("season", None)],
             )
         }
     }
@@ -350,7 +342,7 @@ mod tests {
                 "archive",
                 false,
                 Some("series"),
-                vec![field("show", Part::Show, Some("^Ashfall"))],
+                vec![field("show", Some("^Ashfall"))],
             ))
             .await
             .expect("the ruleset on it");
@@ -362,7 +354,7 @@ mod tests {
                     "archive",
                     false,
                     Some("series"),
-                    vec![field("show", Part::Show, Some("^Ashfall"))]
+                    vec![field("show", Some("^Ashfall"))]
                 ),
                 template(),
             ],
@@ -376,12 +368,7 @@ mod tests {
         store.upsert(&template()).await.expect("the template");
         store.set_enabled("series", true).await.expect("enable");
 
-        let mut edited = ruleset(
-            "series",
-            true,
-            None,
-            vec![field("title", Part::Movie, Some("^."))],
-        );
+        let mut edited = ruleset("series", true, None, vec![field("title", Some("^."))]);
         store.upsert(&edited).await.expect("the edit");
         edited.enabled = true;
 
