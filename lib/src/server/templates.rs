@@ -3,7 +3,7 @@ use topcoat::{
     context::Cx,
     dev,
     router::{layout, request::uri},
-    tailwind,
+    runtime, tailwind,
     view::{class, component, view},
 };
 
@@ -19,6 +19,7 @@ async fn document(slot: Result) -> Result {
                 <title>"Torrss"</title>
                 <link rel="stylesheet" href=(tailwind::stylesheet!())>
                 dev::script()
+                runtime::script()
             </head>
             <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
                 site_header()

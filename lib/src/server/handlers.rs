@@ -14,6 +14,7 @@ use topcoat::{
         },
         page, path_param, query_params, route,
     },
+    runtime::{Event, shard},
     view::{class, component, view},
 };
 use url::Url;
@@ -1032,18 +1033,24 @@ async fn ruleset_editor(cx: &Cx) -> Result {
     let inheriting = parent.is_some();
     let enabled = ruleset.enabled;
 
-    let services = app_context::<Services>(cx);
-    let items = store::items(&services.db, None).await?;
-    let saved = fields.iter().map(|field| field.field).collect::<Vec<_>>();
-    let (matched, errors) = compute_matches(
-        app_context::<Arc<FeedRegistry>>(cx),
-        &engine,
-        ruleset,
-        &items,
-        &saved,
-    );
+    let ruleset_id = ruleset.id.clone();
+    let diff_slug = q
+        .diff
+        .map_or_else(String::new, |state| state.slug().to_owned());
+    let pinned_raw = q.pinned.as_str().to_owned();
+
+    // What the browser posts on the first keystroke: the ruleset's own rows,
+    // because a disabled inherited input sends nothing.
+    let initial_draft = RulesetForm {
+        name: ruleset.name.clone(),
+        inherits: ruleset.inherits.clone(),
+        fields: ruleset.fields.clone(),
+    }
+    .encode();
 
     view! {
+        signal draft = initial_draft;
+
         <nav class="text-sm text-slate-500">
             <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
             " / "
@@ -1100,6 +1107,12 @@ async fn ruleset_editor(cx: &Cx) -> Result {
             method="post"
             action=(format!("/admin/rulesets/{}", ruleset.id))
             class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
+            // FormData skips a disabled input, so an inherited row stays out
+            // of the draft and the parent's field keeps applying.
+            @input=$(|_e: Event| draft.set(raw!(
+                "new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))).toString()",
+                String::new()
+            )))
         >
             // The editor has no name or parent input of its own, so it posts
             // back the ones the ruleset already carries.
@@ -1134,11 +1147,11 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 
         </form>
 
-        match_section(
-            ruleset: &ruleset.id,
-            matched: &matched,
-            errors: &errors,
-            query: q,
+        live_matches(
+            ruleset: $(ruleset_id),
+            diff: $(diff_slug),
+            pinned: $(pinned_raw),
+            draft: $(draft.get()),
         )
     }
 }
@@ -1179,6 +1192,83 @@ fn compute_matches<'a>(
         .collect();
 
     (matched, errors)
+}
+
+/// The fields a draft describes, resolved against the parent it names.
+///
+/// A child posts only the rows it overrides, so the parent supplies the
+/// rest. Matching by name rather than by position is what lets the reader
+/// reorder or drop a row without the override landing on a different field.
+fn draft_fields<'a>(parent: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Field> {
+    let Some(parent) = parent else {
+        return own.iter().collect();
+    };
+
+    parent
+        .fields
+        .iter()
+        .map(|inherited| {
+            own.iter()
+                .find(|field| field.name == inherited.name)
+                .unwrap_or(inherited)
+        })
+        .collect()
+}
+
+/// Re-renders the Matches section against the draft the editor holds.
+///
+/// The draft is the form's own body, so what the reader typed reaches the
+/// rules without a save. Every argument crosses the network and none of it
+/// is trusted: the ruleset is looked up rather than taken, and a draft that
+/// does not parse reports itself instead of matching anything.
+#[shard]
+async fn live_matches(
+    cx: &Cx,
+    ruleset: String,
+    diff: String,
+    pinned: String,
+    draft: String,
+) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let saved = engine.ruleset(&ruleset).ok_or_not_found()?;
+
+    let posted = match RulesetForm::parse(&draft) {
+        Ok(posted) => posted,
+        Err(error) => {
+            return view! {
+                <section id="matches" class="mt-8 scroll-mt-24">
+                    <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
+                    <p class="mt-2 text-xs text-rose-300">(error.to_string())</p>
+                </section>
+            };
+        }
+    };
+
+    let parent = posted.inherits.as_deref().and_then(|id| engine.ruleset(id));
+    let after = draft_fields(parent, &posted.fields);
+
+    let services = app_context::<Services>(cx);
+    let items = store::items(&services.db, None).await?;
+    let (matched, errors) = compute_matches(
+        app_context::<Arc<FeedRegistry>>(cx),
+        &engine,
+        saved,
+        &items,
+        &after,
+    );
+
+    view! {
+        match_section(
+            ruleset: &ruleset,
+            matched: &matched,
+            errors: &errors,
+            query: EditorQuery {
+                diff: Diff::from_slug(&diff),
+                pinned: IdList::new(Some(&pinned)),
+                replaced: IdList::new(None),
+            },
+        )
+    }
 }
 
 /// The stored titles the edited rules claim, and what the edit changed.

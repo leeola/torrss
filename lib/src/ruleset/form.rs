@@ -105,6 +105,40 @@ impl RulesetForm {
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
+
+    /// Writes the pairs a browser posts for this ruleset.
+    ///
+    /// The inverse of [`Self::parse`], which the editor uses to seed the
+    /// draft its live re-render reads. A checkbox is written only when set
+    /// and a pattern only when the kind supplies none, because that is what
+    /// a form actually sends and the draft has to start where the browser
+    /// takes over.
+    pub(crate) fn encode(&self) -> String {
+        let mut pairs = form_urlencoded::Serializer::new(String::new());
+
+        pairs.append_pair("name", &self.name);
+        pairs.append_pair("inherits", self.inherits.as_deref().unwrap_or_default());
+
+        for (index, field) in self.fields.iter().enumerate() {
+            pairs.append_pair(&format!("field.{index}.name"), &field.name);
+            pairs.append_pair(&format!("field.{index}.part"), field.part.slug());
+            pairs.append_pair(&format!("field.{index}.kind"), field.kind.label());
+
+            if let Some(pattern) = &field.pattern {
+                pairs.append_pair(&format!("field.{index}.pattern"), pattern);
+            }
+
+            if field.required {
+                pairs.append_pair(&format!("field.{index}.required"), "on");
+            }
+
+            if field.identity {
+                pairs.append_pair(&format!("field.{index}.identity"), "on");
+            }
+        }
+
+        pairs.finish()
+    }
 }
 
 /// Turns `name` into the id a ruleset carries in its URL.
@@ -338,6 +372,31 @@ mod tests {
             unique_slug("!!!", |_| false),
             None,
             "a name that slugs to nothing names nothing"
+        );
+    }
+
+    #[test]
+    fn an_encoded_form_parses_back_to_itself() {
+        let form = RulesetForm {
+            name: "Series Episodes".to_owned(),
+            inherits: Some("series".to_owned()),
+            fields: vec![
+                text("show", Part::Show, "^.+", true, true),
+                Field {
+                    name: "season".to_owned(),
+                    part: Part::Season,
+                    kind: FieldKind::Season,
+                    pattern: None,
+                    required: false,
+                    identity: true,
+                },
+            ],
+        };
+
+        assert_eq!(
+            RulesetForm::parse(&form.encode()),
+            Ok(form),
+            "what the editor seeds its draft with is what a post reads back"
         );
     }
 }
