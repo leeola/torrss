@@ -443,6 +443,32 @@ impl FieldKind {
             Self::Text | Self::Number | Self::Enum | Self::Boolean => None,
         }
     }
+
+    /// Reduces a captured value to the form two releases have to agree on.
+    ///
+    /// A number kind drops leading zeros. Every other kind lowercases the
+    /// value and collapses its separators to one space.
+    ///
+    /// A tracker writes `The.Hollow.Meridian` where a torrent client writes
+    /// `The Hollow Meridian`, and the two capitalize differently. A season
+    /// reads `01` on one side and `1` on the other. Collapsing both is what
+    /// makes those one release rather than two.
+    ///
+    /// The identity and a saved test's verdict both read through this, so a
+    /// test that passes describes the same value the library stores.
+    pub(crate) fn normalize(self, raw: &str) -> String {
+        if matches!(self, Self::Number | Self::Season | Self::Episode)
+            && let Ok(number) = raw.trim_start_matches('0').parse::<u64>()
+        {
+            return number.to_string();
+        }
+
+        raw.to_lowercase()
+            .split(['.', '_', '-', ' ', '\t'])
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 #[cfg(test)]
@@ -503,6 +529,19 @@ mod tests {
             read(FieldKind::Episode, "[OpenReel] Coastal.Ecology - 18"),
             None,
             "loose number with no season"
+        );
+    }
+
+    #[test]
+    fn normalize_by_kind() {
+        assert_eq!(
+            [
+                FieldKind::Season.normalize("01"),
+                FieldKind::Text.normalize("The.Hollow.Meridian"),
+                FieldKind::Number.normalize("x"),
+            ],
+            ["1", "the hollow meridian", "x"],
+            "a number kind drops leading zeros, and anything else collapses"
         );
     }
 }

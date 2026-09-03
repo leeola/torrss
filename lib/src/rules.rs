@@ -309,7 +309,7 @@ impl Compiled {
                     values
                         .iter()
                         .find(|(name, _)| *name == field.name)
-                        .map_or_else(String::new, |(_, raw)| normalize(field.kind, raw))
+                        .map_or_else(String::new, |(_, raw)| field.kind.normalize(raw))
                 })
                 .collect(),
         }
@@ -392,30 +392,6 @@ fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
     }
 
     Some(values)
-}
-
-/// Reduces a captured value to the form two releases have to agree on.
-///
-/// A tracker writes `The.Hollow.Meridian` where a torrent client writes
-/// `The Hollow Meridian`, and the two capitalize differently. Collapsing
-/// separators and case is what makes those one release rather than two.
-fn normalize(kind: FieldKind, raw: &str) -> String {
-    if matches!(
-        kind,
-        FieldKind::Number | FieldKind::Season | FieldKind::Episode
-    ) {
-        // A season or an episode reads with a leading zero on one side and
-        // without it on the other.
-        if let Ok(number) = raw.trim_start_matches('0').parse::<u64>() {
-            return number.to_string();
-        }
-    }
-
-    raw.to_lowercase()
-        .split(['.', '_', '-', ' ', '\t'])
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]
