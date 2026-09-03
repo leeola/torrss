@@ -41,7 +41,7 @@ pub(crate) struct Owned {
 /// failing the scan, because one odd pair is no reason to lose the rest.
 pub(crate) async fn replace(
     pool: &SqlitePool,
-    synced_at: DateTime<Utc>,
+    scanned_at: DateTime<Utc>,
     owned: &[Owned],
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
@@ -51,14 +51,14 @@ pub(crate) async fn replace(
     for entry in owned {
         sqlx::query(
             "INSERT OR REPLACE INTO library
-                (identity, ruleset, torrent_id, name, synced_at)
+                (identity, ruleset, torrent_id, name, scanned_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
         )
         .bind(&entry.identity)
         .bind(&entry.ruleset)
         .bind(&entry.torrent_id.0)
         .bind(&entry.name)
-        .bind(synced_at)
+        .bind(scanned_at)
         .execute(&mut *tx)
         .await?;
     }
