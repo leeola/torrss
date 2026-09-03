@@ -683,44 +683,24 @@ async fn admin(cx: &Cx) -> Result {
 }
 
 #[page("/admin/feeds")]
-async fn feeds(cx: &Cx) -> Result {
-    let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
-
+async fn feeds() -> Result {
     view! {
+        signal version = 0.0;
+
         <h1 class="text-2xl font-semibold tracking-tight">"Feeds"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "Every registered feed is polled on the configured interval."
         </p>
 
-        if entries.is_empty() {
-            <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No feed is registered."
-            </p>
-        } else {
-            <ul class="mt-6 flex flex-col gap-2">
-                for entry in &entries {
-                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
-                        <div class="min-w-0">
-                            <p class="text-sm text-slate-200">(&entry.name)</p>
-                            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
-                                (entry.url.as_str())
-                            </p>
-                        </div>
-
-                        <div class="flex items-center gap-2">
-                            components::link_button(
-                                href: format!("/admin/feeds/{}/test", entry.id),
-                                label: "Test",
-                            )
-                            components::action_button(
-                                action: format!("/admin/feeds/{}/remove", entry.id),
-                                label: "Remove",
-                            )
-                        </div>
-                    </li>
-                }
-            </ul>
-        }
+        // A Remove button is rendered by the shard, so its click is caught
+        // here, where the signal lives.
+        <div @click=$(async |e: Event| if e.target.name == "remove-feed" {
+            let id = e.target.value;
+            remove_feed_now(id).await;
+            version.increment();
+        })>
+            feed_list(version: $(version.get()))
+        </div>
 
         <form
             method="post"
@@ -756,6 +736,54 @@ async fn feeds(cx: &Cx) -> Result {
                 "Add feed"
             </button>
         </form>
+    }
+}
+
+/// Every registered feed, with the controls that read and drop one.
+///
+/// Test stays a link, because it opens a page rather than writing anything.
+#[shard]
+async fn feed_list(cx: &Cx, version: f64) -> Result {
+    // This is read for its change alone. A removal bumps it so the row the
+    // reader dropped leaves the list.
+    let _ = version;
+
+    let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
+
+    view! {
+        if entries.is_empty() {
+            <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No feed is registered."
+            </p>
+        } else {
+            <ul class="mt-6 flex flex-col gap-2">
+                for entry in &entries {
+                    <li class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                        <div class="min-w-0">
+                            <p class="text-sm text-slate-200">(&entry.name)</p>
+                            <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
+                                (entry.url.as_str())
+                            </p>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            components::link_button(
+                                href: format!("/admin/feeds/{}/test", entry.id),
+                                label: "Test",
+                            )
+                            <button
+                                type="button"
+                                name="remove-feed"
+                                value=(&entry.id)
+                                class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+                            >
+                                "Remove"
+                            </button>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
     }
 }
 
@@ -1060,21 +1088,22 @@ async fn add_feed(cx: &Cx, Form(input): Form<NewFeed>) -> Result<SeeOther> {
     Ok(see_other("/admin/feeds"))
 }
 
-/// Removes a feed, then returns to the list.
+/// Removes a feed, and reports whether one was registered under that id.
 ///
 /// The stored items outlive the registration, because they record what a
 /// tracker announced rather than who watched for it.
-#[route(POST "/admin/feeds/{feed_id}/remove")]
-async fn remove_feed(cx: &Cx) -> Result<SeeOther> {
-    if !app_context::<Arc<FeedRegistry>>(cx)
-        .remove(path_param::<FeedId>(cx))
+///
+/// An id that names nothing reads as `false` rather than as an error. The
+/// list the caller re-renders is the answer either way, and a row already
+/// gone is what the reader asked for.
+#[procedure]
+async fn remove_feed_now(cx: &Cx, id: String) -> Result<bool> {
+    let removed = app_context::<Arc<FeedRegistry>>(cx)
+        .remove(&id)
         .await
-        .map_err(internal_server_error)?
-    {
-        return Err(not_found().into());
-    }
+        .map_err(internal_server_error)?;
 
-    Ok(see_other("/admin/feeds"))
+    Ok(removed)
 }
 
 #[page("/admin/rulesets/new")]
