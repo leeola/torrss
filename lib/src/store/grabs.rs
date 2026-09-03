@@ -43,6 +43,20 @@ const SELECT: &str = "
     ORDER BY g.item_id, r.position
 ";
 
+/// Reads every attempt the client took, named by the title it was made for.
+///
+/// A failed attempt moved nothing to the client, so it is left out.
+///
+/// The newest sits first, so a page lists what moved last at the top.
+#[allow(dead_code, reason = "the held torrents the client page lists")]
+const ACCEPTED: &str = "
+    SELECT i.title, g.grabbed_at
+    FROM grabs g
+    JOIN feed_items i ON i.id = g.item_id
+    WHERE g.error IS NULL
+    ORDER BY g.grabbed_at DESC, g.item_id DESC
+";
+
 /// The latest attempt to grab one stored item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Grab {
@@ -57,6 +71,17 @@ pub(crate) struct Grab {
 
     /// Every ruleset that claimed the release, in declaration order.
     pub(crate) rulesets: Vec<String>,
+}
+
+/// One grab the client took, named by the title it was made for.
+///
+/// It carries the title rather than the item id, because the client page
+/// parses the title to an identity and never reads the item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "the held torrents the client page lists")]
+pub(crate) struct Accepted {
+    pub(crate) title: String,
+    pub(crate) at: DateTime<Utc>,
 }
 
 /// Records one attempt and the rulesets it passed, replacing the last one.
@@ -135,6 +160,22 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::E
     Ok(grabs)
 }
 
+/// Returns every attempt the client accepted, newest first.
+///
+/// One row covers an item, so a retry that succeeded after a failure counts
+/// once and carries the time of the retry.
+#[allow(dead_code, reason = "the held torrents the client page lists")]
+pub(crate) async fn accepted(pool: &SqlitePool) -> Result<Vec<Accepted>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, DateTime<Utc>)>(ACCEPTED)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(title, at)| Accepted { title, at })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -142,7 +183,7 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use sqlx::SqlitePool;
 
-    use super::{Grab, all, record};
+    use super::{Accepted, Grab, accepted, all, record};
     use crate::feed::fake;
     use crate::store;
 
@@ -343,6 +384,58 @@ mod tests {
                 }
             )]),
             "the left join keeps a grab that claimed nothing"
+        );
+    }
+
+    #[sqlx::test]
+    async fn accepted_lists_only_grabs_the_client_took(pool: SqlitePool) {
+        let ids = ingested(&pool, &["A.Release", "B.Release", "C.Release", "D.Release"]).await;
+
+        record(&pool, ids[0], at(2), Some("the client refused it"), &[])
+            .await
+            .expect("failed attempt");
+        record(&pool, ids[1], at(3), None, &[])
+            .await
+            .expect("second item");
+        record(&pool, ids[2], at(4), None, &[])
+            .await
+            .expect("third item");
+        record(&pool, ids[0], at(5), None, &[])
+            .await
+            .expect("retry");
+
+        // Never retried, so this failure is the one the filter has to drop.
+        // The newest time, so a missing filter puts it first.
+        record(&pool, ids[3], at(6), Some("the client refused it"), &[])
+            .await
+            .expect("standing failure");
+
+        assert_eq!(
+            accepted(&pool).await.expect("accepted"),
+            vec![
+                Accepted {
+                    title: "A.Release".to_owned(),
+                    at: at(5),
+                },
+                Accepted {
+                    title: "C.Release".to_owned(),
+                    at: at(4),
+                },
+                Accepted {
+                    title: "B.Release".to_owned(),
+                    at: at(3),
+                },
+            ],
+            "a failure is left out until a retry succeeds, and the newest sits first"
+        );
+    }
+
+    #[sqlx::test]
+    async fn accepted_of_empty_table_is_empty(pool: SqlitePool) {
+        assert_eq!(
+            accepted(&pool).await.expect("accepted"),
+            Vec::new(),
+            "nothing has been grabbed, so nothing has reached the client"
         );
     }
 }
