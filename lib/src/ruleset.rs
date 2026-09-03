@@ -14,7 +14,7 @@
 
 #[cfg(test)]
 pub(crate) mod fixture;
-
+pub(crate) mod registry;
 pub(crate) mod store;
 
 /// A named component that a ruleset pulls out of a release filename.
@@ -165,7 +165,7 @@ pub(crate) struct Segment<'a> {
 }
 
 /// A set of field rules that together parse one family of filenames.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Ruleset {
     /// Stable key that names the ruleset in a URL.
     pub(crate) id: String,
@@ -358,7 +358,7 @@ impl Diff {
 }
 
 /// One extraction rule: the part it fills, and how its value is read.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) part: Part,

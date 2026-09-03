@@ -21,13 +21,13 @@ use url::Url;
 use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
-    rules::ENGINE,
+    rules::Engine,
+    ruleset::registry::Rulesets,
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format,
         listing::{self, Standing},
         query::{self, IdList},
-        state::RulesetSwitches,
     },
     services::Services,
     store::grabs::{self, Grab},
@@ -102,6 +102,7 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
 /// over the same rulesets: a listing runs to tens of rows, so repeating the
 /// match costs less than threading one result through two shapes.
 fn item_details(
+    engine: &Engine,
     registry: &FeedRegistry,
     standing: &Standing,
     grabs: &HashMap<i64, Grab>,
@@ -111,10 +112,10 @@ fn item_details(
     let title = &item.item.title;
 
     ItemDetails {
-        rulesets: ENGINE
+        rulesets: engine
             .claimants(title)
             .into_iter()
-            .filter_map(|id| ENGINE.ruleset(&id))
+            .filter_map(|id| engine.ruleset(&id))
             .map(|ruleset| Claimant {
                 id: ruleset.id.clone(),
                 name: ruleset.name.clone(),
@@ -122,7 +123,7 @@ fn item_details(
             .collect(),
         values: standing
             .parsed()
-            .map(|parsed| listing::parsed_values(&ENGINE, parsed))
+            .map(|parsed| listing::parsed_values(engine, parsed))
             .unwrap_or_default(),
         hidden: standing.hidden_label(),
         feed_name: feed_name(registry, item),
@@ -161,11 +162,16 @@ async fn feed(cx: &Cx) -> Result {
     };
 
     let owned = library::identities(&services.db).await?;
-    let enabled = app_context::<RulesetSwitches>(cx).snapshot();
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let enabled = engine
+        .rulesets()
+        .filter(|ruleset| ruleset.enabled)
+        .map(|ruleset| ruleset.id.clone())
+        .collect();
 
     let standings: Vec<Standing> = items
         .iter()
-        .map(|item| listing::standing(&ENGINE, &enabled, &owned, &item.item.title))
+        .map(|item| listing::standing(&engine, &enabled, &owned, &item.item.title))
         .collect();
 
     let owned_count = standings
@@ -195,7 +201,7 @@ async fn feed(cx: &Cx) -> Result {
     let grabbed = grabs::all(&services.db).await?;
     let details: Vec<ItemDetails> = listed
         .iter()
-        .map(|(item, standing)| item_details(registry, standing, &grabbed, now, item))
+        .map(|(item, standing)| item_details(&engine, registry, standing, &grabbed, now, item))
         .collect();
 
     // Selecting every listed item is one link, so the target is the whole
@@ -322,6 +328,7 @@ async fn feed(cx: &Cx) -> Result {
             <ul class="mt-4 flex flex-col gap-2">
                 for ((item, _), (id, shown)) in listed.iter().zip(ids.iter().zip(&details)) {
                     components::item_row(
+                        engine: &engine,
                         item: item,
                         details: shown,
                         toggle_href: feed_url(
@@ -365,6 +372,7 @@ struct GrabForm {
 #[route(POST "/grab")]
 async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther> {
     let services = app_context::<Services>(cx);
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     for entry in IdList::new(Some(&input.selected)).entries() {
         // A selection is whatever arrived in the URL, so an entry that is
@@ -384,7 +392,7 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
             .unwrap_or_default();
 
         let _ = grab::grab(
-            &ENGINE,
+            &engine,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -400,7 +408,7 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
         &services.db,
         services.torrents.as_ref(),
         services.clock.as_ref(),
-        &ENGINE,
+        &engine,
     )
     .await;
 
@@ -420,19 +428,27 @@ struct SwitchReturn {
 
 /// Flips one ruleset between enabled and disabled, then returns to `back`.
 ///
-/// This posts rather than links because it writes shared state. It redirects
-/// instead of rendering, so a reload never repeats the flip.
+/// This posts rather than links because it writes the stored rulesets. It
+/// redirects instead of rendering, so a reload never repeats the flip.
 #[route(POST "/admin/rulesets/{ruleset_id}/enabled")]
 async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
-    let ruleset = ENGINE
-        .ruleset(path_param::<RulesetId>(cx))
-        .ok_or_not_found()?;
+    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let id = path_param::<RulesetId>(cx);
+
+    // The engine snapshot drops before the write. Reading the state and
+    // flipping it are two steps either way, and holding the snapshot across
+    // the write widens the gap between them for nothing.
+    let enabled = rulesets.engine().ruleset(id).ok_or_not_found()?.enabled;
+
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
         .unwrap_or_else(|| "/admin".to_owned());
 
-    app_context::<RulesetSwitches>(cx).toggle(&ruleset.id);
+    rulesets
+        .set_enabled(id, !enabled)
+        .await
+        .map_err(internal_server_error)?;
 
     Ok(see_other(back))
 }
@@ -476,7 +492,7 @@ fn switch_action(ruleset: &str, back: &str) -> String {
 
 #[page("/admin")]
 async fn admin(cx: &Cx) -> Result {
-    let switches = app_context::<RulesetSwitches>(cx);
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     view! {
         <div class="flex flex-wrap items-end justify-between gap-4">
@@ -495,26 +511,26 @@ async fn admin(cx: &Cx) -> Result {
             </a>
         </div>
 
-        if ENGINE.bases().next().is_none() {
+        if engine.bases().next().is_none() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No ruleset is declared."
             </p>
         } else {
             <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
-                for base in ENGINE.bases() {
+                for base in engine.bases() {
                     components::ruleset_card(
                         ruleset: base,
-                        parent: ENGINE.parent(base),
+                        parent: engine.parent(base),
                         nested: false,
-                        enabled: switches.is_enabled(&base.id),
+                        enabled: base.enabled,
                     )
 
-                    for child in ENGINE.children(base) {
+                    for child in engine.children(base) {
                         components::ruleset_card(
                             ruleset: child,
                             parent: Some(base),
                             nested: true,
-                            enabled: switches.is_enabled(&child.id),
+                            enabled: child.enabled,
                         )
                     }
                 }
@@ -740,13 +756,14 @@ async fn scan_library(cx: &Cx) -> Result<SeeOther> {
         .unwrap_or_else(|| "/admin/client".to_owned());
 
     let services = app_context::<Services>(cx);
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     scan::scan(
         app_context::<Arc<ScanState>>(cx),
         &services.db,
         services.torrents.as_ref(),
         services.clock.as_ref(),
-        &ENGINE,
+        &engine,
     )
     .await;
 
@@ -968,17 +985,18 @@ impl EditorQuery<'_> {
 
 #[page("/admin/rulesets/{ruleset_id}")]
 async fn ruleset_editor(cx: &Cx) -> Result {
-    let ruleset = ENGINE
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let ruleset = engine
         .ruleset(path_param::<RulesetId>(cx))
         .ok_or_not_found()?;
     let view = query_params::<MatchView>(cx)?;
     let q = view.query();
 
     let replacements = q.replaced.entries();
-    let parent = ENGINE.parent(ruleset);
+    let parent = engine.parent(ruleset);
     let fields = ruleset.resolved_fields(parent, &replacements);
     let inheriting = parent.is_some();
-    let enabled = app_context::<RulesetSwitches>(cx).is_enabled(&ruleset.id);
+    let enabled = ruleset.enabled;
 
     view! {
         <nav class="text-sm text-slate-500">
@@ -1060,7 +1078,9 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 }
 
 #[page("/admin/rulesets/new")]
-async fn new_ruleset() -> Result {
+async fn new_ruleset(cx: &Cx) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+
     view! {
         <nav class="text-sm text-slate-500">
             <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
@@ -1104,7 +1124,7 @@ async fn new_ruleset() -> Result {
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
                     <option value="">"Nothing. Declare every field here."</option>
-                    for base in ENGINE.bases() {
+                    for base in engine.bases() {
                         <option value=(&base.id)>
                             (&base.name) " (" (base.fields.len()) " fields)"
                         </option>

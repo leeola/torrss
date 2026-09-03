@@ -9,6 +9,8 @@ use super::router;
 use crate::feed::registry;
 use crate::feed::registry::FeedRegistry;
 use crate::feed::store::FeedStore;
+use crate::ruleset::registry::Rulesets;
+use crate::ruleset::store::RulesetStore;
 use crate::services::Services;
 use crate::torrent::scan;
 use crate::torrent::scan::ScanState;
@@ -59,6 +61,12 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
             .map_err(io::Error::other)?,
     );
 
+    let rulesets = Arc::new(
+        Rulesets::load(RulesetStore::new(services.db.clone()))
+            .await
+            .map_err(io::Error::other)?,
+    );
+
     // Named `scan_state` because the module `scan` has to stay in scope for
     // the poll below.
     let scan_state = Arc::new(ScanState::new());
@@ -70,6 +78,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
         config.assets.as_deref(),
         services.clone(),
         Arc::clone(&feed_registry),
+        Arc::clone(&rulesets),
         Arc::clone(&scan_state),
     )?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
@@ -88,6 +97,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
 
     let scanning = tokio::spawn(scan::poll(
         scan_state,
+        rulesets,
         services.db,
         services.torrents,
         services.clock,

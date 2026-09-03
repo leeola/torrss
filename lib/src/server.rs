@@ -14,7 +14,6 @@ mod matches;
 mod query;
 mod router;
 mod serve;
-mod state;
 mod templates;
 mod trace;
 

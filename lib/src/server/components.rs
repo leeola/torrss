@@ -6,7 +6,7 @@ use topcoat::{
 use super::format;
 use super::listing::ParsedValue;
 use crate::feed::registry::FeedCheck;
-use crate::rules::{ENGINE, Engine};
+use crate::rules::Engine;
 use crate::ruleset::{FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
 
@@ -133,6 +133,7 @@ pub(crate) struct Grabbed {
 /// data rather than anything the engine produces from a real title.
 #[component]
 pub(crate) async fn item_row(
+    engine: &Engine,
     item: &StoredItem,
     details: &ItemDetails,
     #[into] toggle_href: String,
@@ -224,7 +225,7 @@ pub(crate) async fn item_row(
                         if grabbed.rulesets.is_empty() {
                             "passed no ruleset"
                         } else {
-                            "passed " (passed(&ENGINE, &grabbed.rulesets))
+                            "passed " (passed(engine, &grabbed.rulesets))
                         }
                     </p>
                 }

@@ -10,24 +10,11 @@
 
 use std::cmp::Reverse;
 use std::fmt::{self, Display};
-use std::sync::LazyLock;
 
 use regex::Regex;
 use snafu::{OptionExt, ResultExt, Snafu};
 
 use crate::ruleset::{Field, FieldKind, Ruleset};
-
-/// The rulesets this application ships, compiled once.
-///
-/// The application declares none. A ruleset the reader never wrote claims
-/// releases they never asked for, so the set stays empty until rulesets come
-/// from a store the reader writes into.
-///
-/// # Panics
-///
-/// Panics when the set fails to compile, which an empty one never does.
-pub(crate) static ENGINE: LazyLock<Engine> =
-    LazyLock::new(|| Engine::from_rulesets(Vec::new()).expect("an empty ruleset set compiles"));
 
 /// What one ruleset made of a release name.
 #[derive(Debug, Clone, PartialEq, Eq)]

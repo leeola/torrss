@@ -17,7 +17,8 @@ use sqlx::SqlitePool;
 use tracing::{info, instrument, warn};
 
 use crate::clock::Clock;
-use crate::rules::{ENGINE, Engine};
+use crate::rules::Engine;
+use crate::ruleset::registry::Rulesets;
 use crate::store::library;
 use crate::store::library::Owned;
 use crate::torrent::{Torrent, TorrentClient};
@@ -146,13 +147,21 @@ pub(crate) async fn scan(
 #[instrument(name = "scan_poll", skip_all, fields(interval_secs = interval.as_secs()))]
 pub(crate) async fn poll(
     state: Arc<ScanState>,
+    rulesets: Arc<Rulesets>,
     pool: SqlitePool,
     client: Arc<dyn TorrentClient>,
     clock: Arc<dyn Clock>,
     interval: Duration,
 ) {
     loop {
-        scan(&state, &pool, client.as_ref(), clock.as_ref(), &ENGINE).await;
+        scan(
+            &state,
+            &pool,
+            client.as_ref(),
+            clock.as_ref(),
+            &rulesets.engine(),
+        )
+        .await;
         clock.sleep(interval).await;
     }
 }

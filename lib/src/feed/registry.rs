@@ -8,9 +8,9 @@
 //! The items a feed returned do not live here at all, only in the
 //! `feed_items` table, so nothing a restart drops is lost.
 //!
-//! This mirrors [`RulesetSwitches`](crate::server) in one respect: it sits in
-//! the app context, and a handler reads it there rather than through an
-//! argument.
+//! This mirrors [`Rulesets`](crate::ruleset::registry::Rulesets) in one
+//! respect: it sits in the app context, and a handler reads it there rather
+//! than through an argument.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;

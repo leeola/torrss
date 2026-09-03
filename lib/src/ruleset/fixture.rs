@@ -2,7 +2,7 @@
 //!
 //! The application ships none, so a test that needs a claimed title
 //! supplies its own configuration. [`ENGINE`] here is what a test asserts
-//! against, and [`crate::rules::ENGINE`] is the empty shipped one.
+//! against, and a running process reads its own set from the store.
 //!
 //! Five rulesets, every name invented:
 //!
