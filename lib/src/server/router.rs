@@ -11,21 +11,21 @@ use crate::rules::ENGINE;
 use crate::server::state::RulesetSwitches;
 use crate::server::trace::RequestSpan;
 use crate::services::Services;
-use crate::torrent::sync::SyncState;
+use crate::torrent::scan::ScanState;
 
 /// Builds the router from every discovered page, layout, and layer.
 ///
 /// Discovery collects the annotated functions across the whole binary at link
 /// time, so a route appears here by existing rather than by being listed.
 ///
-/// `services`, `registry`, and `sync` each reach a handler through the app
-/// context, keyed by their type. The registry and the sync state arrive already
+/// `services`, `registry`, and `scan` each reach a handler through the app
+/// context, keyed by their type. The registry and the scan state arrive already
 /// shared, because the two poll tasks hold the same ones.
 pub(super) fn build(
     assets: Option<&Path>,
     services: Services,
     registry: Arc<FeedRegistry>,
-    sync: Arc<SyncState>,
+    scan: Arc<ScanState>,
 ) -> io::Result<Router> {
     Ok(Router::builder()
         .discover()
@@ -33,7 +33,7 @@ pub(super) fn build(
         .app_context(RulesetSwitches::new(&ENGINE))
         .app_context(services)
         .app_context(registry)
-        .app_context(sync)
+        .app_context(scan)
         .layer(RequestSpan)
         .build())
 }

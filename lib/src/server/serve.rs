@@ -10,8 +10,8 @@ use crate::feed::registry;
 use crate::feed::registry::FeedRegistry;
 use crate::feed::store::FeedStore;
 use crate::services::Services;
-use crate::torrent::sync;
-use crate::torrent::sync::SyncState;
+use crate::torrent::scan;
+use crate::torrent::scan::ScanState;
 
 /// Host the listener binds to when the caller names none.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -31,7 +31,7 @@ pub struct Config {
     /// directory here to serve a bundle from a deployment-specific location.
     pub assets: Option<PathBuf>,
 
-    /// Pause between two passes, for the feed poll and the library sync
+    /// Pause between two passes, for the feed poll and the library scan
     /// alike.
     ///
     /// Measured from the end of one pass to the start of the next, so a slow
@@ -43,7 +43,7 @@ pub struct Config {
 
 /// Serves the web application until the process receives Ctrl+C or `SIGTERM`.
 ///
-/// Polls every registered feed and syncs the torrent client's library in the
+/// Polls every registered feed and scans the torrent client's library in the
 /// background for as long as the listener runs, and stops both before
 /// returning. In-flight requests get the shutdown timeout of the router
 /// service to finish.
@@ -59,9 +59,9 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
             .map_err(io::Error::other)?,
     );
 
-    // Named `sync_state` because the module `sync` has to stay in scope for
+    // Named `scan_state` because the module `scan` has to stay in scope for
     // the poll below.
-    let sync_state = Arc::new(SyncState::new());
+    let scan_state = Arc::new(ScanState::new());
 
     // Every fallible step runs before either background task starts. Dropping
     // a join handle detaches the task rather than stopping it, so an early
@@ -70,7 +70,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
         config.assets.as_deref(),
         services.clone(),
         Arc::clone(&feed_registry),
-        Arc::clone(&sync_state),
+        Arc::clone(&scan_state),
     )?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
 
@@ -86,8 +86,8 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
         config.poll_interval,
     ));
 
-    let syncing = tokio::spawn(sync::poll(
-        sync_state,
+    let scanning = tokio::spawn(scan::poll(
+        scan_state,
         services.db,
         services.torrents,
         services.clock,
@@ -96,7 +96,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
 
     let served = topcoat::serve(listener, router).await;
     polling.abort();
-    syncing.abort();
+    scanning.abort();
 
     served
 }

@@ -33,7 +33,7 @@ use crate::{
     services::Services,
     store::grabs::{self, Grab},
     store::{self, StoredItem, library},
-    torrent::sync::{self, SyncState},
+    torrent::scan::{self, ScanState},
 };
 
 path_param!(ruleset_id);
@@ -355,7 +355,7 @@ struct GrabForm {
 /// the loop discards the result and the reader learns which release failed
 /// from its badge rather than from a page that refuses to render.
 ///
-/// The library is resynced once at the end rather than once per item. A sync
+/// The library is rescanned once at the end rather than once per item. A scan
 /// lists the client's whole queue, so a call per release would repeat that
 /// listing for the same answer. Doing it before the redirect means the
 /// listing already shows what was just grabbed.
@@ -392,8 +392,8 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
         .await;
     }
 
-    sync::sync(
-        app_context::<Arc<SyncState>>(cx),
+    scan::scan(
+        app_context::<Arc<ScanState>>(cx),
         &services.db,
         services.torrents.as_ref(),
         services.clock.as_ref(),
@@ -605,7 +605,7 @@ async fn client(cx: &Cx) -> Result {
     // Bound as `checked` rather than `client`, because the `#[page]`
     // attribute above puts a unit struct named `client` in scope.
     let checked = services.torrents.check().await;
-    let synced = app_context::<Arc<SyncState>>(cx).last();
+    let scanned = app_context::<Arc<ScanState>>(cx).last();
 
     view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Client"</h1>
@@ -636,17 +636,17 @@ async fn client(cx: &Cx) -> Result {
                 </p>
 
                 <p class="mt-1 text-xs text-slate-500">
-                    match &synced {
-                        None => "never synced",
+                    match &scanned {
+                        None => "never scanned",
                         Some(last) => match &last.outcome {
                             Ok(report) => {
                                 (report.matched) " of "
                                 (format::count(report.torrents, "torrent", "torrents"))
-                                " matched a ruleset, synced "
+                                " matched a ruleset, scanned "
                                 (format::age(now, Some(last.at)))
                             },
                             Err(error) => {
-                                "sync failed: " (error) ", "
+                                "scan failed: " (error) ", "
                                 (format::age(now, Some(last.at)))
                             },
                         },
@@ -655,8 +655,8 @@ async fn client(cx: &Cx) -> Result {
             </div>
 
             components::action_button(
-                action: "/admin/torrents/sync?back=/admin/client",
-                label: "Sync now",
+                action: "/admin/torrents/scan?back=/admin/client",
+                label: "Scan now",
             )
         </div>
 
@@ -721,16 +721,16 @@ async fn client(cx: &Cx) -> Result {
     }
 }
 
-/// Syncs the library from the torrent client now, then returns to `back`.
+/// Scans the library from the torrent client now, then returns to `back`.
 ///
-/// This runs the same pass the sync task runs, so a reader who just added a
+/// This runs the same pass the scan task runs, so a reader who just added a
 /// torrent by hand sees it counted without waiting out the interval.
 ///
-/// A pass that overlaps the sync task is harmless. Each pass rewrites the
+/// A pass that overlaps the scan task is harmless. Each pass rewrites the
 /// whole table in one transaction, so two passes converge on the snapshot
 /// the client reported last.
-#[route(POST "/admin/torrents/sync")]
-async fn sync_library(cx: &Cx) -> Result<SeeOther> {
+#[route(POST "/admin/torrents/scan")]
+async fn scan_library(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
@@ -738,8 +738,8 @@ async fn sync_library(cx: &Cx) -> Result<SeeOther> {
 
     let services = app_context::<Services>(cx);
 
-    sync::sync(
-        app_context::<Arc<SyncState>>(cx),
+    scan::scan(
+        app_context::<Arc<ScanState>>(cx),
         &services.db,
         services.torrents.as_ref(),
         services.clock.as_ref(),

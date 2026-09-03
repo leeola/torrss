@@ -2,7 +2,7 @@
 //!
 //! A tracker announces a filename and a torrent client reports another. This
 //! module decides whether the two name the same release, which is the whole
-//! question the library sync asks.
+//! question the library scan asks.
 //!
 //! The answer is an [`Identity`], built from the fields a ruleset marks as
 //! identity. Normalizing them keeps punctuation and case from turning one

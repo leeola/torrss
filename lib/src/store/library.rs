@@ -4,7 +4,7 @@
 //! than from the client. One query per request beats one client call per
 //! request, and the page still renders when the client is down.
 //!
-//! A sync writes this table whole. It records a snapshot rather than a
+//! A scan writes this table whole. It records a snapshot rather than a
 //! stream of changes, so a torrent removed in the client is known only by
 //! its absence from the next snapshot.
 
@@ -31,14 +31,14 @@ pub(crate) struct Owned {
     pub(crate) name: String,
 }
 
-/// Rewrites the whole library from one sync.
+/// Rewrites the whole library from one scan.
 ///
 /// Runs as a single transaction, so a failure part way leaves the previous
 /// snapshot rather than an empty table.
 ///
 /// Two torrents sometimes parse to one identity, such as the same episode
 /// grabbed twice in different qualities. The later one wins rather than
-/// failing the sync, because one odd pair is no reason to lose the rest.
+/// failing the scan, because one odd pair is no reason to lose the rest.
 pub(crate) async fn replace(
     pool: &SqlitePool,
     synced_at: DateTime<Utc>,
@@ -118,7 +118,7 @@ mod tests {
             ],
         )
         .await
-        .expect("first sync");
+        .expect("first scan");
 
         replace(
             &pool,
@@ -126,7 +126,7 @@ mod tests {
             &[owned("series|show|4|7", "t2", "Show.S04E07")],
         )
         .await
-        .expect("second sync");
+        .expect("second scan");
 
         assert_eq!(
             identities(&pool).await.expect("identities"),
@@ -146,7 +146,7 @@ mod tests {
             ],
         )
         .await
-        .expect("a duplicate identity does not fail the sync");
+        .expect("a duplicate identity does not fail the scan");
 
         assert_eq!(
             identities(&pool).await.expect("identities"),

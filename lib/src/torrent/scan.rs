@@ -1,6 +1,6 @@
 //! Recording which releases the torrent client already holds.
 //!
-//! A sync is where the three halves of the question meet. The client lists
+//! A scan is where the three halves of the question meet. The client lists
 //! what it holds, the rulesets turn each name into an identity, and the
 //! library table takes the result. The feed page then answers "do I have
 //! this" from one query.
@@ -22,24 +22,24 @@ use crate::store::library;
 use crate::store::library::Owned;
 use crate::torrent::{Torrent, TorrentClient};
 
-/// The result of the last library sync.
+/// The result of the last library scan.
 ///
 /// This mirrors the feed registry: it lives in the app context, and a handler
 /// reads it there rather than through an argument.
 #[derive(Debug, Default)]
-pub(crate) struct SyncState {
-    last: Mutex<Option<SyncStatus>>,
+pub(crate) struct ScanState {
+    last: Mutex<Option<ScanStatus>>,
 }
 
-/// What one sync produced.
+/// What one scan produced.
 ///
-/// A client failure and a store failure both end a sync the same way, and the
+/// A client failure and a store failure both end a scan the same way, and the
 /// pages show only the text, so nothing is gained by keeping the two error
 /// types apart this far out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyncStatus {
+pub(crate) struct ScanStatus {
     pub(crate) at: DateTime<Utc>,
-    pub(crate) outcome: Result<SyncReport, String>,
+    pub(crate) outcome: Result<ScanReport, String>,
 }
 
 /// How much of the client's queue the rulesets claimed.
@@ -48,7 +48,7 @@ pub(crate) struct SyncStatus {
 /// client full of torrents with nothing matched means the rulesets are wrong,
 /// not that the client is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyncReport {
+pub(crate) struct ScanReport {
     /// How many torrents the client holds.
     pub(crate) torrents: usize,
 
@@ -57,27 +57,27 @@ pub(crate) struct SyncReport {
     pub(crate) matched: usize,
 }
 
-impl SyncState {
+impl ScanState {
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Returns the last sync's status, or nothing until one runs.
-    pub(crate) fn last(&self) -> Option<SyncStatus> {
+    /// Returns the last scan's status, or nothing until one runs.
+    pub(crate) fn last(&self) -> Option<ScanStatus> {
         self.lock().clone()
     }
 
-    fn lock(&self) -> MutexGuard<'_, Option<SyncStatus>> {
+    fn lock(&self) -> MutexGuard<'_, Option<ScanStatus>> {
         // Nothing panics while the guard is held, so the lock never poisons.
         self.last
             .lock()
-            .expect("the sync state lock is never poisoned")
+            .expect("the scan state lock is never poisoned")
     }
 }
 
 /// Rebuilds the library from what the client holds, and records the outcome.
 ///
-/// Returns the status it stored, so a handler that asked for the sync renders
+/// Returns the status it stored, so a handler that asked for the scan renders
 /// the result without reading the state back.
 ///
 /// A client that fails to answer leaves the previous library alone. Stale
@@ -86,15 +86,15 @@ impl SyncState {
 ///
 /// The clock is read once, at the start. The same instant stamps the written
 /// rows and the recorded status, so a page never shows the two disagreeing by
-/// the length of a sync.
-#[instrument(name = "sync_library", skip_all)]
-pub(crate) async fn sync(
-    state: &SyncState,
+/// the length of a scan.
+#[instrument(name = "scan_library", skip_all)]
+pub(crate) async fn scan(
+    state: &ScanState,
     pool: &SqlitePool,
     client: &dyn TorrentClient,
     clock: &dyn Clock,
     engine: &Engine,
-) -> SyncStatus {
+) -> ScanStatus {
     let at = clock.now();
 
     let outcome = match client.list().await {
@@ -104,7 +104,7 @@ pub(crate) async fn sync(
                 .filter_map(|torrent| identify(torrent, engine))
                 .collect::<Vec<_>>();
 
-            let report = SyncReport {
+            let report = ScanReport {
                 torrents: torrents.len(),
                 matched: owned.len(),
             };
@@ -123,18 +123,18 @@ pub(crate) async fn sync(
         Ok(report) => info!(
             torrents = report.torrents,
             matched = report.matched,
-            "synced"
+            "scanned"
         ),
-        Err(error) => warn!(error = %error, "sync failed"),
+        Err(error) => warn!(error = %error, "scan failed"),
     }
 
-    let status = SyncStatus { at, outcome };
+    let status = ScanStatus { at, outcome };
     *state.lock() = Some(status.clone());
 
     status
 }
 
-/// Syncs the library forever, pausing `interval` between passes.
+/// Scans the library forever, pausing `interval` between passes.
 ///
 /// The pause runs after a pass rather than on a fixed schedule, so a slow
 /// client delays the next pass instead of stacking passes on top of each
@@ -143,16 +143,16 @@ pub(crate) async fn sync(
 /// This runs as its own task rather than beside the feed poll. The two have
 /// no reason to share a rate, and one slow client would otherwise hold up
 /// every feed check behind it.
-#[instrument(name = "sync_poll", skip_all, fields(interval_secs = interval.as_secs()))]
+#[instrument(name = "scan_poll", skip_all, fields(interval_secs = interval.as_secs()))]
 pub(crate) async fn poll(
-    state: Arc<SyncState>,
+    state: Arc<ScanState>,
     pool: SqlitePool,
     client: Arc<dyn TorrentClient>,
     clock: Arc<dyn Clock>,
     interval: Duration,
 ) {
     loop {
-        sync(&state, &pool, client.as_ref(), clock.as_ref(), &ENGINE).await;
+        scan(&state, &pool, client.as_ref(), clock.as_ref(), &ENGINE).await;
         clock.sleep(interval).await;
     }
 }
@@ -176,7 +176,7 @@ mod tests {
 
     use sqlx::SqlitePool;
 
-    use super::{SyncReport, SyncState, SyncStatus, sync};
+    use super::{ScanReport, ScanState, ScanStatus, scan};
     use crate::clock::Clock;
     use crate::mock::fixture::ENGINE;
     use crate::services::Services;
@@ -202,13 +202,13 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn sync_stores_one_identity_per_parsed_name(pool: SqlitePool) {
+    async fn scan_stores_one_identity_per_parsed_name(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = SyncState::new();
+        let state = ScanState::new();
         fakes.torrents.seed(HOLLOW);
         fakes.torrents.seed(FILM);
 
-        let status = sync(
+        let status = scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -219,9 +219,9 @@ mod tests {
 
         assert_eq!(
             status,
-            SyncStatus {
+            ScanStatus {
                 at: fakes.clock.now(),
-                outcome: Ok(SyncReport {
+                outcome: Ok(ScanReport {
                     torrents: 2,
                     matched: 2
                 }),
@@ -240,12 +240,12 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn sync_stores_a_season_pack_as_a_span(pool: SqlitePool) {
+    async fn scan_stores_a_season_pack_as_a_span(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = SyncState::new();
+        let state = ScanState::new();
         fakes.torrents.seed(HOLLOW_PACK);
 
-        sync(
+        scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -262,13 +262,13 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn sync_skips_names_no_ruleset_claims(pool: SqlitePool) {
+    async fn scan_skips_names_no_ruleset_claims(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = SyncState::new();
+        let state = ScanState::new();
         fakes.torrents.seed(HOLLOW);
         fakes.torrents.seed(UNCLAIMED);
 
-        let status = sync(
+        let status = scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -279,7 +279,7 @@ mod tests {
 
         assert_eq!(
             status.outcome,
-            Ok(SyncReport {
+            Ok(ScanReport {
                 torrents: 2,
                 matched: 1
             }),
@@ -293,12 +293,12 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn sync_records_client_error_and_keeps_library(pool: SqlitePool) {
+    async fn scan_records_client_error_and_keeps_library(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = SyncState::new();
+        let state = ScanState::new();
         fakes.torrents.seed(HOLLOW);
 
-        sync(
+        scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -308,7 +308,7 @@ mod tests {
         .await;
 
         fakes.torrents.fail_next(TorrentError::Unauthorized);
-        let status = sync(
+        let status = scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -329,12 +329,12 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn sync_replaces_previous_snapshot(pool: SqlitePool) {
+    async fn scan_replaces_previous_snapshot(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = SyncState::new();
+        let state = ScanState::new();
         let removed = fakes.torrents.seed(HOLLOW);
 
-        sync(
+        scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -350,7 +350,7 @@ mod tests {
             .expect("remove the seeded torrent");
         fakes.torrents.seed(NEXT_EPISODE);
 
-        let status = sync(
+        let status = scan(
             &state,
             &services.db,
             services.torrents.as_ref(),
@@ -361,7 +361,7 @@ mod tests {
 
         assert_eq!(
             status.outcome,
-            Ok(SyncReport {
+            Ok(ScanReport {
                 torrents: 1,
                 matched: 1
             })

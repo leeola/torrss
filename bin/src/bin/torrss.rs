@@ -57,7 +57,7 @@ struct Cli {
     )]
     config: Vec<PathBuf>,
 
-    /// Seconds to wait between two passes of the feed poll and the library sync.
+    /// Seconds to wait between two passes of the feed poll and the library scan.
     #[arg(
         long,
         env = "TORRSS_POLL_INTERVAL",
