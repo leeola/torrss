@@ -187,30 +187,26 @@ impl Ruleset {
             .count()
     }
 
-    /// The ruleset this one narrows.
-    pub(crate) fn parent(&self) -> Option<&'static Ruleset> {
-        ruleset(self.inherits?)
-    }
-
-    /// The rulesets that narrow this one.
-    pub(crate) fn children(&self) -> impl Iterator<Item = &'static Ruleset> {
-        RULESETS
-            .iter()
-            .filter(move |child| child.inherits == Some(self.id))
-    }
-
     /// Every field the editor shows, each tagged with where it came from.
     ///
     /// A base ruleset returns its own fields untouched. A child returns the
     /// parent's fields in the parent's order, so the two editors read the
     /// same way down the page.
     ///
+    /// `parent` is the ruleset this one narrows, which the caller resolves
+    /// through [`crate::rules::Engine`]. Passing it in is what keeps a
+    /// ruleset from reaching for a global list to find its own parent.
+    ///
     /// `toggled` names the fields switched since the last save. Each named
     /// field flips to the other state. An inherited field starts overriding,
     /// and an overriding field drops back to the inherited value. The parent's field seeds a fresh
     /// override, so the reader edits a working pattern rather than a blank.
-    pub(crate) fn resolved_fields(&self, toggled: &[&str]) -> Vec<ResolvedField> {
-        let Some(parent) = self.parent() else {
+    pub(crate) fn resolved_fields(
+        &self,
+        parent: Option<&'static Ruleset>,
+        toggled: &[&str],
+    ) -> Vec<ResolvedField> {
+        let Some(parent) = parent else {
             return self
                 .fields
                 .iter()
@@ -465,11 +461,6 @@ impl FieldKind {
             Self::Text | Self::Number | Self::Enum | Self::Boolean => None,
         }
     }
-}
-
-/// Finds the ruleset named by `id`.
-pub(crate) fn ruleset(id: &str) -> Option<&'static Ruleset> {
-    RULESETS.iter().find(|ruleset| ruleset.id == id)
 }
 
 #[cfg(test)]

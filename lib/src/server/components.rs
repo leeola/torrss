@@ -6,7 +6,8 @@ use topcoat::{
 use super::format;
 use super::listing::ParsedValue;
 use crate::feed::registry::FeedCheck;
-use crate::mock::{self, Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
+use crate::mock::{Candidate, FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
+use crate::rules::{ENGINE, Engine};
 use crate::store::StoredItem;
 
 /// Renders a filename with every claimed run tinted by its part.
@@ -286,7 +287,7 @@ pub(crate) async fn item_row(
                         if grabbed.rulesets.is_empty() {
                             "passed no ruleset"
                         } else {
-                            "passed " (passed(&grabbed.rulesets))
+                            "passed " (passed(&ENGINE, &grabbed.rulesets))
                         }
                     </p>
                 }
@@ -300,10 +301,14 @@ pub(crate) async fn item_row(
 /// A ruleset removed since the grab shows by its id instead of its name. The
 /// record is of what ran, and hiding a line because a rule no longer exists
 /// loses exactly the case a reader opened the page to look into.
-fn passed(rulesets: &[String]) -> String {
+fn passed(engine: &Engine, rulesets: &[String]) -> String {
     rulesets
         .iter()
-        .map(|id| mock::ruleset(id).map_or(id.as_str(), |ruleset| ruleset.name))
+        .map(|id| {
+            engine
+                .ruleset(id)
+                .map_or(id.as_str(), |ruleset| ruleset.name)
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -527,7 +532,12 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
 /// the way a reader expects, and the switch belongs beside the ruleset's other
 /// actions in the editor.
 #[component]
-pub(crate) async fn ruleset_card(ruleset: &'static Ruleset, nested: bool, enabled: bool) -> Result {
+pub(crate) async fn ruleset_card(
+    ruleset: &'static Ruleset,
+    parent: Option<&'static Ruleset>,
+    nested: bool,
+    enabled: bool,
+) -> Result {
     view! {
         <li
             id=(format!("ruleset-{}", ruleset.id))
@@ -544,7 +554,7 @@ pub(crate) async fn ruleset_card(ruleset: &'static Ruleset, nested: bool, enable
                 <div class="flex flex-wrap items-center gap-3">
                     <h2 class="text-sm font-semibold text-slate-100">(ruleset.name)</h2>
                     status_badge(enabled: enabled)
-                    match ruleset.parent() {
+                    match parent {
                         Some(parent) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
                             "narrows " (parent.name)
                         </span>,
@@ -555,7 +565,7 @@ pub(crate) async fn ruleset_card(ruleset: &'static Ruleset, nested: bool, enable
                 <p class="mt-1 text-sm text-slate-400">(ruleset.summary)</p>
 
                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    match ruleset.parent() {
+                    match parent {
                         Some(parent) => <span>
                             (ruleset.fields.len()) " replaced of " (format::count(parent.fields.len(), "field", "fields"))
                         </span>,
@@ -614,14 +624,18 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 #[cfg(test)]
 mod tests {
     use super::passed;
+    use crate::rules::ENGINE;
 
     #[test]
     fn passed_names_declared_rulesets_and_keeps_the_rest_by_id() {
         assert_eq!(
-            passed(&[
-                "series-hollow-meridian".to_owned(),
-                "removed-since-the-grab".to_owned(),
-            ]),
+            passed(
+                &ENGINE,
+                &[
+                    "series-hollow-meridian".to_owned(),
+                    "removed-since-the-grab".to_owned(),
+                ]
+            ),
             "The Hollow Meridian, removed-since-the-grab",
             "a ruleset no longer declared still shows, by the id that was recorded"
         );

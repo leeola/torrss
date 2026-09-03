@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, sync::Mutex};
 
-use crate::mock::RULESETS;
+use crate::rules::Engine;
 
 /// Which rulesets currently run.
 ///
@@ -13,12 +13,12 @@ pub(crate) struct RulesetSwitches {
 }
 
 impl RulesetSwitches {
-    /// Seeds the set from the value each ruleset declares.
-    pub(crate) fn new() -> Self {
+    /// Seeds the set from the value each of `engine`'s rulesets declares.
+    pub(crate) fn new(engine: &Engine) -> Self {
         Self {
             enabled: Mutex::new(
-                RULESETS
-                    .iter()
+                engine
+                    .rulesets()
                     .filter(|ruleset| ruleset.enabled)
                     .map(|ruleset| ruleset.id)
                     .collect(),
@@ -64,11 +64,12 @@ mod tests {
     use std::collections::HashSet;
 
     use super::RulesetSwitches;
+    use crate::rules::ENGINE;
 
     #[test]
     fn nothing_is_enabled_at_start() {
         assert_eq!(
-            RulesetSwitches::new().snapshot(),
+            RulesetSwitches::new(&ENGINE).snapshot(),
             HashSet::new(),
             "a shipped ruleset is a template until the reader switches it on"
         );
@@ -76,7 +77,7 @@ mod tests {
 
     #[test]
     fn snapshot_reflects_a_toggle() {
-        let switches = RulesetSwitches::new();
+        let switches = RulesetSwitches::new(&ENGINE);
         switches.toggle("archive-talks");
 
         assert_eq!(switches.snapshot(), HashSet::from(["archive-talks"]));

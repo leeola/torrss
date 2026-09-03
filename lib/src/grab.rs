@@ -15,7 +15,7 @@ use tracing::{debug, info, instrument, warn};
 use crate::clock::Clock;
 use crate::download::{DownloadError, Downloader};
 use crate::feed::FeedAuth;
-use crate::rules::ENGINE;
+use crate::rules::Engine;
 use crate::store::StoredItem;
 use crate::store::grabs;
 use crate::torrent::{AddTorrent, TorrentClient, TorrentError, TorrentSource};
@@ -51,6 +51,7 @@ pub(crate) enum GrabError {
 /// is the one returned: that is the failure the caller asked about.
 #[instrument(name = "grab", skip_all, fields(item.id = item.id))]
 pub(crate) async fn grab(
+    engine: &Engine,
     pool: &SqlitePool,
     downloader: &dyn Downloader,
     client: &dyn TorrentClient,
@@ -58,7 +59,7 @@ pub(crate) async fn grab(
     item: &StoredItem,
     auth: &FeedAuth,
 ) -> Result<(), GrabError> {
-    let rulesets = ENGINE.claimants(&item.item.title);
+    let rulesets = engine.claimants(&item.item.title);
 
     for id in &rulesets {
         debug!(ruleset.id = id, "ruleset passed");
@@ -138,6 +139,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::feed::{FeedAuth, FeedItem, fake};
+    use crate::rules::ENGINE;
     use crate::services::Services;
     use crate::store;
     use crate::store::grabs::{self, Grab};
@@ -176,6 +178,7 @@ mod tests {
         let item = stored(&services.db, fake::item(TITLE).magnet(MAGNET)).await;
 
         grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -205,6 +208,7 @@ mod tests {
         fakes.downloads.file(TORRENT_URL, BYTES);
 
         grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -240,6 +244,7 @@ mod tests {
 
         assert!(
             grab(
+                &ENGINE,
                 &services.db,
                 services.downloads.as_ref(),
                 services.torrents.as_ref(),
@@ -282,6 +287,7 @@ mod tests {
 
         assert!(
             grab(
+                &ENGINE,
                 &services.db,
                 services.downloads.as_ref(),
                 services.torrents.as_ref(),
@@ -314,6 +320,7 @@ mod tests {
         let item = stored(&services.db, fake::item(TITLE).magnet(MAGNET)).await;
 
         grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -348,6 +355,7 @@ mod tests {
         .await;
 
         grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -386,6 +394,7 @@ mod tests {
         .await;
 
         grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -423,6 +432,7 @@ mod tests {
         };
 
         grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),

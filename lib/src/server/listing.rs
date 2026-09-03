@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::mock::{self, Part};
+use crate::mock::Part;
 use crate::rules::{Engine, Parsed};
 
 /// Where one title stands against the rulesets and the library.
@@ -74,12 +74,12 @@ pub(super) struct ParsedValue {
 /// The order is the ruleset's own field order, which is the order the parts
 /// appear in a well-formed name. A captured name with no matching field is
 /// dropped: the engine compiles from this same list, so none is expected.
-pub(super) fn parsed_values(parsed: &Parsed) -> Vec<ParsedValue> {
-    let Some(ruleset) = mock::ruleset(parsed.ruleset) else {
+pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue> {
+    let Some(ruleset) = engine.ruleset(parsed.ruleset) else {
         return Vec::new();
     };
 
-    let fields = ruleset.resolved_fields(&[]);
+    let fields = ruleset.resolved_fields(engine.parent(ruleset), &[]);
 
     parsed
         .values
@@ -281,7 +281,7 @@ mod tests {
     fn a_parse_resolves_to_its_fields_in_order() {
         let parsed = ENGINE.parse(HOLLOW_1080).expect("claimed");
 
-        let read: Vec<(&str, String, bool)> = parsed_values(&parsed)
+        let read: Vec<(&str, String, bool)> = parsed_values(&ENGINE, &parsed)
             .into_iter()
             .map(|value| (value.name, value.value, value.identity))
             .collect();
@@ -307,7 +307,7 @@ mod tests {
         let parsed = ENGINE.parse(HOLLOW_PACK).expect("claimed");
 
         assert_eq!(
-            parsed_values(&parsed)
+            parsed_values(&ENGINE, &parsed)
                 .iter()
                 .map(|value| value.name)
                 .collect::<Vec<_>>(),

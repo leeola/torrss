@@ -105,6 +105,12 @@ impl Display for Identity {
 /// Every ruleset, compiled and ordered most specific first.
 pub(crate) struct Engine {
     rulesets: Vec<Compiled>,
+
+    /// The declarations the compiled set was built from.
+    ///
+    /// Inheritance resolves against this slice alone, so an engine built
+    /// from a fixture never reaches for the shipped list.
+    source: &'static [Ruleset],
 }
 
 struct Compiled {
@@ -139,12 +145,46 @@ impl Engine {
     pub(crate) fn from_rulesets(rulesets: &'static [Ruleset]) -> Result<Self, regex::Error> {
         let mut compiled = rulesets
             .iter()
-            .map(Compiled::new)
+            .map(|ruleset| Compiled::new(ruleset, rulesets))
             .collect::<Result<Vec<_>, _>>()?;
 
         compiled.sort_by_key(|ruleset| Reverse(ruleset.depth));
 
-        Ok(Self { rulesets: compiled })
+        Ok(Self {
+            rulesets: compiled,
+            source: rulesets,
+        })
+    }
+
+    /// Every ruleset this engine was built from, in declaration order.
+    pub(crate) fn rulesets(&self) -> impl Iterator<Item = &'static Ruleset> {
+        self.source.iter()
+    }
+
+    /// Finds the ruleset named by `id`.
+    pub(crate) fn ruleset(&self, id: &str) -> Option<&'static Ruleset> {
+        self.source.iter().find(|ruleset| ruleset.id == id)
+    }
+
+    /// The ruleset `ruleset` narrows, or [`None`] when it is a base.
+    pub(crate) fn parent(&self, ruleset: &Ruleset) -> Option<&'static Ruleset> {
+        ruleset.inherits.and_then(|id| self.ruleset(id))
+    }
+
+    /// Every ruleset that narrows nothing, which is where the editor starts.
+    pub(crate) fn bases(&self) -> impl Iterator<Item = &'static Ruleset> {
+        self.source
+            .iter()
+            .filter(|ruleset| ruleset.inherits.is_none())
+    }
+
+    /// Every ruleset that narrows `base`.
+    pub(crate) fn children(&self, base: &Ruleset) -> impl Iterator<Item = &'static Ruleset> {
+        let id = base.id;
+
+        self.source
+            .iter()
+            .filter(move |child| child.inherits == Some(id))
     }
 
     /// Lists every ruleset that claims `title`, most specific first.
@@ -171,12 +211,16 @@ impl Engine {
 }
 
 impl Compiled {
-    fn new(ruleset: &'static Ruleset) -> Result<Self, regex::Error> {
+    fn new(ruleset: &'static Ruleset, rulesets: &'static [Ruleset]) -> Result<Self, regex::Error> {
+        let find = |id| rulesets.iter().find(|candidate| candidate.id == id);
+
+        let parent = ruleset.inherits.and_then(find);
+
         let mut root = ruleset;
         let mut depth = 0;
 
-        while let Some(parent) = root.parent() {
-            root = parent;
+        while let Some(next) = root.inherits.and_then(find) {
+            root = next;
             depth += 1;
         }
 
@@ -185,7 +229,7 @@ impl Compiled {
             root: root.id,
             depth,
             fields: ruleset
-                .resolved_fields(&[])
+                .resolved_fields(parent, &[])
                 .into_iter()
                 .map(|resolved| CompiledField::new(resolved.field))
                 .collect::<Result<Vec<_>, _>>()?,

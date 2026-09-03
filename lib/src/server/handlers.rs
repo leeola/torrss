@@ -21,7 +21,7 @@ use url::Url;
 use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
-    mock::{self, Diff, RULESETS},
+    mock::Diff,
     rules::ENGINE,
     server::{
         components::{self, Grabbed, ItemDetails},
@@ -115,11 +115,11 @@ fn item_details(
         rulesets: ENGINE
             .claimants(title)
             .into_iter()
-            .filter_map(mock::ruleset)
+            .filter_map(|id| ENGINE.ruleset(id))
             .collect(),
         values: standing
             .parsed()
-            .map(listing::parsed_values)
+            .map(|parsed| listing::parsed_values(&ENGINE, parsed))
             .unwrap_or_default(),
         hidden: standing.hidden_label(),
         feed_name: feed_name(registry, item),
@@ -381,6 +381,7 @@ async fn grab_selected(cx: &Cx, Form(input): Form<GrabForm>) -> Result<SeeOther>
             .unwrap_or_default();
 
         let _ = grab::grab(
+            &ENGINE,
             &services.db,
             services.downloads.as_ref(),
             services.torrents.as_ref(),
@@ -420,7 +421,9 @@ struct SwitchReturn {
 /// instead of rendering, so a reload never repeats the flip.
 #[route(POST "/admin/rulesets/{ruleset_id}/enabled")]
 async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
-    let ruleset = mock::ruleset(path_param::<RulesetId>(cx)).ok_or_not_found()?;
+    let ruleset = ENGINE
+        .ruleset(path_param::<RulesetId>(cx))
+        .ok_or_not_found()?;
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
@@ -490,16 +493,18 @@ async fn admin(cx: &Cx) -> Result {
         </div>
 
         <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
-            for base in RULESETS.iter().filter(|ruleset| ruleset.inherits.is_none()) {
+            for base in ENGINE.bases() {
                 components::ruleset_card(
                     ruleset: base,
+                    parent: ENGINE.parent(base),
                     nested: false,
                     enabled: switches.is_enabled(base.id),
                 )
 
-                for child in base.children() {
+                for child in ENGINE.children(base) {
                     components::ruleset_card(
                         ruleset: child,
+                        parent: Some(base),
                         nested: true,
                         enabled: switches.is_enabled(child.id),
                     )
@@ -983,7 +988,9 @@ impl EditorQuery<'_> {
 
 #[page("/admin/rulesets/{ruleset_id}")]
 async fn ruleset_editor(cx: &Cx) -> Result {
-    let ruleset = mock::ruleset(path_param::<RulesetId>(cx)).ok_or_not_found()?;
+    let ruleset = ENGINE
+        .ruleset(path_param::<RulesetId>(cx))
+        .ok_or_not_found()?;
     let view = query_params::<MatchView>(cx)?;
     let q = view.query();
     let filter = q.diff;
@@ -1001,8 +1008,9 @@ async fn ruleset_editor(cx: &Cx) -> Result {
         .collect();
 
     let replacements = q.replaced.entries();
-    let fields = ruleset.resolved_fields(&replacements);
-    let inheriting = ruleset.parent().is_some();
+    let parent = ENGINE.parent(ruleset);
+    let fields = ruleset.resolved_fields(parent, &replacements);
+    let inheriting = parent.is_some();
     let enabled = app_context::<RulesetSwitches>(cx).is_enabled(ruleset.id);
 
     view! {
@@ -1042,7 +1050,7 @@ async fn ruleset_editor(cx: &Cx) -> Result {
             </div>
         </div>
 
-        match ruleset.parent() {
+        match parent {
             Some(parent) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
                 "Narrows "
                 <a
@@ -1212,7 +1220,7 @@ async fn new_ruleset() -> Result {
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
                     <option value="">"Nothing. Declare every field here."</option>
-                    for base in RULESETS.iter().filter(|ruleset| ruleset.inherits.is_none()) {
+                    for base in ENGINE.bases() {
                         <option value=(base.id)>
                             (base.name) " (" (base.fields.len()) " fields)"
                         </option>

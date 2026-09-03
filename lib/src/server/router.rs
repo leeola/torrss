@@ -7,6 +7,7 @@ use topcoat::{
 };
 
 use crate::feed::registry::FeedRegistry;
+use crate::rules::ENGINE;
 use crate::server::state::RulesetSwitches;
 use crate::server::trace::RequestSpan;
 use crate::services::Services;
@@ -29,7 +30,7 @@ pub(super) fn build(
     Ok(Router::builder()
         .discover()
         .assets(load_assets(assets)?)
-        .app_context(RulesetSwitches::new())
+        .app_context(RulesetSwitches::new(&ENGINE))
         .app_context(services)
         .app_context(registry)
         .app_context(sync)
