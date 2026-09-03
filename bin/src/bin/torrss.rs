@@ -28,7 +28,7 @@ struct Cli {
     host: String,
 
     /// Port to bind the listener to.
-    #[arg(long, env = "PORT", default_value_t = server::DEFAULT_PORT)]
+    #[arg(short, long, env = "PORT", default_value_t = server::DEFAULT_PORT)]
     port: u16,
 
     /// Asset bundle directory, defaulting to `assets` beside the executable.
