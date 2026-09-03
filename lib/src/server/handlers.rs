@@ -4,11 +4,11 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use topcoat::{
-    Result,
+    Error, Result,
     context::Cx,
     context::app_context,
     router::{
-        content::Form,
+        content::{Form, RawForm},
         error::{
             RouterErrorExt, SeeOther, bad_request, internal_server_error, not_found, see_other,
         },
@@ -22,7 +22,9 @@ use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
     rules::Engine,
-    ruleset::registry::Rulesets,
+    ruleset::Ruleset,
+    ruleset::form::{self, RulesetForm},
+    ruleset::registry::{Rulesets, SaveError},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format,
@@ -1031,6 +1033,10 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                     enabled: enabled,
                     action: switch_action(&ruleset.id, &q.url(&ruleset.id, "#top")),
                 )
+                components::action_button(
+                    action: format!("/admin/rulesets/{}/remove", ruleset.id),
+                    label: "Delete",
+                )
             </div>
         </div>
 
@@ -1046,7 +1052,17 @@ async fn ruleset_editor(cx: &Cx) -> Result {
             None => "",
         }
 
-        <form id="ruleset-fields" class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
+        <form
+            id="ruleset-fields"
+            method="post"
+            action=(format!("/admin/rulesets/{}", ruleset.id))
+            class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
+        >
+            // The editor has no name or parent input of its own, so it posts
+            // back the ones the ruleset already carries.
+            <input type="hidden" name="name" value=(&ruleset.name)>
+            <input type="hidden" name="inherits" value=(ruleset.inherits.as_deref().unwrap_or_default())>
+
             <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <h2 class="text-sm font-semibold text-slate-100">
                     "Fields " <span class="text-slate-500">"(" (fields.len()) ")"</span>
@@ -1060,9 +1076,10 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                 </p>
             </div>
 
-            for resolved in fields {
+            for (index, resolved) in fields.iter().enumerate() {
                 components::field_row(
-                    resolved: resolved,
+                    index: index,
+                    resolved: *resolved,
                     inheriting: inheriting,
                     toggle_href: q.with_replaced(
                             &q.replaced.toggled(&resolved.field.name),
@@ -1075,6 +1092,104 @@ async fn ruleset_editor(cx: &Cx) -> Result {
         </form>
 
     }
+}
+
+/// Reads a posted ruleset, or answers 400 saying what to change.
+///
+/// The body arrives raw rather than through a typed form, because the editor
+/// adds and removes field rows in the browser and the row count is not known
+/// here.
+fn posted(RawForm(body): &RawForm) -> Result<RulesetForm> {
+    let body = str::from_utf8(body).map_err(|_| bad_request("the form is not valid UTF-8"))?;
+
+    RulesetForm::parse(body).map_err(|error| bad_request(error.to_string()).into())
+}
+
+/// Reports a failed write to the reader.
+///
+/// A set that does not compile is the reader's own edit coming back, so it
+/// reads as a 400 carrying the reason. Everything else is the application's
+/// problem, not theirs.
+fn write_failed(error: SaveError) -> Error {
+    match error {
+        SaveError::Engine { .. } | SaveError::HasChildren { .. } => {
+            bad_request(error.to_string()).into()
+        }
+        SaveError::Store { .. } => internal_server_error(error).into(),
+    }
+}
+
+/// Creates a ruleset from the new-ruleset form, then opens its editor.
+///
+/// The id comes from the name, counting up past a slug already taken. It
+/// never changes after, so the library rows and the grab records that carry
+/// it survive every later rename.
+#[route(POST "/admin/rulesets")]
+async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
+    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let posted = posted(&form)?;
+
+    let id = {
+        let engine = rulesets.engine();
+
+        form::unique_slug(&posted.name, |id| engine.ruleset(id).is_some())
+            .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?
+    };
+
+    rulesets
+        .save(Ruleset {
+            id: id.clone(),
+            name: posted.name,
+            enabled: false,
+            inherits: posted.inherits,
+            fields: posted.fields,
+        })
+        .await
+        .map_err(write_failed)?;
+
+    Ok(see_other(format!("/admin/rulesets/{id}")))
+}
+
+/// Saves an edited ruleset, then returns to its editor.
+///
+/// The id and the enabled flag stay as they were. The form carries neither,
+/// because renaming a ruleset never moves it and saving an edit is not a
+/// request to start or stop it.
+#[route(POST "/admin/rulesets/{ruleset_id}")]
+async fn save_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
+    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let id = path_param::<RulesetId>(cx);
+    let posted = posted(&form)?;
+
+    let enabled = rulesets.engine().ruleset(id).ok_or_not_found()?.enabled;
+
+    rulesets
+        .save(Ruleset {
+            id: id.to_owned(),
+            name: posted.name,
+            enabled,
+            inherits: posted.inherits,
+            fields: posted.fields,
+        })
+        .await
+        .map_err(write_failed)?;
+
+    Ok(see_other(format!("/admin/rulesets/{id}")))
+}
+
+/// Deletes a ruleset, then returns to the index.
+#[route(POST "/admin/rulesets/{ruleset_id}/remove")]
+async fn remove_ruleset(cx: &Cx) -> Result<SeeOther> {
+    let removed = app_context::<Arc<Rulesets>>(cx)
+        .remove(path_param::<RulesetId>(cx))
+        .await
+        .map_err(write_failed)?;
+
+    if !removed {
+        return Err(not_found().into());
+    }
+
+    Ok(see_other("/admin"))
 }
 
 #[page("/admin/rulesets/new")]
@@ -1093,7 +1208,11 @@ async fn new_ruleset(cx: &Cx) -> Result {
             "Start from nothing, or narrow an existing ruleset to one series."
         </p>
 
-        <form class="mt-6 flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4">
+        <form
+            method="post"
+            action="/admin/rulesets"
+            class="mt-6 flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4"
+        >
             <div>
                 <label for="name" class="block text-xs text-slate-500">"Name"</label>
                 <input
@@ -1101,17 +1220,6 @@ async fn new_ruleset(cx: &Cx) -> Result {
                     type="text"
                     name="name"
                     placeholder="Coastal Ecology"
-                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-                >
-            </div>
-
-            <div>
-                <label for="summary" class="block text-xs text-slate-500">"Summary"</label>
-                <input
-                    id="summary"
-                    type="text"
-                    name="summary"
-                    placeholder="Narrows the episode rules to one series."
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
             </div>

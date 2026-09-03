@@ -14,6 +14,7 @@
 
 #[cfg(test)]
 pub(crate) mod fixture;
+pub(crate) mod form;
 pub(crate) mod registry;
 pub(crate) mod store;
 

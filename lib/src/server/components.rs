@@ -7,7 +7,7 @@ use super::format;
 use super::listing::ParsedValue;
 use crate::feed::registry::FeedCheck;
 use crate::rules::Engine;
-use crate::ruleset::{FieldKind, FieldSource, ResolvedField, Ruleset, Segment};
+use crate::ruleset::{FieldKind, FieldSource, Part, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
 
 /// Renders a filename with every claimed run tinted by its part.
@@ -287,6 +287,7 @@ pub(crate) async fn checkbox(#[into] href: String, checked: bool, label: &str) -
 /// with one this ruleset owns.
 #[component]
 pub(crate) async fn field_row(
+    index: usize,
     resolved: ResolvedField<'_>,
     #[into] toggle_href: String,
     inheriting: bool,
@@ -302,13 +303,13 @@ pub(crate) async fn field_row(
                 "opacity-45" if locked,
             ))
         >
-            <div class="md:col-span-3">
+            <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Name"</label>
                 <div class="mt-1 flex items-center gap-2">
                     <span class=(class!("size-2 shrink-0 rounded-full", field.part.dot()))></span>
                     <input
                         type="text"
-                        name=(format!("{}.name", field.name))
+                        name=(format!("field.{index}.name"))
                         value=(&field.name)
                         disabled=(locked)
                         class="w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
@@ -317,9 +318,24 @@ pub(crate) async fn field_row(
             </div>
 
             <div class="md:col-span-2">
+                <label class="block text-xs text-slate-500">"Part"</label>
+                <select
+                    name=(format!("field.{index}.part"))
+                    disabled=(locked)
+                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                >
+                    for part in Part::ALL {
+                        <option value=(part.slug()) selected=(*part == field.part)>
+                            (part.slug())
+                        </option>
+                    }
+                </select>
+            </div>
+
+            <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Type"</label>
                 <select
-                    name=(format!("{}.kind", field.name))
+                    name=(format!("field.{index}.kind"))
                     disabled=(locked)
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
@@ -331,11 +347,11 @@ pub(crate) async fn field_row(
                 </select>
             </div>
 
-            <div class=(class!("md:col-span-3" if inheriting else "md:col-span-5"))>
+            <div class=(class!("md:col-span-2" if inheriting else "md:col-span-4"))>
                 <label class="block text-xs text-slate-500">"Pattern"</label>
                 <input
                     type="text"
-                    name=(format!("{}.pattern", field.name))
+                    name=(format!("field.{index}.pattern"))
                     value=(field.matcher())
                     disabled=(locked || field.pattern.is_none())
                     title=(field.pattern.is_none().then_some("The kind supplies this pattern"))
@@ -356,7 +372,7 @@ pub(crate) async fn field_row(
                 <label class="block text-xs text-slate-500">"Required"</label>
                 <input
                     type="checkbox"
-                    name=(format!("{}.required", field.name))
+                    name=(format!("field.{index}.required"))
                     checked=(field.required)
                     disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
@@ -372,7 +388,7 @@ pub(crate) async fn field_row(
                 </label>
                 <input
                     type="checkbox"
-                    name=(format!("{}.identity", field.name))
+                    name=(format!("field.{index}.identity"))
                     checked=(field.identity)
                     disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
