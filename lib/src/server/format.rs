@@ -55,6 +55,14 @@ pub(super) fn count(amount: usize, singular: &str, plural: &str) -> String {
     format!("{amount} {noun}")
 }
 
+/// Renders a completed fraction as a whole percentage.
+///
+/// The fraction is clamped because a client reports nothing outside it, and
+/// a listing has no room for a decimal.
+pub(super) fn percent(progress: f32) -> String {
+    format!("{}%", (progress.clamp(0.0, 1.0) * 100.0).round() as u32)
+}
+
 /// Renders how long ago `then` was, in the largest unit that fits whole.
 ///
 /// A time in the future reads as `just now` rather than as a negative span.
@@ -88,7 +96,7 @@ pub(super) fn age(now: DateTime<Utc>, then: Option<DateTime<Utc>>) -> String {
 mod tests {
     use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 
-    use super::{age, count, size};
+    use super::{age, count, percent, size};
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0)
@@ -144,5 +152,14 @@ mod tests {
         assert_eq!(age(now(), ago(86_399)), "23 hours ago");
         assert_eq!(age(now(), ago(86_400)), "1 day ago");
         assert_eq!(age(now(), ago(432_000)), "5 days ago");
+    }
+
+    #[test]
+    fn percent_rounds_to_a_whole() {
+        assert_eq!(percent(0.0), "0%", "nothing downloaded");
+        assert_eq!(percent(0.5), "50%", "half downloaded");
+        assert_eq!(percent(0.996), "100%", "a fraction short reads as whole");
+        assert_eq!(percent(1.0), "100%", "complete");
+        assert_eq!(percent(1.5), "100%", "a client reports nothing above one");
     }
 }

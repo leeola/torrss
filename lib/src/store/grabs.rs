@@ -48,7 +48,6 @@ const SELECT: &str = "
 /// A failed attempt moved nothing to the client, so it is left out.
 ///
 /// The newest sits first, so a page lists what moved last at the top.
-#[allow(dead_code, reason = "the held torrents the client page lists")]
 const ACCEPTED: &str = "
     SELECT i.title, g.grabbed_at
     FROM grabs g
@@ -78,7 +77,6 @@ pub(crate) struct Grab {
 /// It carries the title rather than the item id, because the client page
 /// parses the title to an identity and never reads the item.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code, reason = "the held torrents the client page lists")]
 pub(crate) struct Accepted {
     pub(crate) title: String,
     pub(crate) at: DateTime<Utc>,
@@ -164,7 +162,6 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::E
 ///
 /// One row covers an item, so a retry that succeeded after a failure counts
 /// once and carries the time of the retry.
-#[allow(dead_code, reason = "the held torrents the client page lists")]
 pub(crate) async fn accepted(pool: &SqlitePool) -> Result<Vec<Accepted>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, DateTime<Utc>)>(ACCEPTED)
         .fetch_all(pool)

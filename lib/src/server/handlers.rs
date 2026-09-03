@@ -29,7 +29,7 @@ use crate::{
     ruleset::{Diff, Field, FieldSource, ResolvedField, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
-        format,
+        format, held,
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rule},
         query::IdList,
@@ -899,6 +899,13 @@ async fn client() -> Result {
             </button>
         </div>
 
+        <h2 class="mt-8 text-sm font-semibold text-slate-300">"Torrents"</h2>
+        <p class="mt-1 text-sm text-slate-400">
+            "What the client holds that a ruleset claims, and when a grab moved it there."
+        </p>
+
+        client_torrents(version: $(version.get()))
+
         <h2 class="mt-8 text-sm font-semibold text-slate-300">"Feeds"</h2>
         <p class="mt-1 text-sm text-slate-400">
             "How each feed answered when it was last checked."
@@ -973,6 +980,71 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
                 }
             </p>
         </div>
+    }
+}
+
+/// The torrents the client holds that a ruleset claims, newest grab first.
+///
+/// The list is read from the client rather than from the library table,
+/// because the state and the progress live only in the client, and the block
+/// beside it already asks the client live.
+#[shard]
+async fn client_torrents(cx: &Cx, version: f64) -> Result {
+    // This is read for its change alone. A scan bumps it so the list reports
+    // what the pass that just ran left in the client.
+    let _ = version;
+
+    let services = app_context::<Services>(cx);
+    let now = services.clock.now();
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+
+    let accepted = grabs::accepted(&services.db).await?;
+    let listed = match services.torrents.list().await {
+        Ok(torrents) => Ok(held::held(&engine, torrents, &accepted)),
+        Err(error) => Err(error.to_string()),
+    };
+
+    // The claimant and the age are resolved here rather than in the view,
+    // because a row borrows both and an argument built inline dies before
+    // the component reads it.
+    let rows = listed.as_ref().map(|entries| {
+        entries
+            .iter()
+            .map(|entry| {
+                let claimant = Claimant {
+                    id: entry.ruleset.clone(),
+                    // A ruleset removed since the grab shows by its id, as a
+                    // grabbed row does. The record is of what ran.
+                    name: engine
+                        .ruleset(&entry.ruleset)
+                        .map_or_else(|| entry.ruleset.clone(), |ruleset| ruleset.name.clone()),
+                };
+
+                let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
+
+                (&entry.torrent, claimant, age)
+            })
+            .collect::<Vec<_>>()
+    });
+
+    view! {
+        match &rows {
+            Err(error) => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "the client did not list its torrents: " (error)
+            </p>,
+            Ok(entries) if entries.is_empty() => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No torrent in the client matches a ruleset."
+            </p>,
+            Ok(entries) => <ul class="mt-2 flex flex-col gap-2">
+                for (torrent, claimant, age) in entries {
+                    components::torrent_row(
+                        torrent: torrent,
+                        ruleset: claimant,
+                        ingested: age.as_deref(),
+                    )
+                }
+            </ul>,
+        }
     }
 }
 

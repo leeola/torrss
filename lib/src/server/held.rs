@@ -19,7 +19,6 @@ use crate::torrent::Torrent;
 
 /// One torrent the client holds, with the grab that moved it there.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code, reason = "the held torrents the client page lists")]
 pub(super) struct Held {
     pub(super) torrent: Torrent,
 
@@ -36,7 +35,6 @@ pub(super) struct Held {
 ///
 /// The newest grab comes first, then every torrent with no grab in the order
 /// the client reported them.
-#[allow(dead_code, reason = "the held torrents the client page lists")]
 pub(super) fn held(engine: &Engine, torrents: Vec<Torrent>, accepted: &[Accepted]) -> Vec<Held> {
     let mut grabbed: HashMap<String, DateTime<Utc>> = HashMap::new();
 

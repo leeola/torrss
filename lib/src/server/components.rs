@@ -12,6 +12,7 @@ use crate::ruleset::{
     Field, FieldKind, FieldSource, Part, ResolvedField, Ruleset, RulesetTest, Segment, Tint,
 };
 use crate::store::StoredItem;
+use crate::torrent::{Torrent, TorrentState};
 use url::form_urlencoded;
 
 /// Renders a filename with every claimed run tinted by the field that
@@ -683,6 +684,69 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
         ))>
             if enabled { "enabled" } else { "disabled" }
         </span>
+    }
+}
+
+/// One torrent the client holds that a ruleset claims.
+///
+/// The ingest age arrives rendered, because the row has no clock. That matches
+/// [`ItemDetails::age`], which is rendered for the same reason.
+///
+/// A torrent with no age was in the client before the store recorded any grab,
+/// so the row says so rather than leaving a gap.
+#[component]
+pub(crate) async fn torrent_row(
+    torrent: &Torrent,
+    ruleset: &Claimant,
+    ingested: Option<&str>,
+) -> Result {
+    // Each tint is a whole literal, because the Tailwind scanner reads class
+    // names out of source text and never sees one joined at runtime.
+    let (word, tint) = match &torrent.state {
+        TorrentState::Queued => ("queued", "bg-slate-500/15 text-slate-300"),
+        TorrentState::Downloading => ("downloading", "bg-sky-400/15 text-sky-300"),
+        TorrentState::Seeding => ("seeding", "bg-emerald-500/15 text-emerald-300"),
+        TorrentState::Paused => ("paused", "bg-amber-500/15 text-amber-300"),
+        TorrentState::Error(_) => ("error", "bg-rose-500/15 text-rose-300"),
+    };
+
+    let percent = format::percent(torrent.progress);
+
+    view! {
+        <li class="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono text-sm break-all">(&torrent.name)</span>
+                <span class=(format!("rounded-full px-2 py-0.5 text-xs {tint}"))>(word)</span>
+            </div>
+
+            <div class="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                // The width is an inline style because it differs per row, and
+                // only a literal class reaches the stylesheet.
+                <div class="h-1 w-32 overflow-hidden rounded bg-slate-800">
+                    <div class="h-1 bg-sky-400" style=(format!("width: {percent}"))></div>
+                </div>
+                <span>(&percent)</span>
+            </div>
+
+            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                <a
+                    href=(format!("/admin/rulesets/{}", ruleset.id))
+                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                >
+                    (&ruleset.name)
+                </a>
+                <span>(format::size(Some(torrent.size)))</span>
+                if let TorrentState::Error(reason) = &torrent.state {
+                    <span>(reason)</span>
+                }
+                <span>
+                    match ingested {
+                        Some(age) => { "ingested " (age) },
+                        None => "held before any grab was recorded",
+                    }
+                </span>
+            </div>
+        </li>
     }
 }
 
