@@ -8,6 +8,10 @@
 //! A name no ruleset claims is skipped rather than stored. A client holds
 //! plenty this application never grabbed, and a row with no identity answers
 //! no question the feed page asks.
+//!
+//! The library and the status of the scan that wrote it both persist, so a
+//! restart reads what the last process found rather than listing the whole
+//! client again at once.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -23,11 +27,32 @@ use crate::store::library;
 use crate::store::library::Owned;
 use crate::torrent::{Torrent, TorrentClient};
 
+/// Replaces the recorded scan, or writes the first one.
+///
+/// The row is upserted rather than inserted, because the table holds one row
+/// by construction and every scan after the first replaces it.
+const RECORD: &str = "
+    INSERT INTO scan_status (id, scanned_at, torrents, matched, error)
+    VALUES (1, ?1, ?2, ?3, ?4)
+    ON CONFLICT (id) DO UPDATE SET
+        scanned_at = excluded.scanned_at,
+        torrents = excluded.torrents,
+        matched = excluded.matched,
+        error = excluded.error
+";
+
+/// Reads the recorded scan, which is absent until one runs.
+const LAST: &str = "SELECT scanned_at, torrents, matched, error FROM scan_status WHERE id = 1";
+
 /// The result of the last library scan.
 ///
-/// This mirrors the feed registry: it lives in the app context, and a handler
+/// The status persists, so the client page reads it after a restart and the
+/// scan loop knows how old it is rather than listing the whole client at
+/// once.
+///
+/// This mirrors the feed registry. It lives in the app context, and a handler
 /// reads it there rather than through an argument.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ScanState {
     last: Mutex<Option<ScanStatus>>,
 }
@@ -59,8 +84,36 @@ pub(crate) struct ScanReport {
 }
 
 impl ScanState {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    /// Reads the recorded scan into a state, or an empty one until a scan
+    /// has run.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's error when the read fails. A count too large for
+    /// the machine's index type reads as a decode failure, because it was
+    /// written from one and only a corrupt row holds another.
+    pub(crate) async fn load(pool: &SqlitePool) -> Result<Self, sqlx::Error> {
+        let row = sqlx::query_as::<_, StatusRow>(LAST)
+            .fetch_optional(pool)
+            .await?;
+
+        let last = match row {
+            None => None,
+            Some((at, torrents, matched, error)) => Some(ScanStatus {
+                at,
+                outcome: match error {
+                    Some(error) => Err(error),
+                    None => Ok(ScanReport {
+                        torrents: index(torrents)?,
+                        matched: index(matched)?,
+                    }),
+                },
+            }),
+        };
+
+        Ok(Self {
+            last: Mutex::new(last),
+        })
     }
 
     /// Returns the last scan's status, or nothing until one runs.
@@ -132,7 +185,51 @@ pub(crate) async fn scan(
     let status = ScanStatus { at, outcome };
     *state.lock() = Some(status.clone());
 
+    // Memory first, as the feed check does. A loop that reads an unscanned
+    // library scans again at once, so a refused write costs less than a state
+    // that forgot the scan it just ran. The scan itself succeeded either way,
+    // and only the next restart reads the gap.
+    if let Err(error) = record(pool, &status).await {
+        warn!(error = %error, "scan status not stored");
+    }
+
     status
+}
+
+/// One `scan_status` row as sqlx hands it back.
+type StatusRow = (DateTime<Utc>, Option<i64>, Option<i64>, Option<String>);
+
+/// Replaces the recorded scan with `status`.
+async fn record(pool: &SqlitePool, status: &ScanStatus) -> Result<(), sqlx::Error> {
+    let (torrents, matched, error) = match &status.outcome {
+        Ok(report) => (
+            Some(count(report.torrents)?),
+            Some(count(report.matched)?),
+            None,
+        ),
+        Err(error) => (None, None, Some(error.as_str())),
+    };
+
+    sqlx::query(RECORD)
+        .bind(status.at)
+        .bind(torrents)
+        .bind(matched)
+        .bind(error)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+/// Narrows a stored count to the machine's index type, treating a missing
+/// one as zero.
+fn index(count: Option<i64>) -> Result<usize, sqlx::Error> {
+    usize::try_from(count.unwrap_or(0)).map_err(sqlx::Error::decode)
+}
+
+/// Widens a count for storage.
+fn count(value: usize) -> Result<i64, sqlx::Error> {
+    i64::try_from(value).map_err(|error| sqlx::Error::Encode(Box::new(error)))
 }
 
 /// Scans the library forever, pausing `interval` between passes.
@@ -213,7 +310,7 @@ mod tests {
     #[sqlx::test]
     async fn scan_stores_one_identity_per_parsed_name(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = ScanState::new();
+        let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW);
         fakes.torrents.seed(FILM);
 
@@ -249,9 +346,49 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn load_restores_the_last_scan(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let state = ScanState::load(&services.db).await.expect("load");
+        fakes.torrents.seed(HOLLOW);
+        fakes.torrents.seed(FILM);
+
+        let scanned = scan(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert_eq!(
+            ScanState::load(&services.db).await.expect("load").last(),
+            Some(scanned),
+            "a restart reads back the counts the last scan recorded"
+        );
+
+        fakes.torrents.fail_next(TorrentError::Unauthorized);
+        let failed = scan(
+            &state,
+            &services.db,
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &ENGINE,
+        )
+        .await;
+
+        assert!(failed.outcome.is_err(), "the client refused the listing");
+        assert_eq!(
+            ScanState::load(&services.db).await.expect("load").last(),
+            Some(failed),
+            "a failure replaces the counts, error text and all"
+        );
+    }
+
+    #[sqlx::test]
     async fn scan_stores_a_season_pack_as_a_span(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = ScanState::new();
+        let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW_PACK);
 
         scan(
@@ -273,7 +410,7 @@ mod tests {
     #[sqlx::test]
     async fn scan_skips_names_no_ruleset_claims(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = ScanState::new();
+        let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW);
         fakes.torrents.seed(UNCLAIMED);
 
@@ -304,7 +441,7 @@ mod tests {
     #[sqlx::test]
     async fn scan_records_client_error_and_keeps_library(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = ScanState::new();
+        let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW);
 
         scan(
@@ -340,7 +477,7 @@ mod tests {
     #[sqlx::test]
     async fn scan_replaces_previous_snapshot(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
-        let state = ScanState::new();
+        let state = ScanState::load(&services.db).await.expect("load");
         let removed = fakes.torrents.seed(HOLLOW);
 
         scan(

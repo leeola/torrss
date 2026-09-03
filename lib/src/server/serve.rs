@@ -70,7 +70,11 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
 
     // Named `scan_state` because the module `scan` has to stay in scope for
     // the poll below.
-    let scan_state = Arc::new(ScanState::new());
+    let scan_state = Arc::new(
+        ScanState::load(&services.db)
+            .await
+            .map_err(io::Error::other)?,
+    );
 
     // Every fallible step runs before either background task starts. Dropping
     // a join handle detaches the task rather than stopping it, so an early
