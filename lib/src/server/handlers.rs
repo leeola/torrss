@@ -18,6 +18,7 @@ use topcoat::{
     view::Unescaped,
     view::{class, component, view},
 };
+use tracing::error;
 use url::Url;
 
 use crate::{
@@ -1114,11 +1115,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         .and_then(|ruleset| ruleset.based_on.clone())
         .unwrap_or_default();
 
-    let action = ruleset.map_or_else(
-        || "/admin/rulesets".to_owned(),
-        |ruleset| format!("/admin/rulesets/{}", ruleset.id),
-    );
-
     let ruleset_id = ruleset
         .map(|ruleset| ruleset.id.clone())
         .unwrap_or_default();
@@ -1144,9 +1140,13 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         signal rows = initial_rows;
         signal diff = String::new();
         signal enabled = enabled_now;
-        // The id the switch names. A handler outlives the render that built
-        // it, so the argument comes from a signal rather than from a capture.
+        // The id the switch and the save name. A handler outlives the render
+        // that built it, so the argument comes from a signal rather than
+        // from a capture.
         signal switch_id = stored_id;
+        signal saving = false;
+        signal save_error = String::new();
+        signal saved = 0.0;
 
         // The row buttons the shard renders reach the signals above through
         // this, which one delegated handler on the form below calls.
@@ -1163,7 +1163,13 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         <form
             id="ruleset-fields"
             method="post"
-            action=(&action)
+            // Only a create posts the form itself. A save runs through the
+            // procedure below, and Delete names its own action, so the editor
+            // of a stored ruleset carries none. `method` stays either way,
+            // because Delete posts through it.
+            if ruleset.is_none() {
+                action="/admin/rulesets"
+            }
             // FormData skips a disabled input, so an inherited row stays out
             // of the draft and the template's field keeps applying. A `raw!`
             // result enters the signal as the JavaScript value it is, and the
@@ -1250,14 +1256,46 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                     >
                         "Add field"
                     </button>
-                    <button
-                        type="submit"
-                        class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
-                    >
-                        if ruleset.is_some() { "Save" } else { "Create" }
-                    </button>
                     match ruleset {
+                        // Create stays a form post. A ruleset with no id yet
+                        // has nowhere to render into, and the redirect to its
+                        // own editor is what the write is for.
+                        None => <button
+                            type="submit"
+                            class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
+                        >
+                            "Create"
+                        </button>,
                         Some(ruleset) => <div class="contents">
+                            // A submit button that never submits. Enter inside
+                            // a field activates the form's first submit
+                            // button, and that has to be Save rather than
+                            // Delete below it.
+                            <button
+                                type="submit"
+                                :disabled=$(saving.get())
+                                class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                                @click=$(async |e: Event| {
+                                    e.prevent_default();
+                                    saving.set(true);
+                                    save_error.set("".to_owned());
+
+                                    let outcome = save_draft(
+                                        switch_id.get(),
+                                        draft.get(),
+                                    ).await;
+
+                                    if outcome.is_ok() {
+                                        saved.increment();
+                                    } else {
+                                        save_error.set(outcome.unwrap_err());
+                                    }
+
+                                    saving.set(false);
+                                })
+                            >
+                                $(if saving.get() { "Saving..." } else { "Save" })
+                            </button>
                             <button
                                 type="button"
                                 :title=$(if enabled.get() {
@@ -1291,10 +1329,16 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                                 "Delete"
                             </button>
                         </div>,
-                        None => "",
                     }
                 </div>
             </div>
+
+            <p
+                :hidden=$(save_error.get().is_empty())
+                class="mt-2 text-xs text-rose-300"
+            >
+                $(save_error.get())
+            </p>
 
             match template {
                 Some(template) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
@@ -1332,6 +1376,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                 ruleset: $(ruleset_id),
                 diff: $(diff.get()),
                 draft: $(draft.get()),
+                saved: $(saved.get()),
             )
         </div>
     }
@@ -1461,7 +1506,11 @@ fn draft_fields<'a>(template: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a 
 /// is trusted: the ruleset is looked up rather than taken, and a draft that
 /// does not parse reports itself instead of matching anything.
 #[shard]
-async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String) -> Result {
+async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, saved: f64) -> Result {
+    // This is read for its change alone. A save bumps it so the diff measures
+    // the draft against the rules the store now holds.
+    let _ = saved;
+
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     // An empty id names the ruleset the reader is still creating. Anything
@@ -1643,32 +1692,52 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     Ok(see_other(format!("/admin/rulesets/{id}")))
 }
 
-/// Saves an edited ruleset, then returns to its editor.
+/// Saves an edited ruleset, and reports its name or why it was refused.
 ///
-/// The id and the enabled flag stay as they were. The form carries neither,
+/// The id and the enabled flag stay as they were. The draft carries neither,
 /// because renaming a ruleset never moves it and saving an edit is not a
 /// request to start or stop it.
-#[route(POST "/admin/rulesets/{ruleset_id}")]
-async fn save_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
+///
+/// A refusal arrives inside [`Ok`] rather than as an error. A procedure's
+/// [`Err`] reaches no expression in the browser, so a caller that reads one
+/// never learns the call ended and leaves its button reading Saving.
+///
+/// A failed write reports one sentence and logs the cause. A database that
+/// refuses the row is nothing the reader acts on, so the message names what
+/// did not happen rather than how.
+#[procedure]
+async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String, String>> {
+    let posted = match RulesetForm::parse(&draft) {
+        Ok(posted) => posted,
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+
     let rulesets = app_context::<Arc<Rulesets>>(cx);
-    let id = path_param::<RulesetId>(cx);
-    let posted = posted(&form)?;
+    let enabled = rulesets.engine().ruleset(&id).ok_or_not_found()?.enabled;
+    let name = posted.name.clone();
 
-    let enabled = rulesets.engine().ruleset(id).ok_or_not_found()?.enabled;
-
-    rulesets
+    let saved = rulesets
         .save(Ruleset {
-            id: id.to_owned(),
+            id,
             name: posted.name,
             enabled,
             template: posted.template,
             based_on: posted.based_on,
             fields: posted.fields,
         })
-        .await
-        .map_err(write_failed)?;
+        .await;
 
-    Ok(see_other(format!("/admin/rulesets/{id}")))
+    match saved {
+        Ok(()) => Ok(Ok(name)),
+        Err(error @ (SaveError::Engine { .. } | SaveError::InUse { .. })) => {
+            Ok(Err(error.to_string()))
+        }
+        Err(error) => {
+            error!(error = %error, "save failed");
+
+            Ok(Err("the ruleset was not stored".to_owned()))
+        }
+    }
 }
 
 /// Deletes a ruleset, then returns to the index.
