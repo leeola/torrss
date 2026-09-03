@@ -4,6 +4,7 @@ target
 .stoatignore
 .cargo
 torrss.db*
+torrss.toml
 
 # `nix build` links its output here.
 result
