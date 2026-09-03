@@ -12,9 +12,11 @@
 // is unused. The shared ruleset registry is the caller this waits on.
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
+
 use sqlx::{Row, SqlitePool};
 
-use super::{Field, FieldKind, Part, Ruleset};
+use super::{Field, FieldKind, Part, Ruleset, RulesetTest};
 
 /// Adds a ruleset, or replaces the one already stored under its id.
 ///
@@ -48,6 +50,23 @@ const SELECT_FIELDS: &str = "
     ORDER BY ruleset, position
 ";
 
+/// Reads every saved test of every ruleset, grouped by ruleset and in order.
+const SELECT_TESTS: &str = "
+    SELECT ruleset, position, title
+    FROM ruleset_tests
+    ORDER BY ruleset, position
+";
+
+/// Reads every expectation of every saved test.
+///
+/// Ordered by field so a listed test reads the same way twice, which is what
+/// the round-trip comparison rests on.
+const SELECT_TEST_VALUES: &str = "
+    SELECT ruleset, position, field, expected
+    FROM ruleset_test_values
+    ORDER BY ruleset, position, field
+";
+
 /// The stored rulesets, read and written through one pool.
 pub(crate) struct RulesetStore {
     pool: SqlitePool,
@@ -58,7 +77,8 @@ impl RulesetStore {
         Self { pool }
     }
 
-    /// Returns every stored ruleset with its fields, ordered by name.
+    /// Returns every stored ruleset with its fields and saved tests, ordered
+    /// by name.
     ///
     /// # Errors
     ///
@@ -94,13 +114,49 @@ impl RulesetStore {
             ruleset.fields.push(field(&row)?);
         }
 
+        for row in sqlx::query(SELECT_TESTS).fetch_all(&self.pool).await? {
+            let owner: String = row.try_get("ruleset")?;
+
+            let Some(ruleset) = rulesets.iter_mut().find(|ruleset| ruleset.id == owner) else {
+                continue;
+            };
+
+            ruleset.tests.push(RulesetTest {
+                title: row.try_get("title")?,
+                expected: BTreeMap::new(),
+            });
+        }
+
+        // The tests land above in position order, contiguous from zero,
+        // because a save rewrites the whole list and enumerates it. That is
+        // what lets a value find its test by index.
+        for row in sqlx::query(SELECT_TEST_VALUES)
+            .fetch_all(&self.pool)
+            .await?
+        {
+            let owner: String = row.try_get("ruleset")?;
+            let position: i64 = row.try_get("position")?;
+
+            let Some(test) = rulesets
+                .iter_mut()
+                .find(|ruleset| ruleset.id == owner)
+                .and_then(|ruleset| ruleset.tests.get_mut(usize::try_from(position).ok()?))
+            else {
+                continue;
+            };
+
+            test.expected
+                .insert(row.try_get("field")?, row.try_get("expected")?);
+        }
+
         Ok(rulesets)
     }
 
-    /// Writes `ruleset` and its fields, replacing whatever was stored.
+    /// Writes `ruleset` with its fields and saved tests, replacing whatever
+    /// was stored.
     ///
-    /// The fields are deleted and reinserted rather than updated in place,
-    /// because a save drops a field as readily as it changes one. The whole
+    /// Both lists are deleted and reinserted rather than updated in place,
+    /// because a save drops a row as readily as it changes one. The whole
     /// write is one transaction, so a failure part way leaves the ruleset as
     /// it was rather than half rewritten.
     ///
@@ -139,6 +195,36 @@ impl RulesetStore {
             .bind(field.identity)
             .execute(&mut *tx)
             .await?;
+        }
+
+        // The values cascade from the tests, so one delete clears both.
+        sqlx::query("DELETE FROM ruleset_tests WHERE ruleset = ?1")
+            .bind(&ruleset.id)
+            .execute(&mut *tx)
+            .await?;
+
+        for (position, test) in ruleset.tests.iter().enumerate() {
+            let position = position as i64;
+
+            sqlx::query("INSERT INTO ruleset_tests (ruleset, position, title) VALUES (?1, ?2, ?3)")
+                .bind(&ruleset.id)
+                .bind(position)
+                .bind(&test.title)
+                .execute(&mut *tx)
+                .await?;
+
+            for (field, expected) in &test.expected {
+                sqlx::query(
+                    "INSERT INTO ruleset_test_values (ruleset, position, field, expected)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .bind(&ruleset.id)
+                .bind(position)
+                .bind(field)
+                .bind(expected)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         tx.commit().await
@@ -195,9 +281,11 @@ fn field(row: &sqlx::sqlite::SqliteRow) -> Result<Field, sqlx::Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use sqlx::SqlitePool;
 
-    use super::{Field, FieldKind, Part, Ruleset, RulesetStore};
+    use super::{Field, FieldKind, Part, Ruleset, RulesetStore, RulesetTest};
 
     fn field(name: &str, part: Part, pattern: Option<&str>) -> Field {
         Field {
@@ -222,17 +310,27 @@ mod tests {
         }
     }
 
-    /// A template with two fields, whose order the position column keeps.
+    /// A template with two fields, whose order the position column keeps,
+    /// and one saved test naming both of them.
     fn template() -> Ruleset {
-        ruleset(
-            "series",
-            true,
-            None,
-            vec![
-                field("show", Part::Show, Some(r"^(?<show>\w+)")),
-                field("season", Part::Season, None),
-            ],
-        )
+        Ruleset {
+            tests: vec![RulesetTest {
+                title: "The.Hollow.Meridian.S04E06".to_owned(),
+                expected: BTreeMap::from([
+                    ("show".to_owned(), "the hollow meridian".to_owned()),
+                    ("season".to_owned(), "4".to_owned()),
+                ]),
+            }],
+            ..ruleset(
+                "series",
+                true,
+                None,
+                vec![
+                    field("show", Part::Show, Some(r"^(?<show>\w+)")),
+                    field("season", Part::Season, None),
+                ],
+            )
+        }
     }
 
     #[sqlx::test]
@@ -290,13 +388,13 @@ mod tests {
         assert_eq!(
             store.list().await.expect("list"),
             vec![edited],
-            "a dropped field goes, and the switch is not part of the edit"
+            "a dropped field and a dropped test both go, and the switch is not part of the edit"
         );
     }
 
     #[sqlx::test]
     async fn remove_reports_the_row_and_cascades_the_fields(pool: SqlitePool) {
-        let store = RulesetStore::new(pool);
+        let store = RulesetStore::new(pool.clone());
         store.upsert(&template()).await.expect("the base");
 
         assert!(
@@ -311,6 +409,18 @@ mod tests {
             store.list().await.expect("list"),
             Vec::new(),
             "the fields go with the ruleset that owned them"
+        );
+
+        // The values hang off the tests, which hang off the ruleset, so this
+        // is the far end of the chain and the one a single delete has to
+        // reach.
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM ruleset_test_values")
+                .fetch_one(&pool)
+                .await
+                .expect("count"),
+            0,
+            "and the expectations go with the tests that named them"
         );
     }
 
