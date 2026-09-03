@@ -158,11 +158,28 @@ impl RulesetForm {
     /// is what an added row looks like before the reader fills it in. The
     /// editor lists such a row through [`EditorRows`], which keeps it.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
+        let form = Self::parse_draft(body)?;
+        ensure!(!form.name.is_empty(), EmptyNameSnafu);
+
+        Ok(form)
+    }
+
+    /// Reads the draft the editor holds, which carries a name only once the
+    /// reader types one.
+    ///
+    /// The name has no part in a compare. The rules come from `based_on` and
+    /// the fields, and the verdicts from the tests, so a blank name is a
+    /// save's concern rather than this one's.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same refusals [`Self::parse`] does, less the empty name. A
+    /// rule still does not compile from an unknown type or a missing pattern,
+    /// and two rows under one name are still one field with two.
+    pub(crate) fn parse_draft(body: &str) -> Result<Self, FormError> {
         let posted = read(body);
 
         let name = posted.name.trim().to_owned();
-        ensure!(!name.is_empty(), EmptyNameSnafu);
-
         let template = posted.template;
 
         let fields = posted
@@ -723,6 +740,29 @@ mod tests {
             encode_preset(&PRESETS[5]),
             "name=resolution&kind=enum&pattern=%28%3F%3Cresolution%3E480p%7C720p%7C1080p%7C2160p%29",
             "a flag left unset posts nothing, as an unchecked box does"
+        );
+    }
+
+    #[test]
+    fn a_draft_needs_no_name() {
+        assert_eq!(
+            RulesetForm::parse_draft("field.0.name=show&field.0.kind=text&field.0.pattern=.%2A"),
+            Ok(RulesetForm {
+                name: String::new(),
+                template: false,
+                based_on: None,
+                fields: vec![text("show", ".*", false, false)],
+                tests: Vec::new(),
+            }),
+            "the rules come from the fields, so a compare runs before the reader names anything"
+        );
+
+        assert_eq!(
+            RulesetForm::parse_draft("field.0.name=show&field.0.kind=colour"),
+            Err(FormError::UnknownKind {
+                kind: "colour".to_owned()
+            }),
+            "a rule still does not compile from a type this build does not know"
         );
     }
 }

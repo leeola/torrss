@@ -1908,7 +1908,7 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
 async fn test_results(cx: &Cx, draft: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
-    let Ok(posted) = RulesetForm::parse(&draft) else {
+    let Ok(posted) = RulesetForm::parse_draft(&draft) else {
         return view! {};
     };
 
@@ -2025,7 +2025,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
         id => Some(engine.ruleset(id).ok_or_not_found()?),
     };
 
-    let posted = match RulesetForm::parse(&draft) {
+    let posted = match RulesetForm::parse_draft(&draft) {
         Ok(posted) => posted,
         Err(error) => {
             return view! {
