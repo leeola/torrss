@@ -1,9 +1,9 @@
 //! The set of feeds the application currently watches.
 //!
 //! A registration persists in the `feeds` table, so a feed outlives the
-//! process that registered it. What each entry knows about its last check
-//! lives in memory alone, and a restart clears it: a check is a fact about a
-//! run rather than about a feed.
+//! process that registered it. So does its last check, which sits on the same
+//! row. The client page reads the last check after a restart, and the poll
+//! knows how old it is rather than fetching every feed at once.
 //!
 //! The items a feed returned do not live here at all, only in the
 //! `feed_items` table, so nothing a restart drops is lost.
@@ -15,17 +15,15 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use tracing::field::{Empty, display};
 use tracing::{Span, info, instrument, warn};
 use url::Url;
 
 use crate::clock::Clock;
-use crate::feed::store::FeedStore;
+use crate::feed::store::{FeedCheck, FeedStore};
 use crate::feed::{Feed, FeedAuth, FeedError, FeedSource, redacted};
 use crate::store;
-use crate::store::Ingest;
 
 /// One registered feed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,18 +47,6 @@ pub struct FeedEntry {
     pub check: Option<FeedCheck>,
 }
 
-/// What one check of a feed produced.
-///
-/// The outcome carries the ingest counts on success and the error text on
-/// failure. A fetch failure and a store failure both end a check the same
-/// way, and the pages show only the text, so nothing is gained by keeping
-/// the two error types apart this far out.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FeedCheck {
-    pub at: DateTime<Utc>,
-    pub outcome: Result<Ingest, String>,
-}
-
 /// The registered feeds, in the order they were added.
 pub struct FeedRegistry {
     store: FeedStore,
@@ -75,8 +61,8 @@ struct Inner {
 impl FeedRegistry {
     /// Reads every stored feed into a registry.
     ///
-    /// Each entry starts with no check. A check records what one run of this
-    /// process saw, so it belongs to the run rather than to the feed.
+    /// Each entry carries the check the table recorded for it, so a restart
+    /// resumes from what the last run saw rather than from nothing.
     ///
     /// # Errors
     ///
@@ -91,7 +77,7 @@ impl FeedRegistry {
                 name: feed.name,
                 url: feed.url,
                 auth: feed.auth,
-                check: None,
+                check: feed.check,
             })
             .collect();
 
@@ -211,16 +197,43 @@ impl FeedRegistry {
     ///
     /// Only the last check is kept. A history grows without bound, and the
     /// pages show one result per feed.
-    pub fn record(&self, id: &str, check: FeedCheck) -> bool {
-        let mut inner = self.lock();
+    ///
+    /// An id the table never issued names no feed, so a value that is not a
+    /// row id reports the same absence a missing entry does.
+    ///
+    /// Memory takes the check before the table does, the reverse of
+    /// [`Self::add`] and [`Self::remove`]. A poll that reads an unchecked
+    /// feed fetches it again at once, so a refused write costs less than a
+    /// registry that forgot the check it just made.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's error when the write fails. The entry keeps the
+    /// check in that case.
+    pub async fn record(&self, id: &str, check: FeedCheck) -> Result<bool, sqlx::Error> {
+        let Ok(row) = id.parse::<i64>() else {
+            return Ok(false);
+        };
 
-        match inner.feeds.iter_mut().find(|feed| feed.id == id) {
-            Some(feed) => {
-                feed.check = Some(check);
-                true
+        // The guard drops before the await. A `MutexGuard` is not `Send`, so
+        // one held across an await makes the whole future not `Send`.
+        let known = {
+            let mut inner = self.lock();
+
+            match inner.feeds.iter_mut().find(|feed| feed.id == id) {
+                Some(feed) => {
+                    feed.check = Some(check.clone());
+                    true
+                }
+                None => false,
             }
-            None => false,
+        };
+
+        if !known {
+            return Ok(false);
         }
+
+        self.store.record_check(row, &check).await
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -273,7 +286,15 @@ pub async fn check(
         Err(error) => warn!(error = %error, "check failed"),
     }
 
-    registry.record(id, FeedCheck { at, outcome })
+    // The entry exists and now holds the check, so a store that refused the
+    // row leaves the page right and only the next restart wrong.
+    match registry.record(id, FeedCheck { at, outcome }).await {
+        Ok(known) => known,
+        Err(error) => {
+            warn!(error = %error, "check not stored");
+            true
+        }
+    }
 }
 
 /// Fetches one feed and returns what it carries, storing and recording
@@ -351,9 +372,9 @@ mod tests {
     use sqlx::SqlitePool;
     use url::Url;
 
-    use super::{FeedCheck, FeedEntry, FeedRegistry, check, check_all, preview};
+    use super::{FeedEntry, FeedRegistry, check, check_all, preview};
     use crate::clock::Clock;
-    use crate::feed::store::FeedStore;
+    use crate::feed::store::{FeedCheck, FeedStore};
     use crate::feed::{Feed, FeedAuth, FeedError, fake};
     use crate::services::Services;
     use crate::store;
@@ -480,8 +501,13 @@ mod tests {
             outcome: Ok(Ingest { items: 3, added: 1 }),
         };
 
-        assert!(registry.record(&id, failed));
-        assert!(registry.record(&id, succeeded.clone()));
+        assert!(registry.record(&id, failed).await.expect("record"));
+        assert!(
+            registry
+                .record(&id, succeeded.clone())
+                .await
+                .expect("record")
+        );
         assert_eq!(
             registry.entries(),
             vec![entry("1", "Tracker", FEED, Some(succeeded))],
@@ -493,13 +519,18 @@ mod tests {
     async fn record_unknown_is_false(pool: SqlitePool) {
         let registry = registry(&pool).await;
 
-        assert!(!registry.record(
-            "404",
-            FeedCheck {
-                at: at(1),
-                outcome: Ok(Ingest { items: 0, added: 0 }),
-            }
-        ));
+        assert!(
+            !registry
+                .record(
+                    "404",
+                    FeedCheck {
+                        at: at(1),
+                        outcome: Ok(Ingest { items: 0, added: 0 }),
+                    }
+                )
+                .await
+                .expect("record")
+        );
         assert_eq!(registry.entries(), Vec::new());
     }
 
@@ -783,6 +814,28 @@ mod tests {
             "and each keeps its id, its name, and no check"
         );
     }
+
+    #[sqlx::test]
+    async fn load_restores_the_last_check(pool: SqlitePool) {
+        let first = registry(&pool).await;
+        let id = first
+            .add("Tracker".to_owned(), url(FEED), None)
+            .await
+            .expect("add");
+
+        let check = FeedCheck {
+            at: at(1),
+            outcome: Ok(Ingest { items: 3, added: 1 }),
+        };
+        first.record(&id, check.clone()).await.expect("record");
+
+        assert_eq!(
+            registry(&pool).await.entries(),
+            vec![entry("1", "Tracker", FEED, Some(check))],
+            "a restart reads back the check the last run recorded"
+        );
+    }
+
     #[sqlx::test]
     async fn preview_unknown_id_is_none(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);

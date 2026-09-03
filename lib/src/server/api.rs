@@ -108,7 +108,8 @@ mod tests {
 
     use super::report;
     use crate::feed::FeedAuth;
-    use crate::feed::registry::{FeedCheck, FeedEntry};
+    use crate::feed::registry::FeedEntry;
+    use crate::feed::store::FeedCheck;
     use crate::store::Ingest;
 
     fn entry(id: &str, name: &str, check: Option<FeedCheck>) -> FeedEntry {

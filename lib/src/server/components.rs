@@ -6,7 +6,7 @@ use topcoat::{
 use super::format;
 use super::listing::ParsedValue;
 use super::matches::Match;
-use crate::feed::registry::FeedCheck;
+use crate::feed::store::FeedCheck;
 use crate::rules::Engine;
 use crate::ruleset::{FieldKind, FieldSource, Part, ResolvedField, Ruleset, Segment};
 use crate::store::StoredItem;
