@@ -1091,55 +1091,12 @@ async fn remove_feed(cx: &Cx) -> Result<SeeOther> {
     Ok(see_other("/admin/feeds"))
 }
 
-/// Controls the field list under the editor.
-///
-/// The state rides in the URL rather than in browser state, so a reviewer
-/// shares an exact view and keeps it across the reload that follows a save.
-#[query_params(error = bad_request)]
-struct MatchView {
-    /// [`Diff::slug`] of the only state to list, or absent for every state.
-    diff: Option<String>,
-}
-
-impl MatchView {
-    fn filter(&self) -> Option<Diff> {
-        Diff::from_slug(self.diff.as_deref()?)
-    }
-
-    /// The whole query state, ready to rebuild any link on the page.
-    fn query(&self) -> EditorQuery {
-        EditorQuery {
-            diff: self.filter(),
-        }
-    }
-}
-
-/// The one key the editor carries in its URL.
-///
-/// Every link on the page rebuilds itself from this rather than editing the
-/// query string in place, so a control never drops a key it does not name.
-#[derive(Clone, Copy)]
-struct EditorQuery {
-    diff: Option<Diff>,
-}
-
-impl EditorQuery {
-    fn url(&self, ruleset: &str, anchor: &str) -> String {
-        query::url(
-            &format!("/admin/rulesets/{ruleset}"),
-            &[("diff", self.diff.map_or("", Diff::slug))],
-            anchor,
-        )
-    }
-}
-
 #[page("/admin/rulesets/new")]
 async fn new_ruleset(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
-    let view = query_params::<MatchView>(cx)?;
 
     view! {
-        editor(engine: &engine, ruleset: None, query: view.query())
+        editor(engine: &engine, ruleset: None)
     }
 }
 
@@ -1149,10 +1106,9 @@ async fn ruleset_editor(cx: &Cx) -> Result {
     let ruleset = engine
         .ruleset(path_param::<RulesetId>(cx))
         .ok_or_not_found()?;
-    let view = query_params::<MatchView>(cx)?;
 
     view! {
-        editor(engine: &engine, ruleset: Some(ruleset), query: view.query())
+        editor(engine: &engine, ruleset: Some(ruleset))
     }
 }
 
@@ -1163,7 +1119,7 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 /// [`None`] shows Create and no switch, because a ruleset nothing has saved
 /// has nothing to switch on.
 #[component]
-async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) -> Result {
+async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
     let template = ruleset.and_then(|ruleset| engine.template_of(ruleset));
 
     let name = ruleset
@@ -1182,10 +1138,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
         .map(|ruleset| ruleset.id.clone())
         .unwrap_or_default();
 
-    let diff_slug = query
-        .diff
-        .map_or_else(String::new, |state| state.slug().to_owned());
-
     // What the browser posts on the first keystroke: the ruleset's own rows,
     // because a disabled inherited input sends nothing.
     let initial_draft = RulesetForm {
@@ -1202,6 +1154,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
     view! {
         signal draft = initial_draft;
         signal rows = initial_rows;
+        signal diff = String::new();
 
         // The row buttons the shard renders reach the signals above through
         // this, which one delegated handler on the form below calls.
@@ -1305,7 +1258,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
                         Some(ruleset) => <div class="contents">
                             components::status_toggle(
                                 enabled: ruleset.enabled,
-                                action: switch_action(&ruleset.id, &query.url(&ruleset.id, "#top")),
+                                action: switch_action(
+                                    &ruleset.id,
+                                    &format!("/admin/rulesets/{}#top", ruleset.id),
+                                ),
                             )
                             components::action_button(
                                 action: format!("/admin/rulesets/{}/remove", ruleset.id),
@@ -1344,11 +1300,17 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery) 
             </div>
         </form>
 
-        live_matches(
-            ruleset: $(ruleset_id),
-            diff: $(diff_slug),
-            draft: $(draft.get()),
-        )
+        // The chips are rendered by the shard, so their click is caught here,
+        // where the signal lives.
+        <div @click=$(|e: Event| if e.target.name == "diff-filter" {
+            diff.set(e.target.value);
+        })>
+            live_matches(
+                ruleset: $(ruleset_id),
+                diff: $(diff.get()),
+                draft: $(draft.get()),
+            )
+        </div>
     }
 }
 
@@ -1525,10 +1487,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String) -> 
             ruleset: &ruleset,
             matched: &matched,
             errors: &errors,
-            query: EditorQuery {
-                diff: Diff::from_slug(&diff),
-
-            },
+            filter: Diff::from_slug(&diff),
         )
     }
 }
@@ -1537,14 +1496,17 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String) -> 
 ///
 /// The list carries whichever diff state the reader chose, or every one of
 /// them when they chose none.
+///
+/// The chosen state is browser state rather than a query key, because the
+/// draft it filters is browser state too. A reload that carries the filter
+/// throws away the edit the filter describes.
 #[component]
 async fn match_section(
     ruleset: &str,
     matched: &[Match<'_>],
     errors: &[PatternError],
-    query: EditorQuery,
+    filter: Option<Diff>,
 ) -> Result {
-    let filter = query.diff;
     let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
 
     let listed: Vec<_> = matched
@@ -1573,14 +1535,14 @@ async fn match_section(
 
             <nav class="mt-4 flex flex-wrap gap-2">
                 components::diff_filter(
-                    href: EditorQuery { diff: None }.url(ruleset, "#matches"),
+                    value: "",
                     label: "All",
                     count: matched.len(),
                     current: filter.is_none(),
                 )
                 for state in Diff::ALL {
                     components::diff_filter(
-                        href: EditorQuery { diff: Some(*state) }.url(ruleset, "#matches"),
+                        value: state.slug(),
                         label: state.label(),
                         count: count(*state),
                         current: filter == Some(*state),

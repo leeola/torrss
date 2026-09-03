@@ -70,27 +70,25 @@ pub(crate) struct Claimant {
 }
 
 /// One entry in the diff filter bar, carrying its own count.
+///
+/// The chip names its state in its own value, so one delegated handler reads
+/// every chip. An empty value is every state rather than one.
 #[component]
-pub(crate) async fn diff_filter(
-    #[into] href: String,
-    label: &str,
-    count: usize,
-    current: bool,
-) -> Result {
+pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current: bool) -> Result {
     view! {
-        <a
-            href=(href)
+        <button
+            type="button"
+            name="diff-filter"
+            value=(value)
+            aria-pressed=(if current { "true" } else { "false" })
             class=(class!(
                 "rounded-full border px-3 py-1 text-xs transition-colors",
                 "border-slate-600 bg-slate-800 text-slate-100" if current
                     else "border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200",
             ))
-            if current {
-                aria-current="true"
-            }
         >
             (label) " " <span class="text-slate-500">(count)</span>
-        </a>
+        </button>
     }
 }
 
