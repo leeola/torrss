@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use snafu::{OptionExt, Snafu, ensure};
 use url::form_urlencoded;
 
-use super::{Field, FieldKind, RulesetTest};
+use super::{Field, FieldKind, Preset, RulesetTest};
 
 /// A ruleset as the editor's form describes it.
 ///
@@ -253,6 +253,33 @@ impl RulesetForm {
     }
 }
 
+/// Writes the pairs one field row carries, for a preset menu to hand over.
+///
+/// The keys are the ones [`read_row`] reads, without the `field.{index}.`
+/// prefix a whole form adds. So a row built from these parses as if the
+/// reader had typed it, and the script that builds it copies pairs and knows
+/// no preset.
+pub(crate) fn encode_preset(preset: &Preset) -> String {
+    let mut pairs = form_urlencoded::Serializer::new(String::new());
+
+    pairs.append_pair("name", preset.name);
+    pairs.append_pair("kind", preset.kind.label());
+
+    if let Some(pattern) = preset.pattern {
+        pairs.append_pair("pattern", pattern);
+    }
+
+    if preset.required {
+        pairs.append_pair("required", "on");
+    }
+
+    if preset.identity {
+        pairs.append_pair("identity", "on");
+    }
+
+    pairs.finish()
+}
+
 /// Turns `name` into the id a ruleset carries in its URL.
 ///
 /// Every run of characters outside the alphabet and the digits becomes one
@@ -424,8 +451,8 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{EditorRows, FormError, RulesetForm, slug, unique_slug};
-    use crate::ruleset::{Field, FieldKind, RulesetTest};
+    use super::{EditorRows, FormError, RulesetForm, encode_preset, slug, unique_slug};
+    use crate::ruleset::{Field, FieldKind, PRESETS, RulesetTest};
 
     fn text(name: &str, pattern: &str, required: bool, identity: bool) -> Field {
         Field {
@@ -680,6 +707,22 @@ mod tests {
             )
             .is_ok(),
             "a name is compared as typed, because that is how the rules look it up"
+        );
+    }
+
+    #[test]
+    fn a_preset_encodes_the_keys_a_row_reads() {
+        assert_eq!(
+            encode_preset(&PRESETS[4]),
+            "name=year&kind=number&pattern=%5C.%28%3F%3Cyear%3E%28%3F%3A19%7C20%29%5Cd%7B2%7D%29%5C.\
+             &required=on&identity=on",
+            "the pairs are what read_row reads, minus the prefix a whole form adds"
+        );
+
+        assert_eq!(
+            encode_preset(&PRESETS[5]),
+            "name=resolution&kind=enum&pattern=%28%3F%3Cresolution%3E480p%7C720p%7C1080p%7C2160p%29",
+            "a flag left unset posts nothing, as an unchecked box does"
         );
     }
 }

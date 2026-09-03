@@ -429,11 +429,122 @@ impl FieldKind {
     }
 }
 
+/// The values a new field row starts with.
+///
+/// A preset is a starting value and nothing remembers it, so a later edit is
+/// the reader's own with no touched flag to carry.
+pub(crate) struct Preset {
+    pub(crate) name: &'static str,
+    pub(crate) kind: FieldKind,
+    pub(crate) pattern: Option<&'static str>,
+    pub(crate) required: bool,
+    pub(crate) identity: bool,
+}
+
+/// The rows a reader starts from, drawn from scene naming.
+///
+/// Each capture group is named after its preset, because that is the name the
+/// row starts with. A reader who renames the field keeps a working rule
+/// anyway. [`crate::rules`] falls back to group 1 when no group carries the
+/// field's name.
+///
+/// The first five decide what a release is, so they are required or part of
+/// the identity. The rest describe one copy of it, and two copies that differ
+/// only in codec are still one release.
+pub(crate) const PRESETS: &[Preset] = &[
+    Preset {
+        name: "show",
+        kind: FieldKind::Text,
+        pattern: Some(r"^(?<show>[\w.]+?)\.S\d"),
+        required: true,
+        identity: true,
+    },
+    Preset {
+        name: "movie",
+        kind: FieldKind::Text,
+        pattern: Some(r"^(?<movie>[\w.]+?)\.(?:19|20)\d{2}\."),
+        required: true,
+        identity: true,
+    },
+    Preset {
+        name: "season",
+        kind: FieldKind::Season,
+        pattern: None,
+        required: true,
+        identity: true,
+    },
+    Preset {
+        name: "episode",
+        kind: FieldKind::Episode,
+        pattern: None,
+        required: false,
+        identity: true,
+    },
+    Preset {
+        name: "year",
+        kind: FieldKind::Number,
+        pattern: Some(r"\.(?<year>(?:19|20)\d{2})\."),
+        required: true,
+        identity: true,
+    },
+    Preset {
+        name: "resolution",
+        kind: FieldKind::Enum,
+        pattern: Some(r"(?<resolution>480p|720p|1080p|2160p)"),
+        required: false,
+        identity: false,
+    },
+    Preset {
+        name: "source",
+        kind: FieldKind::Enum,
+        pattern: Some(r"(?<source>WEB-?DL|WEBRip|BluRay|BDRip|HDTV|DVDRip|Remux)"),
+        required: false,
+        identity: false,
+    },
+    Preset {
+        name: "codec",
+        kind: FieldKind::Enum,
+        pattern: Some(r"(?<codec>[xXhH]\.?26[45]|HEVC|AV1|XviD)"),
+        required: false,
+        identity: false,
+    },
+    Preset {
+        name: "audio",
+        kind: FieldKind::Text,
+        pattern: Some(r"(?<audio>DDP?\d\.\d|AAC|DTS(?:-HD)?|TrueHD|Atmos|FLAC)"),
+        required: false,
+        identity: false,
+    },
+    Preset {
+        name: "publisher",
+        kind: FieldKind::Text,
+        pattern: Some(r"-(?<publisher>[A-Za-z0-9]+)(?:\.\w+)?$"),
+        required: false,
+        identity: false,
+    },
+    Preset {
+        name: "checksum",
+        kind: FieldKind::Text,
+        pattern: Some(r"\[(?<checksum>[0-9A-Fa-f]{8})\]"),
+        required: false,
+        identity: false,
+    },
+    Preset {
+        name: "extension",
+        kind: FieldKind::Enum,
+        pattern: Some(r"(?<extension>\.mkv|\.mp4|\.avi)$"),
+        required: false,
+        identity: false,
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use regex::Regex;
 
-    use super::FieldKind;
+    use std::collections::BTreeSet;
+
+    use super::{FieldKind, PRESETS};
 
     /// Reads `title` through the pattern `kind` supplies, as the engine does.
     fn read(kind: FieldKind, title: &str) -> Option<String> {
@@ -500,6 +611,37 @@ mod tests {
             ],
             ["1", "the hollow meridian", "x"],
             "a number kind drops leading zeros, and anything else collapses"
+        );
+    }
+
+    #[test]
+    fn every_preset_pattern_compiles_under_its_own_name() {
+        for preset in PRESETS {
+            let Some(pattern) = preset.pattern else {
+                continue;
+            };
+
+            let regex = Regex::new(pattern)
+                .unwrap_or_else(|error| panic!("{} does not compile: {error}", preset.name));
+
+            assert!(
+                regex
+                    .capture_names()
+                    .flatten()
+                    .any(|name| name == preset.name),
+                "{} carries no group under its own name",
+                preset.name
+            );
+        }
+
+        assert_eq!(
+            PRESETS
+                .iter()
+                .map(|preset| preset.name)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            12,
+            "each preset names a distinct field, so two never collide in one ruleset"
         );
     }
 }

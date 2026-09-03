@@ -26,7 +26,7 @@ use crate::{
     rules::Engine,
     ruleset::form::{self, EditorRows, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
-    ruleset::{Diff, Field, FieldSource, ResolvedField, Ruleset},
+    ruleset::{Diff, Field, FieldSource, PRESETS, ResolvedField, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format, held,
@@ -62,6 +62,11 @@ path_param!(feed_id);
 /// The two counters match a whole key rather than its suffix. A test
 /// expectation on a field named `name` ends `.name` too, and counting it
 /// opens the next row at an index another row already holds.
+///
+/// `add` reads the preset menu beside its button, which is the one control
+/// that says what a new row starts as. An option's value is a form encoding
+/// of the row, as the `test` action's argument is, so the script copies pairs
+/// and knows no preset.
 ///
 /// Every branch returns the form serialized, which is what both the rows and
 /// the matches read.
@@ -108,7 +113,16 @@ window.torrssRows = {
     const argument = cut === -1 ? '' : action.slice(cut + 1);
 
     if (name === 'add') {
-      params.append(`field.${index}.name`, '');
+      const preset = document.getElementById('field-preset').value;
+
+      if (preset === '') {
+        params.append(`field.${index}.name`, '');
+        return params.toString();
+      }
+
+      for (const [key, value] of new URLSearchParams(preset)) {
+        params.append(`field.${index}.${key}`, value);
+      }
       return params.toString();
     }
 
@@ -1529,14 +1543,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
-                        name="row-action"
-                        value="add"
-                    >
-                        "Add field"
-                    </button>
                     match ruleset {
                         // Create stays a form post. A ruleset with no id yet
                         // has nowhere to render into, and the redirect to its
@@ -1646,6 +1652,31 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                     <p class="text-xs text-slate-500">
                         "A greyed field comes from the template. Replace one to give this ruleset its own."
                     </p>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        // No `name`, so `FormData` skips it and the draft
+                        // never records which preset a row started from. An
+                        // option carries the whole row as a form encoding,
+                        // which the `add` action copies pair by pair.
+                        <select
+                            id="field-preset"
+                            class="rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                        >
+                            <option value="">"blank"</option>
+                            for preset in PRESETS {
+                                <option value=(form::encode_preset(preset))>(preset.name)</option>
+                            }
+                        </select>
+
+                        <button
+                            type="button"
+                            class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                            name="row-action"
+                            value="add"
+                        >
+                            "Add field"
+                        </button>
+                    </div>
                 </div>
 
                 field_rows(rows: $(rows.get()))
