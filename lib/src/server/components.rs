@@ -462,35 +462,6 @@ pub(crate) async fn field_row(index: usize, resolved: ResolvedField<'_>) -> Resu
     }
 }
 
-/// The button that enables or disables a ruleset.
-///
-/// The label names the action rather than the state, which is what a button
-/// beside Save and Add field reads as. [`status_badge`] carries the state.
-///
-/// The control posts rather than links, because it changes stored state. A
-/// link would let a prefetch or a crawler disable a ruleset.
-#[component]
-pub(crate) async fn status_toggle(enabled: bool, #[into] action: String) -> Result {
-    view! {
-        <form method="post" action=(action) class="contents">
-            <button
-                type="submit"
-                title=(if enabled {
-                    "Stop this ruleset filtering feed results"
-                } else {
-                    "Let this ruleset filter feed results"
-                })
-                class=(class!(
-                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors",
-                    "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20" if enabled
-                        else "border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200",
-                ))
-            >
-                if enabled { "Disable" } else { "Enable" }
-            </button>
-        </form>
-    }
-}
 /// A button that posts to `action`, for a write with nothing to configure.
 ///
 /// The form wraps a single button because the write needs no input beyond the
@@ -604,8 +575,8 @@ pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result {
 
 /// Reports whether a ruleset runs, without changing it.
 ///
-/// Used where the badge sits inside a larger link. The switch that changes the
-/// state is [`status_toggle`].
+/// Used where the badge sits inside a larger link, which holds no control of
+/// its own.
 #[component]
 pub(crate) async fn status_badge(enabled: bool) -> Result {
     view! {

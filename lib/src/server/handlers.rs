@@ -32,7 +32,7 @@ use crate::{
         format,
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rule},
-        query::{self, IdList},
+        query::IdList,
     },
     services::Services,
     store::grabs::{self, Grab},
@@ -587,31 +587,25 @@ struct SwitchReturn {
     back: Option<String>,
 }
 
-/// Flips one ruleset between enabled and disabled, then returns to `back`.
+/// Flips one ruleset between enabled and disabled, and reports the new state.
 ///
-/// This posts rather than links because it writes the stored rulesets. It
-/// redirects instead of rendering, so a reload never repeats the flip.
-#[route(POST "/admin/rulesets/{ruleset_id}/enabled")]
-async fn set_enabled(cx: &Cx) -> Result<SeeOther> {
+/// The caller renders from the returned flag rather than from what it sent,
+/// so the label always shows what the store holds.
+///
+/// The engine snapshot drops before the write. Reading the state and flipping
+/// it are two steps either way, and holding the snapshot across the write
+/// widens the gap between them for nothing.
+#[procedure]
+async fn switch_ruleset(cx: &Cx, id: String) -> Result<bool> {
     let rulesets = app_context::<Arc<Rulesets>>(cx);
-    let id = path_param::<RulesetId>(cx);
-
-    // The engine snapshot drops before the write. Reading the state and
-    // flipping it are two steps either way, and holding the snapshot across
-    // the write widens the gap between them for nothing.
-    let enabled = rulesets.engine().ruleset(id).ok_or_not_found()?.enabled;
-
-    let back = query_params::<SwitchReturn>(cx)?
-        .back
-        .clone()
-        .unwrap_or_else(|| "/admin".to_owned());
+    let enabled = rulesets.engine().ruleset(&id).ok_or_not_found()?.enabled;
 
     rulesets
-        .set_enabled(id, !enabled)
+        .set_enabled(&id, !enabled)
         .await
         .map_err(internal_server_error)?;
 
-    Ok(see_other(back))
+    Ok(!enabled)
 }
 
 /// Checks every registered feed now and reports how many it passed over.
@@ -636,15 +630,6 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
     .await;
 
     Ok(registry.entries().len() as f64)
-}
-
-/// Builds the action a ruleset's switch posts to.
-fn switch_action(ruleset: &str, back: &str) -> String {
-    query::url(
-        &format!("/admin/rulesets/{ruleset}/enabled"),
-        &[("back", back)],
-        "",
-    )
 }
 
 #[page("/admin")]
@@ -1138,6 +1123,9 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         .map(|ruleset| ruleset.id.clone())
         .unwrap_or_default();
 
+    let stored_id = ruleset_id.clone();
+    let enabled_now = ruleset.is_some_and(|ruleset| ruleset.enabled);
+
     // What the browser posts on the first keystroke: the ruleset's own rows,
     // because a disabled inherited input sends nothing.
     let initial_draft = RulesetForm {
@@ -1155,6 +1143,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         signal draft = initial_draft;
         signal rows = initial_rows;
         signal diff = String::new();
+        signal enabled = enabled_now;
+        // The id the switch names. A handler outlives the render that built
+        // it, so the argument comes from a signal rather than from a capture.
+        signal switch_id = stored_id;
 
         // The row buttons the shard renders reach the signals above through
         // this, which one delegated handler on the form below calls.
@@ -1207,9 +1199,19 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             placeholder="Coastal Ecology"
                             class="w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-2xl font-semibold tracking-tight text-slate-100 focus:border-slate-600 focus:outline-none"
                         >
-                        match ruleset {
-                            Some(ruleset) => components::status_badge(enabled: ruleset.enabled),
-                            None => "",
+                        // The badge is bound rather than rendered by the
+                        // component, because the switch below writes the
+                        // signal and both have to agree without a reload.
+                        // Each branch is one whole string, because the
+                        // Tailwind scanner reads class names out of literals.
+                        if ruleset.is_some() {
+                            <span :class=$(if enabled.get() {
+                                "rounded-full px-2 py-0.5 text-xs bg-emerald-500/15 text-emerald-300"
+                            } else {
+                                "rounded-full px-2 py-0.5 text-xs bg-slate-700/40 text-slate-400"
+                            })>
+                                $(if enabled.get() { "enabled" } else { "disabled" })
+                            </span>
                         }
                     </div>
 
@@ -1256,17 +1258,38 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                     </button>
                     match ruleset {
                         Some(ruleset) => <div class="contents">
-                            components::status_toggle(
-                                enabled: ruleset.enabled,
-                                action: switch_action(
-                                    &ruleset.id,
-                                    &format!("/admin/rulesets/{}#top", ruleset.id),
-                                ),
-                            )
-                            components::action_button(
-                                action: format!("/admin/rulesets/{}/remove", ruleset.id),
-                                label: "Delete",
-                            )
+                            <button
+                                type="button"
+                                :title=$(if enabled.get() {
+                                    "Stop this ruleset filtering feed results"
+                                } else {
+                                    "Let this ruleset filter feed results"
+                                })
+                                :class=$(if enabled.get() {
+                                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                                } else {
+                                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                                })
+                                @click=$(async |_e: Event| {
+                                    let state = switch_ruleset(switch_id.get()).await;
+                                    enabled.set(state);
+                                })
+                            >
+                                $(if enabled.get() { "Disable" } else { "Enable" })
+                            </button>
+                            // A submit button naming its own action, because
+                            // the editor's form already wraps this and HTML
+                            // forbids a form inside a form. It skips
+                            // validation, because a delete discards the draft
+                            // rather than saving it.
+                            <button
+                                type="submit"
+                                formaction=(format!("/admin/rulesets/{}/remove", ruleset.id))
+                                formnovalidate=(true)
+                                class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+                            >
+                                "Delete"
+                            </button>
                         </div>,
                         None => "",
                     }
