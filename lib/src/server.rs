@@ -10,6 +10,7 @@ mod components;
 mod format;
 mod handlers;
 mod listing;
+mod matches;
 mod query;
 mod router;
 mod serve;

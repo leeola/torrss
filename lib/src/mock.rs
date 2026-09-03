@@ -122,8 +122,9 @@ impl Part {
 /// [`None`] marks separators and anything no rule matched. The `text` values
 /// in order reproduce the filename exactly, so the highlighted render never
 /// drifts from the name it describes.
-pub(crate) struct Segment {
-    pub(crate) text: &'static str,
+#[derive(Debug)]
+pub(crate) struct Segment<'a> {
+    pub(crate) text: &'a str,
     pub(crate) part: Option<Part>,
 }
 
@@ -167,7 +168,7 @@ pub(crate) struct Ruleset {
     pub(crate) fields: &'static [Field],
 
     /// A filename the editor highlights to preview the rules below it.
-    pub(crate) sample: &'static [Segment],
+    pub(crate) sample: &'static [Segment<'static>],
 
     /// Filenames the editor tests the rules against, shown as a diff.
     pub(crate) candidates: &'static [Candidate],
@@ -274,7 +275,7 @@ pub(crate) struct Candidate {
     /// Stable key that names the candidate in the pin list.
     pub(crate) id: &'static str,
 
-    pub(crate) segments: &'static [Segment],
+    pub(crate) segments: &'static [Segment<'static>],
     pub(crate) diff: Diff,
     pub(crate) feed: &'static str,
 }
@@ -284,7 +285,7 @@ pub(crate) struct Candidate {
 /// A [`Diff::Removed`] candidate keeps the highlighting it had before the
 /// edit. The row shows what the edit gives up. An unhighlighted filename
 /// loses that.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Diff {
     /// The edit made this filename match. It did not before.
     Added,
@@ -390,7 +391,7 @@ impl Field {
 /// [`Self::Season`] and [`Self::Episode`] are premade kinds: each carries its
 /// own pattern, so a ruleset names the kind and writes no regex. Every other
 /// kind leaves the pattern to the field.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldKind {
     Text,
     Number,

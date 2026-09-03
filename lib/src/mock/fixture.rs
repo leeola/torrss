@@ -30,12 +30,12 @@ use super::{
 use crate::rules::Engine;
 
 /// Marks a run of text that no rule claimed, such as a separator.
-const fn gap(text: &'static str) -> Segment {
+const fn gap(text: &'static str) -> Segment<'static> {
     Segment { text, part: None }
 }
 
 /// Marks a run of text that `part` claimed.
-const fn hit(text: &'static str, part: super::Part) -> Segment {
+const fn hit(text: &'static str, part: super::Part) -> Segment<'static> {
     Segment {
         text,
         part: Some(part),

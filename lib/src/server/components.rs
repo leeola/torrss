@@ -15,7 +15,7 @@ use crate::store::StoredItem;
 /// Each claimed run links to the field that produced it, anchored inside
 /// `ruleset`'s editor, so a reader jumps from a value to the rule behind it.
 #[component]
-pub(crate) async fn filename(segments: &'static [Segment], ruleset: &str) -> Result {
+pub(crate) async fn filename(segments: &[Segment<'_>], ruleset: &str) -> Result {
     view! {
         <span class="font-mono text-sm break-all">
             for segment in segments {
