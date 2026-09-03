@@ -30,7 +30,7 @@ use crate::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format,
         listing::{self, Standing},
-        matches::{self, Edits, Match, PatternError},
+        matches::{self, Edits, Match, PatternError, Rule},
         query::{self, IdList},
     },
     services::Services,
@@ -1018,6 +1018,16 @@ impl EditorQuery<'_> {
     }
 }
 
+#[page("/admin/rulesets/new")]
+async fn new_ruleset(cx: &Cx) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let view = query_params::<MatchView>(cx)?;
+
+    view! {
+        editor(engine: &engine, ruleset: None, query: view.query())
+    }
+}
+
 #[page("/admin/rulesets/{ruleset_id}")]
 async fn ruleset_editor(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
@@ -1025,26 +1035,59 @@ async fn ruleset_editor(cx: &Cx) -> Result {
         .ruleset(path_param::<RulesetId>(cx))
         .ok_or_not_found()?;
     let view = query_params::<MatchView>(cx)?;
-    let q = view.query();
 
-    let replacements = q.replaced.entries();
-    let parent = engine.parent(ruleset);
-    let fields = ruleset.resolved_fields(parent, &replacements);
+    view! {
+        editor(engine: &engine, ruleset: Some(ruleset), query: view.query())
+    }
+}
+
+/// The one page that writes a ruleset, whether or not one is stored.
+///
+/// A ruleset being created and one being edited differ in what the page
+/// already knows, not in what the reader does, so both read the same form.
+/// [`None`] shows Create and no switch, because a ruleset nothing has saved
+/// has nothing to switch on.
+#[component]
+async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, query: EditorQuery<'_>) -> Result {
+    let parent = ruleset.and_then(|ruleset| engine.parent(ruleset));
+
+    let replacements = query.replaced.entries();
+    let fields = ruleset
+        .map(|ruleset| ruleset.resolved_fields(parent, &replacements))
+        .unwrap_or_default();
+
     let inheriting = parent.is_some();
-    let enabled = ruleset.enabled;
+    let name = ruleset
+        .map(|ruleset| ruleset.name.clone())
+        .unwrap_or_default();
+    let inherits = ruleset
+        .and_then(|ruleset| ruleset.inherits.clone())
+        .unwrap_or_default();
 
-    let ruleset_id = ruleset.id.clone();
-    let diff_slug = q
+    let action = ruleset.map_or_else(
+        || "/admin/rulesets".to_owned(),
+        |ruleset| format!("/admin/rulesets/{}", ruleset.id),
+    );
+
+    let ruleset_id = ruleset
+        .map(|ruleset| ruleset.id.clone())
+        .unwrap_or_default();
+
+    // The shard takes the id by value, so the row links hold their own copy.
+    let row_id = ruleset_id.clone();
+    let diff_slug = query
         .diff
         .map_or_else(String::new, |state| state.slug().to_owned());
-    let pinned_raw = q.pinned.as_str().to_owned();
+    let pinned_raw = query.pinned.as_str().to_owned();
 
     // What the browser posts on the first keystroke: the ruleset's own rows,
     // because a disabled inherited input sends nothing.
     let initial_draft = RulesetForm {
-        name: ruleset.name.clone(),
-        inherits: ruleset.inherits.clone(),
-        fields: ruleset.fields.clone(),
+        name: name.clone(),
+        inherits: ruleset.and_then(|ruleset| ruleset.inherits.clone()),
+        fields: ruleset
+            .map(|ruleset| ruleset.fields.clone())
+            .unwrap_or_default(),
     }
     .encode();
 
@@ -1054,59 +1097,15 @@ async fn ruleset_editor(cx: &Cx) -> Result {
         <nav class="text-sm text-slate-500">
             <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
             " / "
-            <span class="text-slate-300">(&ruleset.name)</span>
+            <span class="text-slate-300">
+                if name.is_empty() { "New" } else { (&name) }
+            </span>
         </nav>
-
-        <div id="top" class="mt-3 flex scroll-mt-24 flex-wrap items-start justify-between gap-4">
-            <div>
-                <div class="flex flex-wrap items-center gap-3">
-                    <h1 class="text-2xl font-semibold tracking-tight">(&ruleset.name)</h1>
-                    components::status_badge(enabled: enabled)
-                </div>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-                <button
-                    type="button"
-                    class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
-                >
-                    "Add field"
-                </button>
-                <button
-                    type="submit"
-                    form="ruleset-fields"
-                    class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
-                >
-                    "Save ruleset"
-                </button>
-                components::status_toggle(
-                    enabled: enabled,
-                    action: switch_action(&ruleset.id, &q.url(&ruleset.id, "#top")),
-                )
-                components::action_button(
-                    action: format!("/admin/rulesets/{}/remove", ruleset.id),
-                    label: "Delete",
-                )
-            </div>
-        </div>
-
-        match parent {
-            Some(parent) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
-                "Narrows "
-                <a
-                    href=(format!("/admin/rulesets/{}", parent.id))
-                    class="text-slate-200 underline decoration-slate-700 underline-offset-2 hover:text-white"
-                >(&parent.name)</a>
-                ". A greyed field carries the parent's value. Replace one to give this ruleset its own."
-            </p>,
-            None => "",
-        }
 
         <form
             id="ruleset-fields"
             method="post"
-            action=(format!("/admin/rulesets/{}", ruleset.id))
-            class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
+            action=(&action)
             // FormData skips a disabled input, so an inherited row stays out
             // of the draft and the parent's field keeps applying.
             @input=$(|_e: Event| draft.set(raw!(
@@ -1114,37 +1113,111 @@ async fn ruleset_editor(cx: &Cx) -> Result {
                 String::new()
             )))
         >
-            // The editor has no name or parent input of its own, so it posts
-            // back the ones the ruleset already carries.
-            <input type="hidden" name="name" value=(&ruleset.name)>
-            <input type="hidden" name="inherits" value=(ruleset.inherits.as_deref().unwrap_or_default())>
+            <div id="top" class="mt-3 flex scroll-mt-24 flex-wrap items-start justify-between gap-4">
+                <div class="min-w-0 flex-1">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <input
+                            type="text"
+                            name="name"
+                            value=(&name)
+                            placeholder="Coastal Ecology"
+                            class="w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-2xl font-semibold tracking-tight text-slate-100 focus:border-slate-600 focus:outline-none"
+                        >
+                        match ruleset {
+                            Some(ruleset) => components::status_badge(enabled: ruleset.enabled),
+                            None => "",
+                        }
+                    </div>
 
-            <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <h2 class="text-sm font-semibold text-slate-100">
-                    "Fields " <span class="text-slate-500">"(" (fields.len()) ")"</span>
-                </h2>
-                <p class="text-xs text-slate-500">
-                    if inheriting {
-                        "A greyed field is inherited. Use the source column to replace it."
-                    } else {
-                        "Each field names a capture group and the type its value parses as."
+                    <label for="inherits" class="mt-3 block text-xs text-slate-500">
+                        "Narrows"
+                    </label>
+                    <select
+                        id="inherits"
+                        name="inherits"
+                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                    >
+                        <option value="" selected=(inherits.is_empty())>
+                            "Nothing. Declare every field here."
+                        </option>
+                        // Only a base is offered, and a base inherits nothing,
+                        // so the one chain a choice here closes is onto itself.
+                        for base in engine.bases().filter(|base| base.id != ruleset_id) {
+                            <option value=(&base.id) selected=(base.id == inherits)>
+                                (&base.name) " (" (base.fields.len()) " fields)"
+                            </option>
+                        }
+                    </select>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                    >
+                        "Add field"
+                    </button>
+                    <button
+                        type="submit"
+                        class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
+                    >
+                        if ruleset.is_some() { "Save" } else { "Create" }
+                    </button>
+                    match ruleset {
+                        Some(ruleset) => <div class="contents">
+                            components::status_toggle(
+                                enabled: ruleset.enabled,
+                                action: switch_action(&ruleset.id, &query.url(&ruleset.id, "#top")),
+                            )
+                            components::action_button(
+                                action: format!("/admin/rulesets/{}/remove", ruleset.id),
+                                label: "Delete",
+                            )
+                        </div>,
+                        None => "",
                     }
-                </p>
+                </div>
             </div>
 
-            for (index, resolved) in fields.iter().enumerate() {
-                components::field_row(
-                    index: index,
-                    resolved: *resolved,
-                    inheriting: inheriting,
-                    toggle_href: q.with_replaced(
-                            &q.replaced.toggled(&resolved.field.name),
-                            &ruleset.id,
-                            &format!("#field-{}", resolved.field.part.slug()),
-                        ),
-                )
+            match parent {
+                Some(parent) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+                    "Narrows "
+                    <a
+                        href=(format!("/admin/rulesets/{}", parent.id))
+                        class="text-slate-200 underline decoration-slate-700 underline-offset-2 hover:text-white"
+                    >(&parent.name)</a>
+                    ". A greyed field carries the parent's value. Replace one to give this ruleset its own."
+                </p>,
+                None => "",
             }
 
+            <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
+                <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <h2 class="text-sm font-semibold text-slate-100">
+                        "Fields " <span class="text-slate-500">"(" (fields.len()) ")"</span>
+                    </h2>
+                    <p class="text-xs text-slate-500">
+                        if inheriting {
+                            "A greyed field is inherited. Use the source column to replace it."
+                        } else {
+                            "Each field names a capture group and the type its value parses as."
+                        }
+                    </p>
+                </div>
+
+                for (index, resolved) in fields.iter().enumerate() {
+                    components::field_row(
+                        index: index,
+                        resolved: *resolved,
+                        inheriting: inheriting,
+                        toggle_href: query.with_replaced(
+                                &query.replaced.toggled(&resolved.field.name),
+                                &row_id,
+                                &format!("#field-{}", resolved.field.part.slug()),
+                            ),
+                    )
+                }
+            </div>
         </form>
 
         live_matches(
@@ -1158,29 +1231,23 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 
 /// Runs the saved rules and the edited rules over every stored title.
 ///
-/// `after` is the edited field list. The page passes the saved fields until
-/// the form feeds its own rows in, so a title reads unchanged rather than
-/// gained or lost on a page nobody has edited yet.
+/// `before` is empty for a ruleset that is not saved yet, so every title the
+/// draft claims reads as gained rather than unchanged.
 ///
 /// The items arrive from the caller rather than being read here, because a
 /// [`Match`] borrows the title it describes and cannot outlive the read.
 fn compute_matches<'a>(
     registry: &FeedRegistry,
-    engine: &Engine,
-    ruleset: &Ruleset,
-    items: &'a [StoredItem],
+    before: &[Rule],
     after: &[&Field],
+    items: &'a [StoredItem],
 ) -> (Vec<Match<'a>>, Vec<PatternError>) {
-    let saved = ruleset.resolved_fields(engine.parent(ruleset), &[]);
-    let saved = saved.iter().map(|field| field.field).collect::<Vec<_>>();
-
-    let (before, _) = matches::rules(&saved, &Edits::default());
     let (after, errors) = matches::rules(after, &Edits::default());
 
     let matched = items
         .iter()
         .map(|item| {
-            let (diff, segments) = matches::diff(&before, &after, &item.item.title);
+            let (diff, segments) = matches::diff(before, &after, &item.item.title);
 
             Match {
                 id: item.id,
@@ -1230,7 +1297,13 @@ async fn live_matches(
     draft: String,
 ) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
-    let saved = engine.ruleset(&ruleset).ok_or_not_found()?;
+
+    // An empty id names the ruleset the reader is still creating. Anything
+    // else is looked up, so a spoofed id renders no ruleset but its own.
+    let saved = match ruleset.as_str() {
+        "" => None,
+        id => Some(engine.ruleset(id).ok_or_not_found()?),
+    };
 
     let posted = match RulesetForm::parse(&draft) {
         Ok(posted) => posted,
@@ -1248,13 +1321,22 @@ async fn live_matches(
     let after = draft_fields(parent, &posted.fields);
 
     let services = app_context::<Services>(cx);
+
     let items = store::items(&services.db, None).await?;
+    // A ruleset with nothing saved has no rules to lose, so the whole draft
+    // reads as gained.
+    let before = saved.map_or_else(Vec::new, |saved| {
+        let fields = saved.resolved_fields(engine.parent(saved), &[]);
+        let fields = fields.iter().map(|field| field.field).collect::<Vec<_>>();
+
+        matches::rules(&fields, &Edits::default()).0
+    });
+
     let (matched, errors) = compute_matches(
         app_context::<Arc<FeedRegistry>>(cx),
-        &engine,
-        saved,
-        &items,
+        &before,
         &after,
+        &items,
     );
 
     view! {
@@ -1472,69 +1554,4 @@ async fn remove_ruleset(cx: &Cx) -> Result<SeeOther> {
     }
 
     Ok(see_other("/admin"))
-}
-
-#[page("/admin/rulesets/new")]
-async fn new_ruleset(cx: &Cx) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
-
-    view! {
-        <nav class="text-sm text-slate-500">
-            <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
-            " / "
-            <span class="text-slate-300">"New"</span>
-        </nav>
-
-        <h1 class="mt-3 text-2xl font-semibold tracking-tight">"New ruleset"</h1>
-        <p class="mt-1 text-sm text-slate-400">
-            "Start from nothing, or narrow an existing ruleset to one series."
-        </p>
-
-        <form
-            method="post"
-            action="/admin/rulesets"
-            class="mt-6 flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4"
-        >
-            <div>
-                <label for="name" class="block text-xs text-slate-500">"Name"</label>
-                <input
-                    id="name"
-                    type="text"
-                    name="name"
-                    placeholder="Coastal Ecology"
-                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-                >
-            </div>
-
-            <div>
-                <label for="inherits" class="block text-xs text-slate-500">"Inherit from"</label>
-                <select
-                    id="inherits"
-                    name="inherits"
-                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-                >
-                    <option value="">"Nothing. Declare every field here."</option>
-                    for base in engine.bases() {
-                        <option value=(&base.id)>
-                            (&base.name) " (" (base.fields.len()) " fields)"
-                        </option>
-                    }
-                </select>
-                <p class="mt-2 text-xs text-slate-500">
-                    "An inherited ruleset starts with every field greyed out. Replace only the
-                    field that names the series, and the other rules keep tracking the parent."
-                </p>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-4">
-                <button
-                    type="submit"
-                    class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
-                >
-                    "Create ruleset"
-                </button>
-                <a href="/admin" class="text-sm text-slate-400 hover:text-slate-200">"Cancel"</a>
-            </div>
-        </form>
-    }
 }
