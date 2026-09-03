@@ -586,16 +586,18 @@ async fn feeds(cx: &Cx) -> Result {
     }
 }
 
-#[page("/admin/status")]
-async fn status(cx: &Cx) -> Result {
+#[page("/admin/client")]
+async fn client(cx: &Cx) -> Result {
     let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
-    let client = services.torrents.check().await;
+    // Bound as `checked` rather than `client`, because the `#[page]`
+    // attribute above puts a unit struct named `client` in scope.
+    let checked = services.torrents.check().await;
     let synced = app_context::<Arc<SyncState>>(cx).last();
 
     view! {
-        <h1 class="text-2xl font-semibold tracking-tight">"Status"</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">"Client"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "What this application talks to, and how each one last answered."
         </p>
@@ -608,15 +610,15 @@ async fn status(cx: &Cx) -> Result {
                     <span class="text-sm text-slate-200">"qBittorrent"</span>
                     <span class=(class!(
                         "rounded-full px-2 py-0.5 text-xs",
-                        "bg-emerald-500/15 text-emerald-300" if client.is_ok()
+                        "bg-emerald-500/15 text-emerald-300" if checked.is_ok()
                             else "bg-rose-500/15 text-rose-300",
                     ))>
-                        if client.is_ok() { "ok" } else { "failed" }
+                        if checked.is_ok() { "ok" } else { "failed" }
                     </span>
                 </div>
 
                 <p class="mt-0.5 font-mono text-xs break-all text-slate-500">
-                    match &client {
+                    match &checked {
                         Ok(info) => (&info.version),
                         Err(error) => (error.to_string()),
                     }
@@ -625,9 +627,6 @@ async fn status(cx: &Cx) -> Result {
                 <p class="mt-1 text-xs text-slate-500">
                     match &synced {
                         None => "never synced",
-                        // Bound as `last` rather than `status`, because the
-                        // `#[page]` attribute above puts a unit struct named
-                        // `status` in scope.
                         Some(last) => match &last.outcome {
                             Ok(report) => {
                                 (report.matched) " of "
@@ -645,7 +644,7 @@ async fn status(cx: &Cx) -> Result {
             </div>
 
             components::action_button(
-                action: "/admin/torrents/sync?back=/admin/status",
+                action: "/admin/torrents/sync?back=/admin/client",
                 label: "Sync now",
             )
         </div>
@@ -699,7 +698,7 @@ async fn status(cx: &Cx) -> Result {
 
                         components::action_button(
                             action: format!(
-                                "/admin/feeds/{}/check?back=/admin/status",
+                                "/admin/feeds/{}/check?back=/admin/client",
                                 entry.id,
                             ),
                             label: "Test",
@@ -724,7 +723,7 @@ async fn sync_library(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
-        .unwrap_or_else(|| "/admin/status".to_owned());
+        .unwrap_or_else(|| "/admin/client".to_owned());
 
     let services = app_context::<Services>(cx);
 
@@ -750,7 +749,7 @@ async fn check_feed(cx: &Cx) -> Result<SeeOther> {
     let back = query_params::<SwitchReturn>(cx)?
         .back
         .clone()
-        .unwrap_or_else(|| "/admin/status".to_owned());
+        .unwrap_or_else(|| "/admin/client".to_owned());
 
     let services = app_context::<Services>(cx);
 
@@ -772,7 +771,7 @@ async fn check_feed(cx: &Cx) -> Result<SeeOther> {
 
 /// Fetches one feed now and shows what it carries.
 ///
-/// This stores nothing and records no check, so `feed_items` and the status
+/// This stores nothing and records no check, so `feed_items` and the client
 /// page read the same after a test as before it. A fetch that fails renders
 /// on the page rather than as an error status, because the request itself
 /// succeeded: the tracker is what did not answer.
