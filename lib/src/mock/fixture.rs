@@ -1,19 +1,22 @@
-//! The matching configuration every parse runs against.
+//! The rulesets the tests parse titles with.
 //!
-//! [`crate::rules`] compiles these rulesets at startup and runs their patterns
-//! over each release name, so a pattern here decides what the application
-//! claims. The titles, release groups, and feed names are invented, matching
-//! the ones in [`super::releases`], and each `sample` is the highlighting the
-//! editor shows for one of them.
+//! The application ships none, so a test that needs a claimed title
+//! supplies its own configuration. [`ENGINE`] here is what a test asserts
+//! against, and [`crate::rules::ENGINE`] is the empty shipped one.
 //!
-//! Every ruleset ships disabled, so these are templates rather than
-//! subscriptions. An enabled ruleset the reader never chose fills the wanted
-//! list with releases they never subscribed to, because a base such as
-//! `series-episodes` claims any well-formed episode name a tracker announces.
+//! Five rulesets, every name invented:
+//!
+//! - `series-episodes`, a base that claims any episode name.
+//! - `series-hollow-meridian`, a child narrowing it to one show at 1080p.
+//! - `series-ashfall-county`, a second child, narrowed by publisher.
+//! - `feature-films`, a title followed by a production year.
+//! - `archive-talks`, a publisher-prefixed session number.
 //!
 //! [`super::FieldKind::Season`] and [`super::FieldKind::Episode`] arrive under
 //! an alias, because [`super::Part`] names those two parts as well and the
 //! parts are used far more often in this file.
+
+use std::sync::LazyLock;
 
 use super::{
     Field,
@@ -22,8 +25,32 @@ use super::{
         Audio, Checksum, Codec, Episode, Extension, Movie, Publisher, Resolution, Season, Show,
         Source, Year,
     },
-    Ruleset, candidates, gap, hit,
+    Ruleset, Segment,
 };
+use crate::rules::Engine;
+
+/// Marks a run of text that no rule claimed, such as a separator.
+const fn gap(text: &'static str) -> Segment {
+    Segment { text, part: None }
+}
+
+/// Marks a run of text that `part` claimed.
+const fn hit(text: &'static str, part: super::Part) -> Segment {
+    Segment {
+        text,
+        part: Some(part),
+    }
+}
+
+/// The fixture rulesets, compiled once.
+///
+/// # Panics
+///
+/// Panics when a pattern fails to compile, which makes a bad fixture
+/// pattern a failure of the test run rather than a silent miss.
+pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
+    Engine::from_rulesets(RULESETS).expect("every fixture pattern is a valid regex")
+});
 
 pub(crate) const RULESETS: &[Ruleset] = &[
     Ruleset {
@@ -120,7 +147,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 identity: false,
             },
         ],
-        candidates: candidates::SERIES_EPISODES,
+        candidates: &[],
     },
     Ruleset {
         id: "feature-films",
@@ -207,7 +234,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 identity: false,
             },
         ],
-        candidates: candidates::FEATURE_FILMS,
+        candidates: &[],
     },
     Ruleset {
         id: "archive-talks",
@@ -279,7 +306,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
                 identity: false,
             },
         ],
-        candidates: candidates::ARCHIVE_TALKS,
+        candidates: &[],
     },
     Ruleset {
         id: "series-hollow-meridian",
@@ -301,7 +328,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
             hit("PublicWave", Publisher),
             hit(".mkv", Extension),
         ],
-        candidates: candidates::HOLLOW_MERIDIAN,
+        candidates: &[],
         fields: &[
             Field {
                 name: "show",
@@ -341,7 +368,7 @@ pub(crate) const RULESETS: &[Ruleset] = &[
             hit("PublicWave", Publisher),
             hit(".mkv", Extension),
         ],
-        candidates: candidates::ASHFALL_COUNTY,
+        candidates: &[],
         fields: &[
             Field {
                 name: "show",

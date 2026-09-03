@@ -571,7 +571,6 @@ pub(crate) async fn ruleset_card(
                         </span>,
                         None => <span>(format::count(ruleset.fields.len(), "field", "fields"))</span>,
                     }
-                    <span>(format::count(ruleset.match_count(), "match", "matches"))</span>
                     <span>(ruleset.feeds.join(", "))</span>
                 </div>
             </a>
@@ -624,7 +623,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 #[cfg(test)]
 mod tests {
     use super::passed;
-    use crate::rules::ENGINE;
+    use crate::mock::fixture::ENGINE;
 
     #[test]
     fn passed_names_declared_rulesets_and_keeps_the_rest_by_id() {

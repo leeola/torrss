@@ -24,7 +24,7 @@ use crate::mock::{self, Field, FieldKind, Ruleset};
 /// the code, so a bad one is a programming error rather than a condition a
 /// caller handles.
 pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
-    Engine::from_rulesets(mock::RULESETS).expect("every mock pattern is a valid regex")
+    Engine::from_rulesets(mock::RULESETS).expect("every shipped pattern is a valid regex")
 });
 
 /// What one ruleset made of a release name.
@@ -326,7 +326,8 @@ fn normalize(kind: FieldKind, raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ENGINE, Identity};
+    use super::Identity;
+    use crate::mock::fixture::ENGINE;
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";

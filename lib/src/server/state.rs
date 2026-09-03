@@ -64,14 +64,14 @@ mod tests {
     use std::collections::HashSet;
 
     use super::RulesetSwitches;
-    use crate::rules::ENGINE;
+    use crate::mock::fixture::ENGINE;
 
     #[test]
     fn nothing_is_enabled_at_start() {
         assert_eq!(
             RulesetSwitches::new(&ENGINE).snapshot(),
             HashSet::new(),
-            "a shipped ruleset is a template until the reader switches it on"
+            "a declared ruleset is a template until the reader switches it on"
         );
     }
 

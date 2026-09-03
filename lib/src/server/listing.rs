@@ -141,7 +141,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{Standing, parsed_values, standing};
-    use crate::rules::ENGINE;
+    use crate::mock::fixture::ENGINE;
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";

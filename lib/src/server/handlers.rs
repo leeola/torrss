@@ -492,25 +492,31 @@ async fn admin(cx: &Cx) -> Result {
             </a>
         </div>
 
-        <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
-            for base in ENGINE.bases() {
-                components::ruleset_card(
-                    ruleset: base,
-                    parent: ENGINE.parent(base),
-                    nested: false,
-                    enabled: switches.is_enabled(base.id),
-                )
-
-                for child in ENGINE.children(base) {
+        if ENGINE.bases().next().is_none() {
+            <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No ruleset is declared."
+            </p>
+        } else {
+            <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
+                for base in ENGINE.bases() {
                     components::ruleset_card(
-                        ruleset: child,
-                        parent: Some(base),
-                        nested: true,
-                        enabled: switches.is_enabled(child.id),
+                        ruleset: base,
+                        parent: ENGINE.parent(base),
+                        nested: false,
+                        enabled: switches.is_enabled(base.id),
                     )
+
+                    for child in ENGINE.children(base) {
+                        components::ruleset_card(
+                            ruleset: child,
+                            parent: Some(base),
+                            nested: true,
+                            enabled: switches.is_enabled(child.id),
+                        )
+                    }
                 }
-            }
-        </ul>
+            </ul>
+        }
     }
 }
 

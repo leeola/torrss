@@ -1,24 +1,29 @@
-//! Mock feed results and rulesets that stand in for real parsing.
+//! The types that describe a ruleset and the fields it reads a release
+//! name with.
 //!
-//! Nothing here reads a feed or runs a pattern. The data renders the pages,
-//! which puts the design and the navigation in front of a reviewer ahead of
-//! the parser. Every show, movie, release group, and feed name is invented.
+//! The premade field kinds live here too, because a kind carries the
+//! pattern a field of that kind matches with.
 //!
-//! Every value is `'static`, so a handler borrows the data rather than
-//! building it per request.
+//! Every value is `'static`, so a handler borrows a ruleset rather than
+//! building one per request. That is what a later store has to preserve.
 
-mod candidates;
-mod releases;
-mod rulesets;
-
-pub(crate) use releases::RELEASES;
-pub(crate) use rulesets::RULESETS;
+#[cfg(test)]
+pub(crate) mod fixture;
 
 /// A named component that a ruleset pulls out of a release filename.
 ///
 /// The variant picks both the label and the highlight color, so a reader sees
 /// at a glance which part of a filename a rule claimed.
+///
+/// Only a ruleset declaration names a part, and the application declares
+/// none, so nothing constructs one outside the fixture and the tests. The
+/// vocabulary stays whole because a stored ruleset has to name the same
+/// parts the editor already renders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "the parts a stored ruleset will name, ahead of a store to name them"
+)]
 pub(crate) enum Part {
     Show,
     Movie,
@@ -122,14 +127,12 @@ pub(crate) struct Segment {
     pub(crate) part: Option<Part>,
 }
 
-/// One release a mock ruleset claimed.
+/// The rulesets the application ships, which is none.
 ///
-/// This exists to give [`Ruleset::match_count`] something to count. The feed
-/// page renders stored items, so nothing here describes a filename any more.
-pub(crate) struct Release {
-    /// [`Ruleset::id`] of the ruleset that claimed it.
-    pub(crate) ruleset: &'static str,
-}
+/// A ruleset the reader never wrote claims releases they never asked for,
+/// so nothing is declared here. The list stays empty until rulesets come
+/// from a store the reader writes into.
+pub(crate) const RULESETS: &[Ruleset] = &[];
 
 /// A set of field rules that together parse one family of filenames.
 pub(crate) struct Ruleset {
@@ -140,12 +143,12 @@ pub(crate) struct Ruleset {
     pub(crate) summary: &'static str,
     /// Whether the ruleset runs when the process starts.
     ///
-    /// Every shipped ruleset declares `false`, so the wanted list stays empty
-    /// until the reader chooses what to follow.
+    /// This seeds the switch state once. [`crate::server`] holds the live
+    /// value from then on, which a reader flips at runtime without editing
+    /// this declaration.
     ///
     /// A disabled ruleset filters nothing, so its releases stay out of the
-    /// feed. [`crate::server`] holds the live value, which a reader flips at
-    /// runtime without editing this declaration.
+    /// feed.
     pub(crate) enabled: bool,
     pub(crate) feeds: &'static [&'static str],
 
@@ -171,14 +174,6 @@ pub(crate) struct Ruleset {
 }
 
 impl Ruleset {
-    /// Counts the releases this ruleset claimed.
-    pub(crate) fn match_count(&self) -> usize {
-        RELEASES
-            .iter()
-            .filter(|release| release.ruleset == self.id)
-            .count()
-    }
-
     /// Counts the candidates sitting in one diff state.
     pub(crate) fn diff_count(&self, diff: Diff) -> usize {
         self.candidates
@@ -348,19 +343,6 @@ impl Diff {
             Self::Kept => "bg-slate-700/40 text-slate-300",
             Self::Excluded => "bg-slate-800/60 text-slate-500",
         }
-    }
-}
-
-/// Marks a run of text that no rule claimed, such as a separator.
-const fn gap(text: &'static str) -> Segment {
-    Segment { text, part: None }
-}
-
-/// Marks a run of text that `part` claimed.
-const fn hit(text: &'static str, part: Part) -> Segment {
-    Segment {
-        text,
-        part: Some(part),
     }
 }
 

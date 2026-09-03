@@ -178,7 +178,7 @@ mod tests {
 
     use super::{SyncReport, SyncState, SyncStatus, sync};
     use crate::clock::Clock;
-    use crate::rules::ENGINE;
+    use crate::mock::fixture::ENGINE;
     use crate::services::Services;
     use crate::store::library;
     use crate::torrent::{TorrentClient, TorrentError};
