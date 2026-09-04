@@ -731,14 +731,15 @@ mod tests {
     fn a_preset_encodes_the_keys_a_row_reads() {
         assert_eq!(
             encode_preset(&PRESETS[4]),
-            "name=year&kind=number&pattern=%5C.%28%3F%3Cyear%3E%28%3F%3A19%7C20%29%5Cd%7B2%7D%29%5C.\
+            "name=year&kind=number&pattern=%5C.%28%3F%3Cyear%3E%28%3F%3A19%7C20%29%5Cd%7B2%7D%29\
              &required=on&identity=on",
             "the pairs are what read_row reads, minus the prefix a whole form adds"
         );
 
         assert_eq!(
             encode_preset(&PRESETS[5]),
-            "name=resolution&kind=enum&pattern=%28%3F%3Cresolution%3E480p%7C720p%7C1080p%7C2160p%29",
+            "name=resolution&kind=enum\
+             &pattern=%5C.%28%3F%3Cresolution%3E480p%7C720p%7C1080p%7C2160p%29",
             "a flag left unset posts nothing, as an unchecked box does"
         );
     }

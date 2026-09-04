@@ -449,10 +449,15 @@ pub(crate) struct Preset {
 
 /// The rows a reader starts from, drawn from scene naming.
 ///
-/// Each capture group is named after its preset, because that is the name the
-/// row starts with. A reader who renames the field keeps a working rule
-/// anyway. [`crate::rules`] falls back to group 1 when no group carries the
-/// field's name.
+/// Each is one component of the composed regex, so it carries the separator
+/// before its run and nothing after it. The component that follows guards the
+/// end of the run, and the reader orders the rows as the tracker orders the
+/// tokens.
+///
+/// Each names its capture group after its preset, because that is the name the
+/// row starts with. A reader who renames the field keeps a working rule,
+/// because `compose` in [`crate::rules`] then wraps the whole component in a
+/// group under the new name.
 ///
 /// The first five decide what a release is, so they are required or part of
 /// the identity. The rest describe one copy of it, and two copies that differ
@@ -461,14 +466,14 @@ pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "show",
         kind: FieldKind::Text,
-        pattern: Some(r"^(?<show>[\w.]+?)\.S\d"),
+        pattern: Some(r"^(?<show>[\w.]+?)"),
         required: true,
         identity: true,
     },
     Preset {
         name: "movie",
         kind: FieldKind::Text,
-        pattern: Some(r"^(?<movie>[\w.]+?)\.(?:19|20)\d{2}\."),
+        pattern: Some(r"^(?<movie>[\w.]+?)"),
         required: true,
         identity: true,
     },
@@ -489,42 +494,42 @@ pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "year",
         kind: FieldKind::Number,
-        pattern: Some(r"\.(?<year>(?:19|20)\d{2})\."),
+        pattern: Some(r"\.(?<year>(?:19|20)\d{2})"),
         required: true,
         identity: true,
     },
     Preset {
         name: "resolution",
         kind: FieldKind::Enum,
-        pattern: Some(r"(?<resolution>480p|720p|1080p|2160p)"),
+        pattern: Some(r"\.(?<resolution>480p|720p|1080p|2160p)"),
         required: false,
         identity: false,
     },
     Preset {
         name: "source",
         kind: FieldKind::Enum,
-        pattern: Some(r"(?<source>WEB-?DL|WEBRip|BluRay|BDRip|HDTV|DVDRip|Remux)"),
+        pattern: Some(r"\.(?<source>WEB-?DL|WEBRip|BluRay|BDRip|HDTV|DVDRip|Remux)"),
         required: false,
         identity: false,
     },
     Preset {
         name: "codec",
         kind: FieldKind::Enum,
-        pattern: Some(r"(?<codec>[xXhH]\.?26[45]|HEVC|AV1|XviD)"),
+        pattern: Some(r"\.(?<codec>[xXhH]\.?26[45]|HEVC|AV1|XviD)"),
         required: false,
         identity: false,
     },
     Preset {
         name: "audio",
         kind: FieldKind::Text,
-        pattern: Some(r"(?<audio>DDP?\d\.\d|AAC|DTS(?:-HD)?|TrueHD|Atmos|FLAC)"),
+        pattern: Some(r"\.(?<audio>DDP?\d\.\d|AAC|DTS(?:-HD)?|TrueHD|Atmos|FLAC)"),
         required: false,
         identity: false,
     },
     Preset {
         name: "publisher",
         kind: FieldKind::Text,
-        pattern: Some(r"-(?<publisher>[A-Za-z0-9]+)(?:\.\w+)?$"),
+        pattern: Some(r"-(?<publisher>[A-Za-z0-9]+)"),
         required: false,
         identity: false,
     },
@@ -550,8 +555,8 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use super::{FieldKind, PRESETS};
-    use crate::rules::{Component, compose};
+    use super::{Field, FieldKind, PRESETS, Ruleset};
+    use crate::rules::{Component, Engine, compose};
 
     /// Reads `title` through the pattern `kind` supplies, as the engine does.
     ///
@@ -657,6 +662,78 @@ mod tests {
                 .len(),
             12,
             "each preset names a distinct field, so two never collide in one ruleset"
+        );
+    }
+
+    #[test]
+    fn presets_in_scene_order_read_a_scene_title() {
+        let fields = [
+            "show",
+            "season",
+            "episode",
+            "resolution",
+            "source",
+            "codec",
+            "audio",
+            "publisher",
+            "extension",
+        ]
+        .map(|name| {
+            let preset = PRESETS
+                .iter()
+                .find(|preset| preset.name == name)
+                .unwrap_or_else(|| panic!("{name} is a preset"));
+
+            Field {
+                name: preset.name.to_owned(),
+                kind: preset.kind,
+                pattern: preset.pattern.map(str::to_owned),
+                required: preset.required,
+                identity: preset.identity,
+            }
+        });
+
+        let engine = Engine::from_rulesets(vec![Ruleset {
+            id: "scene".to_owned(),
+            name: "Scene".to_owned(),
+            enabled: true,
+            template: false,
+            based_on: None,
+            fields: fields.to_vec(),
+            tests: Vec::new(),
+        }])
+        .expect("the presets compose into one regex");
+
+        let parsed = engine
+            .parse("Coastal.Ecology.S02E05.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv")
+            .expect("a scene title the presets claim");
+
+        assert_eq!(
+            parsed
+                .values
+                .iter()
+                .map(|(name, raw)| {
+                    let kind = fields
+                        .iter()
+                        .find(|field| &field.name == name)
+                        .expect("a field of the ruleset")
+                        .kind;
+
+                    (name.as_str(), kind.normalize(raw))
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("show", "coastal ecology".to_owned()),
+                ("season", "2".to_owned()),
+                ("episode", "5".to_owned()),
+                ("resolution", "1080p".to_owned()),
+                ("source", "web dl".to_owned()),
+                ("codec", "x265".to_owned()),
+                ("audio", "ddp5 1".to_owned()),
+                ("publisher", "openreel".to_owned()),
+                ("extension", "mkv".to_owned()),
+            ],
+            "each preset reads its own run when the rows follow the tracker's order"
         );
     }
 }
