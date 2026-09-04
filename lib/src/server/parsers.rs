@@ -3,8 +3,10 @@
 //! A parser is the half of the job that reads a filename apart. It decides
 //! nothing about whether anyone wants the release, so this editor carries
 //! the field rows and the tests and no switch. The ruleset editor beside it
-//! carries the conditions, and the two share the test rows and the Matches
-//! section.
+//! carries the conditions, and the two share the test row component and the
+//! Matches section. Each editor re-renders its rows from its own form,
+//! because a parser draft holds its fields where a ruleset draft names a
+//! stored parser.
 
 use std::sync::Arc;
 
@@ -30,7 +32,7 @@ use crate::parser::form::{self as parser_form, ParserForm, ParserRows};
 use crate::parser::{PRESETS, Parser};
 use crate::ruleset::Diff;
 use crate::ruleset::registry::{Rulesets, SaveError};
-use crate::server::handlers::{compute_matches, test_results, test_rows};
+use crate::server::handlers::{compute_matches, test_results};
 use crate::server::matches::{Edits, Rules};
 use crate::server::{components, matches};
 use crate::services::Services;
@@ -538,6 +540,30 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
     view! {
         for (index, field) in posted.fields.iter().enumerate() {
             components::field_row(index: index, field: field)
+        }
+    }
+}
+
+/// Re-renders the test rows from the draft the editor holds.
+///
+/// The inputs follow the draft's own fields, so a field the reader just added
+/// has an input in the same breath. A row whose name is still blank keeps its
+/// input, because the input is tinted by the row's position and the blank one
+/// holds a position among the field rows above. It goes when the reader names
+/// or removes the row.
+///
+/// Only a structural change re-renders these, as with [`field_rows`]. A
+/// keystroke takes the focus out of the input under the cursor.
+#[shard]
+async fn test_rows(cx: &Cx, rows: String) -> Result {
+    let _ = cx;
+
+    let posted = ParserRows::parse(&rows);
+    let fields = posted.fields.iter().collect::<Vec<_>>();
+
+    view! {
+        for (index, test) in posted.tests.iter().enumerate() {
+            components::test_row(index: index, test: test, fields: &fields)
         }
     }
 }
