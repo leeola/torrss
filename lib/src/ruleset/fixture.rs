@@ -114,6 +114,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            conditions: Vec::new(),
             tests: Vec::new(),
         },
         Ruleset {
@@ -184,6 +185,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            conditions: Vec::new(),
             tests: Vec::new(),
         },
         Ruleset {
@@ -235,6 +237,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            conditions: Vec::new(),
             tests: Vec::new(),
         },
         Ruleset {
@@ -261,6 +264,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            conditions: Vec::new(),
             tests: Vec::new(),
         },
         Ruleset {
@@ -287,6 +291,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
+            conditions: Vec::new(),
             tests: Vec::new(),
         },
     ]

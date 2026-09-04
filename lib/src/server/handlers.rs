@@ -26,7 +26,7 @@ use crate::{
     rules::Engine,
     ruleset::form::{self, BASED_ROLE, EditorRows, RulesetForm, STANDALONE_ROLE, TEMPLATE_ROLE},
     ruleset::registry::{Rulesets, SaveError},
-    ruleset::{Diff, Field, FieldSource, PRESETS, ResolvedField, Ruleset},
+    ruleset::{Condition, Diff, Field, FieldSource, PRESETS, ResolvedField, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format, held,
@@ -81,6 +81,8 @@ window.torrssRows = {
   form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
   next: (params) => [...params.keys()].filter((key) => /^field\.\d+\.name$/.test(key)).length,
   nextTest: (params) => [...params.keys()].filter((key) => /^test\.\d+\.title$/.test(key)).length,
+  nextCondition: (params) =>
+    [...params.keys()].filter((key) => /^condition\.\d+\.field$/.test(key)).length,
   serialize: () => window.torrssRows.form().toString(),
   drop: (params, prefix) => {
     for (const key of [...params.keys()]) {
@@ -133,6 +135,11 @@ window.torrssRows = {
       return params.toString();
     }
 
+    if (name === 'add-condition') {
+      params.append(`condition.${window.torrssRows.nextCondition(params)}.field`, '');
+      return params.toString();
+    }
+
     if (name === 'move-up' || name === 'move-down') {
       const from = Number(argument);
       const to = name === 'move-up' ? from - 1 : from + 1;
@@ -151,6 +158,11 @@ window.torrssRows = {
 
     if (name === 'remove-test') {
       window.torrssRows.drop(params, `test.${argument}.`);
+      return params.toString();
+    }
+
+    if (name === 'remove-condition') {
+      window.torrssRows.drop(params, `condition.${argument}.`);
       return params.toString();
     }
 
@@ -1458,6 +1470,9 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         fields: ruleset
             .map(|ruleset| ruleset.fields.clone())
             .unwrap_or_default(),
+        conditions: ruleset
+            .map(|ruleset| ruleset.conditions.clone())
+            .unwrap_or_default(),
         tests: ruleset
             .map(|ruleset| ruleset.tests.clone())
             .unwrap_or_default(),
@@ -1778,6 +1793,31 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
             </div>
 
             <div
+                id="conditions"
+                class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
+            >
+                <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <h2 class="text-sm font-semibold text-slate-100">"Conditions"</h2>
+                    <button
+                        type="button"
+                        class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                        name="row-action"
+                        value="add-condition"
+                    >
+                        "Add condition"
+                    </button>
+                </div>
+                <p class="px-4 pb-3 text-xs text-slate-500">
+                    "The fields decide which titles have this shape, and the conditions decide
+                    which of those the ruleset claims. A value compares in its normalized form.
+                    An ordering compares numbers, so it needs a number, season, or episode
+                    field."
+                </p>
+
+                condition_rows(rows: $(rows.get()))
+            </div>
+
+            <div
                 id="tests"
                 class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
             >
@@ -1836,9 +1876,10 @@ fn compute_matches<'a>(
     registry: &FeedRegistry,
     before: &Rules,
     after: &[&Field],
+    conditions: &[Condition],
     items: &'a [StoredItem],
 ) -> (Vec<Match<'a>>, Vec<PatternError>) {
-    let (after, errors) = matches::rules(after, &Edits::default());
+    let (after, errors) = matches::rules(after, conditions, &Edits::default());
 
     let matched = items
         .iter()
@@ -1999,6 +2040,33 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
     }
 }
 
+/// Re-renders the condition rows from the draft the editor holds.
+///
+/// The field select lists the draft's own fields, as the test row's inputs
+/// do, so a field the reader just added is one a condition names in the same
+/// breath.
+#[shard]
+async fn condition_rows(cx: &Cx, rows: String) -> Result {
+    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+
+    let posted = EditorRows::parse(&rows);
+
+    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
+
+    // A row the reader just added carries no name to compare against, so the
+    // select offers nothing until they name it.
+    let fields = draft_fields(template, &posted.fields)
+        .into_iter()
+        .filter(|field| !field.name.is_empty())
+        .collect::<Vec<_>>();
+
+    view! {
+        for (index, condition) in posted.conditions.iter().enumerate() {
+            components::condition_row(index: index, condition: condition, fields: &fields)
+        }
+    }
+}
+
 /// Reports each saved test against the draft the editor holds.
 ///
 /// The verdicts follow the draft rather than the rows, so a pattern the
@@ -2017,7 +2085,7 @@ async fn test_results(cx: &Cx, draft: String) -> Result {
 
     let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
     let fields = draft_fields(template, &posted.fields);
-    let rules = matches::rules(&fields, &Edits::default()).0;
+    let rules = matches::rules(&fields, &posted.conditions, &Edits::default()).0;
 
     let judged = posted
         .tests
@@ -2152,13 +2220,14 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
         let fields = saved.resolved_fields(engine.template_of(saved));
         let fields = fields.iter().map(|field| field.field).collect::<Vec<_>>();
 
-        matches::rules(&fields, &Edits::default()).0
+        matches::rules(&fields, &saved.conditions, &Edits::default()).0
     });
 
     let (matched, errors) = compute_matches(
         app_context::<Arc<FeedRegistry>>(cx),
         &before,
         &after,
+        &posted.conditions,
         &items,
     );
 
@@ -2300,6 +2369,7 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             template: posted.template,
             based_on: posted.based_on,
             fields: posted.fields,
+            conditions: posted.conditions,
             tests: posted.tests,
         })
         .await
@@ -2341,6 +2411,7 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
             template: posted.template,
             based_on: posted.based_on,
             fields: posted.fields,
+            conditions: posted.conditions,
             tests: posted.tests,
         })
         .await;

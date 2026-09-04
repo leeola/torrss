@@ -13,9 +13,12 @@ use std::fmt::{self, Display};
 use regex::Regex;
 use snafu::{OptionExt, ResultExt, Snafu, ensure};
 
-use crate::ruleset::{FieldKind, Ruleset};
+use crate::ruleset::{Condition, FieldKind, Ruleset};
 
 /// What one ruleset made of a release name.
+///
+/// A ruleset claims a name when its regex reads it and every condition it
+/// carries holds on what the fields read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
     /// The ruleset that claimed the name, which is the first one declared
@@ -23,6 +26,9 @@ pub(crate) struct Parsed {
     pub(crate) ruleset: String,
 
     /// Every field that matched, in the ruleset's own order.
+    ///
+    /// A ruleset claims a title when its regex reads it and every condition
+    /// holds, so these are the values that met the conditions too.
     pub(crate) values: Vec<(String, String)>,
 
     pub(crate) identity: Identity,
@@ -134,6 +140,14 @@ pub(crate) enum EngineError {
     ))]
     BlankField { ruleset: String, field: String },
 
+    #[snafu(display("ruleset {ruleset} has a condition on field {field}, which it does not read"))]
+    UnknownField { ruleset: String, field: String },
+
+    #[snafu(display(
+        "ruleset {ruleset} orders field {field}, which is not a number, season, or episode field"
+    ))]
+    UnorderedField { ruleset: String, field: String },
+
     /// Every field compiled alone and the whole did not.
     ///
     /// Two fields that both write one group name is the one way to reach
@@ -213,6 +227,10 @@ struct Compiled {
     regex: Regex,
 
     fields: Vec<CompiledField>,
+
+    /// Every comparison the ruleset makes on a value the regex read, each
+    /// already checked against the fields.
+    conditions: Vec<Condition>,
 }
 
 struct CompiledField {
@@ -292,12 +310,15 @@ impl Engine {
 
     /// Lists every ruleset that claims `title`, in declaration order.
     ///
+    /// A ruleset claims a title when its regex reads it and every condition
+    /// holds.
+    ///
     /// A template claims nothing, so one never appears here even when the
     /// ruleset built on it does.
     pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
         self.rulesets
             .iter()
-            .filter(|ruleset| captures(ruleset, title).is_some())
+            .filter(|ruleset| claims(ruleset, title).is_some())
             .map(|ruleset| ruleset.id.clone())
             .collect()
     }
@@ -308,7 +329,7 @@ impl Engine {
     /// overlap, and declaration order is what settles it.
     pub(crate) fn parse(&self, title: &str) -> Option<Parsed> {
         self.rulesets.iter().find_map(|ruleset| {
-            let values = captures(ruleset, title)?;
+            let values = claims(ruleset, title)?;
 
             Some(Parsed {
                 ruleset: ruleset.id.clone(),
@@ -349,6 +370,29 @@ impl Compiled {
         };
 
         let resolved = ruleset.resolved_fields(template);
+
+        for condition in &ruleset.conditions {
+            let field = resolved
+                .iter()
+                .map(|resolved| resolved.field)
+                .find(|field| field.name == condition.field)
+                .context(UnknownFieldSnafu {
+                    ruleset: ruleset.id.clone(),
+                    field: condition.field.clone(),
+                })?;
+
+            ensure!(
+                !condition.op.orders()
+                    || matches!(
+                        field.kind,
+                        FieldKind::Number | FieldKind::Season | FieldKind::Episode
+                    ),
+                UnorderedFieldSnafu {
+                    ruleset: ruleset.id.clone(),
+                    field: condition.field.clone(),
+                }
+            );
+        }
 
         // Each pattern compiles alone first, so a bad regex names the field
         // that carries it rather than the whole ruleset.
@@ -402,6 +446,7 @@ impl Compiled {
                     identity: resolved.field.identity,
                 })
                 .collect(),
+            conditions: ruleset.conditions.clone(),
         })
     }
 
@@ -491,11 +536,46 @@ fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
     )
 }
 
+/// Returns what the fields read from `title`, or reports that the ruleset
+/// does not claim it.
+///
+/// The regex decides which titles have the shape the ruleset describes, and
+/// the conditions decide which of those it wants. A condition compares the
+/// normalized value rather than the raw capture, so it agrees with the
+/// identity the library stores and with a saved test's verdict.
+///
+/// A condition on a field the title did not carry fails, which is what makes
+/// an absent condition the way a ruleset asks for a pack alone.
+fn claims(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
+    let values = captures(ruleset, title)?;
+
+    for condition in &ruleset.conditions {
+        // `Compiled::new` refused a condition on a name no field carries, so
+        // a miss here is a field that read nothing.
+        let kind = ruleset
+            .fields
+            .iter()
+            .find(|field| field.name == condition.field)?
+            .kind;
+
+        let read = values
+            .iter()
+            .find(|(name, _)| *name == condition.field)
+            .map(|(_, raw)| kind.normalize(raw));
+
+        if !condition.holds(kind, read.as_deref()) {
+            return None;
+        }
+    }
+
+    Some(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Component, Engine, EngineError, Identity, compose};
-    use crate::ruleset::fixture::ENGINE;
-    use crate::ruleset::{Field, FieldKind, Ruleset};
+    use crate::ruleset::fixture::{self, ENGINE};
+    use crate::ruleset::{Condition, Field, FieldKind, Op, Ruleset};
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -692,6 +772,7 @@ mod tests {
             template,
             based_on: based_on.map(ToOwned::to_owned),
             fields: Vec::new(),
+            conditions: Vec::new(),
             tests: Vec::new(),
         }
     }
@@ -864,6 +945,7 @@ mod tests {
                     identity: false,
                 },
             ],
+            conditions: Vec::new(),
             tests: Vec::new(),
         };
 
@@ -873,6 +955,87 @@ mod tests {
                 Err(EngineError::Composed { ref ruleset, .. }) if ruleset == "clash"
             ),
             "each field compiles alone, and the group name they share fails the whole"
+        );
+    }
+
+    /// Names a condition, so the rulesets below read as a list of
+    /// comparisons rather than a page of struct literals.
+    fn condition(field: &str, op: Op, value: &str) -> Condition {
+        Condition {
+            field: field.to_owned(),
+            op,
+            value: value.to_owned(),
+        }
+    }
+
+    /// The fixture's episode template, which the rulesets below narrow.
+    fn episodes() -> Ruleset {
+        fixture::rulesets()
+            .into_iter()
+            .find(|one| one.id == "series-episodes")
+            .expect("the fixture declares the episode template")
+    }
+
+    #[test]
+    fn a_condition_narrows_what_the_regex_reads() {
+        let engine = Engine::from_rulesets(vec![
+            episodes(),
+            Ruleset {
+                conditions: vec![condition("resolution", Op::Equals, "1080p")],
+                ..based_on("high-definition", Some("series-episodes"), false)
+            },
+        ])
+        .expect("a condition on a field the template reads");
+
+        assert_eq!(
+            engine.claimants(HOLLOW_1080),
+            vec!["high-definition"],
+            "the regex reads the resolution and the condition wants this one"
+        );
+        assert_eq!(
+            engine.claimants(HOLLOW_720),
+            Vec::<&str>::new(),
+            "the same regex reads the other resolution, and the condition refuses it"
+        );
+    }
+
+    #[test]
+    fn a_condition_on_an_unread_field_is_an_error() {
+        let Err(error) = Engine::from_rulesets(vec![Ruleset {
+            fields: vec![show_field(Some("^(?<show>Ashfall)"))],
+            conditions: vec![condition("resolution", Op::Equals, "1080p")],
+            ..based_on("ashfall", None, false)
+        }]) else {
+            panic!("a condition on a value no field produces never compiles");
+        };
+
+        assert!(
+            matches!(
+                error,
+                EngineError::UnknownField { ref ruleset, ref field }
+                    if ruleset == "ashfall" && field == "resolution"
+            ),
+            "the message names the field the ruleset does not read: {error}"
+        );
+    }
+
+    #[test]
+    fn an_ordering_on_a_text_field_is_an_error() {
+        let Err(error) = Engine::from_rulesets(vec![Ruleset {
+            fields: vec![show_field(Some("^(?<show>Ashfall)"))],
+            conditions: vec![condition("show", Op::AtLeast, "10")],
+            ..based_on("ashfall", None, false)
+        }]) else {
+            panic!("text has no place on a number line");
+        };
+
+        assert!(
+            matches!(
+                error,
+                EngineError::UnorderedField { ref ruleset, ref field }
+                    if ruleset == "ashfall" && field == "show"
+            ),
+            "the message names the field that does not rank: {error}"
         );
     }
 }

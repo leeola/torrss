@@ -238,6 +238,7 @@ mod tests {
                 tight: true,
                 identity: true,
             }],
+            conditions: Vec::new(),
             tests: Vec::new(),
         }
     }

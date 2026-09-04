@@ -9,7 +9,8 @@ use super::matches::Match;
 use crate::feed::store::FeedCheck;
 use crate::rules::Engine;
 use crate::ruleset::{
-    Field, FieldKind, FieldSource, ResolvedField, Ruleset, RulesetTest, Segment, Tint,
+    Condition, Field, FieldKind, FieldSource, Op, ResolvedField, Ruleset, RulesetTest, Segment,
+    Tint,
 };
 use crate::store::StoredItem;
 use crate::torrent::{Torrent, TorrentState};
@@ -568,6 +569,92 @@ pub(crate) async fn test_row(index: usize, test: &RulesetTest, fields: &[&Field]
                     // stays out of the form encoding the shard parses.
                     name="row-action"
                     value=(format!("remove-test:{index}"))
+                    class="mt-5 inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
+                >
+                    "remove"
+                </button>
+            </div>
+        </div>
+    }
+}
+
+/// One condition inside the ruleset editor.
+///
+/// The field is a select rather than an input, because a condition on a name
+/// no rule reads never compiles. The list is the draft's own fields, so the
+/// reader picks from what the ruleset actually produces.
+///
+/// The value input renders under every operator. The two that ask about
+/// presence alone ignore what it holds, so a reader who switches to one and
+/// back finds their text where they left it.
+#[component]
+pub(crate) async fn condition_row(
+    index: usize,
+    condition: &Condition,
+    fields: &[&Field],
+) -> Result {
+    // The dot follows the named field rather than the row, because a
+    // condition is about one field and the color is how the reader finds it
+    // among the rows above.
+    let tint = fields
+        .iter()
+        .position(|field| field.name == condition.field)
+        .map(Tint::at);
+
+    view! {
+        <div class="grid grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 md:grid-cols-12 md:items-center">
+            <div class="md:col-span-4">
+                <label class="block text-xs text-slate-500">"Field"</label>
+                <div class="mt-1 flex items-center gap-2">
+                    match tint {
+                        Some(tint) => <span class=(class!("size-2 shrink-0 rounded-full", tint.dot()))></span>,
+                        None => "",
+                    }
+                    <select
+                        name=(format!("condition.{index}.field"))
+                        class="w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                    >
+                        for field in fields {
+                            <option value=(&field.name) selected=(field.name == condition.field)>
+                                (&field.name)
+                            </option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="md:col-span-3">
+                <label class="block text-xs text-slate-500">"Is"</label>
+                <select
+                    name=(format!("condition.{index}.op"))
+                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                >
+                    for op in Op::ALL {
+                        <option value=(op.label()) selected=(*op == condition.op)>
+                            (op.label())
+                        </option>
+                    }
+                </select>
+            </div>
+
+            <div class="md:col-span-4">
+                <label class="block text-xs text-slate-500">"Value"</label>
+                <input
+                    type="text"
+                    name=(format!("condition.{index}.value"))
+                    value=(&condition.value)
+                    placeholder=(condition.op.takes_value().then_some("1080p"))
+                    title=((!condition.op.takes_value())
+                        .then_some("This comparison asks whether the field read anything at all"))
+                    class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
+                >
+            </div>
+
+            <div class="md:col-span-1 md:justify-self-end">
+                <button
+                    type="button"
+                    name="row-action"
+                    value=(format!("remove-condition:{index}"))
                     class="mt-5 inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
                 >
                     "remove"

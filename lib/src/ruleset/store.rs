@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use sqlx::{Row, SqlitePool};
 
-use super::{Field, FieldKind, Ruleset, RulesetTest};
+use super::{Condition, Field, FieldKind, Op, Ruleset, RulesetTest};
 
 /// Adds a ruleset, or replaces the one already stored under its id.
 ///
@@ -50,6 +50,13 @@ const SELECT_FIELDS: &str = "
     ORDER BY ruleset, position
 ";
 
+/// Reads every condition of every ruleset, grouped by ruleset and in order.
+const SELECT_CONDITIONS: &str = "
+    SELECT ruleset, field, op, value
+    FROM ruleset_conditions
+    ORDER BY ruleset, position
+";
+
 /// Reads every saved test of every ruleset, grouped by ruleset and in order.
 const SELECT_TESTS: &str = "
     SELECT ruleset, position, title
@@ -77,14 +84,14 @@ impl RulesetStore {
         Self { pool }
     }
 
-    /// Returns every stored ruleset with its fields and saved tests, ordered
-    /// by name.
+    /// Returns every stored ruleset with its fields, conditions, and saved
+    /// tests, ordered by name.
     ///
     /// # Errors
     ///
-    /// Returns a decode failure when a row names a kind this build does not
-    /// know. Every stored value was one when it was written, so the row is
-    /// corrupt rather than merely unexpected.
+    /// Returns a decode failure when a row names a field kind or a condition
+    /// operator this build does not know. Every stored value was one when it
+    /// was written, so the row is corrupt rather than merely unexpected.
     pub(crate) async fn list(&self) -> Result<Vec<Ruleset>, sqlx::Error> {
         let mut rulesets =
             sqlx::query_as::<_, (String, String, Option<String>, bool, bool)>(SELECT_RULESETS)
@@ -98,6 +105,7 @@ impl RulesetStore {
                     template,
                     based_on,
                     fields: Vec::new(),
+                    conditions: Vec::new(),
                     tests: Vec::new(),
                 })
                 .collect::<Vec<_>>();
@@ -112,6 +120,23 @@ impl RulesetStore {
             };
 
             ruleset.fields.push(field(&row)?);
+        }
+
+        for row in sqlx::query(SELECT_CONDITIONS).fetch_all(&self.pool).await? {
+            let owner: String = row.try_get("ruleset")?;
+
+            let Some(ruleset) = rulesets.iter_mut().find(|ruleset| ruleset.id == owner) else {
+                continue;
+            };
+
+            let op: String = row.try_get("op")?;
+
+            ruleset.conditions.push(Condition {
+                field: row.try_get("field")?,
+                op: Op::from_label(&op)
+                    .ok_or_else(|| sqlx::Error::decode(format!("unknown condition op {op}")))?,
+                value: row.try_get("value")?,
+            });
         }
 
         for row in sqlx::query(SELECT_TESTS).fetch_all(&self.pool).await? {
@@ -152,10 +177,10 @@ impl RulesetStore {
         Ok(rulesets)
     }
 
-    /// Writes `ruleset` with its fields and saved tests, replacing whatever
-    /// was stored.
+    /// Writes `ruleset` with its fields, conditions, and saved tests,
+    /// replacing whatever was stored.
     ///
-    /// Both lists are deleted and reinserted rather than updated in place,
+    /// Every list is deleted and reinserted rather than updated in place,
     /// because a save drops a row as readily as it changes one. The whole
     /// write is one transaction, so a failure part way leaves the ruleset as
     /// it was rather than half rewritten.
@@ -193,6 +218,25 @@ impl RulesetStore {
             .bind(field.required)
             .bind(field.identity)
             .bind(field.tight)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        sqlx::query("DELETE FROM ruleset_conditions WHERE ruleset = ?1")
+            .bind(&ruleset.id)
+            .execute(&mut *tx)
+            .await?;
+
+        for (position, condition) in ruleset.conditions.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO ruleset_conditions (ruleset, position, field, op, value)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .bind(&ruleset.id)
+            .bind(position as i64)
+            .bind(&condition.field)
+            .bind(condition.op.label())
+            .bind(&condition.value)
             .execute(&mut *tx)
             .await?;
         }
@@ -283,7 +327,7 @@ mod tests {
 
     use sqlx::SqlitePool;
 
-    use super::{Field, FieldKind, Ruleset, RulesetStore, RulesetTest};
+    use super::{Condition, Field, FieldKind, Op, Ruleset, RulesetStore, RulesetTest};
 
     fn field(name: &str, pattern: Option<&str>) -> Field {
         Field {
@@ -304,14 +348,20 @@ mod tests {
             template,
             based_on: based_on.map(ToOwned::to_owned),
             fields,
+            conditions: Vec::new(),
             tests: Vec::new(),
         }
     }
 
     /// A template with two fields, whose order the position column keeps,
-    /// and one saved test naming both of them.
+    /// one condition on a field, and one saved test naming both of them.
     fn template() -> Ruleset {
         Ruleset {
+            conditions: vec![Condition {
+                field: "season".to_owned(),
+                op: Op::Equals,
+                value: "4".to_owned(),
+            }],
             tests: vec![RulesetTest {
                 title: "The.Hollow.Meridian.S04E06".to_owned(),
                 expected: BTreeMap::from([

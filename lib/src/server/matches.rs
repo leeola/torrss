@@ -24,7 +24,7 @@ use url::form_urlencoded;
 // `compose` is imported directly rather than through its module, because the
 // `rules` function below takes that name in this scope.
 use crate::rules::{Component, compose};
-use crate::ruleset::{Diff, Field, FieldKind, Segment};
+use crate::ruleset::{Condition, Diff, Field, FieldKind, Segment};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
@@ -84,6 +84,12 @@ pub(super) struct Rule {
 pub(super) struct Rules {
     pub(super) fields: Vec<Rule>,
     regex: Option<Regex>,
+
+    /// Every comparison the draft makes on a value its regex read.
+    ///
+    /// One that names a field the draft does not carry claims nothing, which
+    /// is the same refusal the engine makes of a saved ruleset.
+    conditions: Vec<Condition>,
 }
 
 /// Why one field's pattern did not compile.
@@ -189,7 +195,11 @@ impl Edits {
 /// An edit carries no tight flag. Every caller passes [`Edits::default`], and
 /// the live draft reaches here as fields `RulesetForm::parse_draft` already
 /// read, so the flag arrives on the field rather than beside it.
-pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternError>) {
+pub(super) fn rules(
+    fields: &[&Field],
+    conditions: &[Condition],
+    edits: &Edits,
+) -> (Rules, Vec<PatternError>) {
     let mut resolved = Vec::with_capacity(fields.len());
     let mut errors = Vec::new();
 
@@ -286,6 +296,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternErro
         Rules {
             fields: resolved.into_iter().map(|(rule, _)| rule).collect(),
             regex,
+            conditions: conditions.to_vec(),
         },
         errors,
     )
@@ -342,29 +353,50 @@ struct Capture<'a> {
     range: Range<usize>,
 }
 
-/// Returns where each rule matched in `title`, or nothing when the composed
-/// regex does not claim it.
+/// Returns where each rule matched in `title`, or nothing when the draft does
+/// not claim it.
 ///
 /// One match answers for every rule. A required rule is a plain group, so the
 /// regex fails without it. An optional one is a skippable group that yields no
 /// capture when it skips.
+///
+/// The conditions run after the regex, over the normalized values, so a title
+/// the reader's comparisons refuse reads as unclaimed everywhere the editor
+/// shows it.
 fn captures<'a>(rules: &'a Rules, title: &str) -> Option<Vec<Capture<'a>>> {
     let caps = rules.regex.as_ref()?.captures(title)?;
 
-    Some(
-        rules
+    let captured = rules
+        .fields
+        .iter()
+        .filter_map(|rule| {
+            let found = caps.name(&rule.name)?;
+
+            Some(Capture {
+                rule,
+                range: found.range(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for condition in &rules.conditions {
+        let kind = rules
             .fields
             .iter()
-            .filter_map(|rule| {
-                let found = caps.name(&rule.name)?;
+            .find(|rule| rule.name == condition.field)?
+            .kind;
 
-                Some(Capture {
-                    rule,
-                    range: found.range(),
-                })
-            })
-            .collect(),
-    )
+        let read = captured
+            .iter()
+            .find(|capture| capture.rule.name == condition.field)
+            .map(|capture| kind.normalize(&title[capture.range.clone()]));
+
+        if !condition.holds(kind, read.as_deref()) {
+            return None;
+        }
+    }
+
+    Some(captured)
 }
 
 /// Reads each capture out of `title` in the form its kind produces.
@@ -421,8 +453,9 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
 pub(super) mod tests {
     use super::{Edits, PatternError, diff, rules, values};
     use crate::ruleset::{
-        Diff, Field, FieldKind,
+        Condition, Diff, Field, FieldKind,
         FieldKind::{Season, Text},
+        Op,
     };
 
     fn field(
@@ -458,7 +491,7 @@ pub(super) mod tests {
 
     /// The rules the saved fields produce, with no edit applied.
     pub(in crate::server) fn saved(fields: &[&Field]) -> super::Rules {
-        rules(fields, &Edits::default()).0
+        rules(fields, &[], &Edits::default()).0
     }
 
     #[test]
@@ -523,7 +556,7 @@ pub(super) mod tests {
 
         let edits =
             Edits::parse("show.pattern=%5E(%3F%3Cshow%3E%5B%5Cw%20%5D%2B%3F)&show.required=on");
-        let (edited, errors) = rules(&fields, &edits);
+        let (edited, errors) = rules(&fields, &[], &edits);
 
         assert_eq!(errors, Vec::new(), "both patterns compile");
         assert_eq!(
@@ -544,7 +577,7 @@ pub(super) mod tests {
         let fields = resolved(&declared);
 
         let edits = Edits::parse("show.pattern=(&show.required=on");
-        let (edited, errors) = rules(&fields, &edits);
+        let (edited, errors) = rules(&fields, &[], &edits);
 
         assert_eq!(
             errors.iter().map(|error| &error.field).collect::<Vec<_>>(),
@@ -569,7 +602,7 @@ pub(super) mod tests {
         let fields = [&bare];
 
         assert_eq!(
-            rules(&fields, &Edits::default()).1,
+            rules(&fields, &[], &Edits::default()).1,
             [PatternError {
                 field: "bare".to_owned(),
                 message:
@@ -587,6 +620,7 @@ pub(super) mod tests {
 
         let narrowed = rules(
             &fields,
+            &[],
             &Edits::parse(
                 "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow%5C.Meridian)&show.required=on",
             ),
@@ -637,6 +671,34 @@ pub(super) mod tests {
                 ("E06.1080p", None),
             ],
             "a run covers the captured group, so the pattern's anchor text stays untinted"
+        );
+    }
+
+    #[test]
+    fn a_condition_refuses_a_title_the_regex_reads() {
+        let declared = declared();
+        let fields = resolved(&declared);
+
+        let narrowed = rules(
+            &fields,
+            &[Condition {
+                field: "season".to_owned(),
+                op: Op::Equals,
+                value: "5".to_owned(),
+            }],
+            &Edits::default(),
+        )
+        .0;
+
+        assert_eq!(
+            values(&narrowed, TITLE),
+            None,
+            "the regex reads the fourth season, and the condition wants the fifth"
+        );
+        assert_eq!(
+            diff(&saved(&fields), &narrowed, TITLE).diff,
+            Diff::Removed,
+            "so the edit gives up a title the saved rules claimed"
         );
     }
 }

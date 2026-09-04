@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use snafu::{OptionExt, Snafu, ensure};
 use url::form_urlencoded;
 
-use super::{Field, FieldKind, Preset, RulesetTest};
+use super::{Condition, Field, FieldKind, Op, Preset, RulesetTest};
 
 /// The role a posted ruleset names, which decides what its base means.
 ///
@@ -52,6 +52,8 @@ pub(crate) struct RulesetForm {
 
     pub(crate) fields: Vec<Field>,
 
+    pub(crate) conditions: Vec<Condition>,
+
     pub(crate) tests: Vec<RulesetTest>,
 }
 
@@ -72,6 +74,12 @@ pub(crate) enum FormError {
 
     #[snafu(display("two fields are named {field}"))]
     DuplicateName { field: String },
+
+    #[snafu(display("no condition is named {op}"))]
+    UnknownOp { op: String },
+
+    #[snafu(display("the condition on {field} needs a value"))]
+    MissingValue { field: String },
 }
 
 /// One field row as the form posted it, before it becomes a [`Field`].
@@ -99,6 +107,19 @@ struct TestRow {
     expected: BTreeMap<String, String>,
 }
 
+/// One condition row as the form posted it, before it becomes a
+/// [`Condition`].
+///
+/// Keyed `condition.{index}.field`, `condition.{index}.op`, and
+/// `condition.{index}.value`. The operator is a string here because a select
+/// posts text, and a row the reader just added names no field yet.
+#[derive(Default)]
+struct ConditionRow {
+    field: String,
+    op: String,
+    value: String,
+}
+
 /// A posted body sorted into its parts, before anything judges it.
 ///
 /// Both reads of a form start here and part company after. One drops what a
@@ -112,6 +133,8 @@ struct Posted {
     /// Ordered by index, so the fields come out in the order the editor
     /// showed them however the browser ordered the pairs.
     rows: BTreeMap<usize, Row>,
+
+    conditions: BTreeMap<usize, ConditionRow>,
 
     tests: BTreeMap<usize, TestRow>,
 }
@@ -127,11 +150,13 @@ struct Posted {
 /// the reader types one, and the rows list before that.
 ///
 /// A row that posted no kind comes back under the first option that select
-/// renders, which is the option the browser showed.
+/// renders, which is the option the browser showed. A condition that posted
+/// no operator reads the same way.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct EditorRows {
     pub(crate) based_on: Option<String>,
     pub(crate) fields: Vec<Field>,
+    pub(crate) conditions: Vec<Condition>,
     pub(crate) tests: Vec<RulesetTest>,
 }
 
@@ -143,6 +168,15 @@ impl EditorRows {
         Self {
             based_on: based_on(&posted),
             fields: posted.rows.into_values().map(draft_field).collect(),
+            conditions: posted
+                .conditions
+                .into_values()
+                .map(|row| Condition {
+                    field: row.field.trim().to_owned(),
+                    op: Op::from_label(&row.op).unwrap_or(Op::Equals),
+                    value: row.value,
+                })
+                .collect(),
             tests: posted
                 .tests
                 .into_values()
@@ -169,9 +203,14 @@ impl RulesetForm {
     /// identity, the test columns, and the override lookup, so two rows named
     /// alike are one field carrying two patterns.
     ///
-    /// A row with an empty name is skipped rather than refused, because that
-    /// is what an added row looks like before the reader fills it in. The
-    /// editor lists such a row through [`EditorRows`], which keeps it.
+    /// Returns a refusal for a condition naming an operator this build does
+    /// not know, or leaving its value empty under an operator that compares
+    /// one.
+    ///
+    /// A field row with an empty name and a condition row with no field are
+    /// both skipped rather than refused, because that is what an added row
+    /// looks like before the reader fills it in. The editor lists such a row
+    /// through [`EditorRows`], which keeps it.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
         let form = Self::parse_draft(body)?;
         ensure!(!form.name.is_empty(), EmptyNameSnafu);
@@ -191,6 +230,10 @@ impl RulesetForm {
     /// Returns the same refusals [`Self::parse`] does, less the empty name. A
     /// rule still does not compile from an unknown type or a missing pattern,
     /// and two rows under one name are still one field with two.
+    ///
+    /// Returns a refusal for a condition that names an operator this build
+    /// does not know, or that leaves its value empty under an operator that
+    /// compares one.
     pub(crate) fn parse_draft(body: &str) -> Result<Self, FormError> {
         let posted = read(body);
 
@@ -216,11 +259,21 @@ impl RulesetForm {
             );
         }
 
+        // A row with no field name is one the reader added and has not filled
+        // in, as a nameless field row is.
+        let conditions = posted
+            .conditions
+            .into_values()
+            .filter(|row| !row.field.trim().is_empty())
+            .map(condition)
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             name,
             template,
             based_on,
             fields,
+            conditions,
             // A blank title is a row the reader added and has not filled in,
             // and a blank expectation is an input they left alone. Neither
             // asserts that the value is empty.
@@ -283,6 +336,12 @@ impl RulesetForm {
             if field.tight {
                 pairs.append_pair(&format!("field.{index}.tight"), "on");
             }
+        }
+
+        for (index, condition) in self.conditions.iter().enumerate() {
+            pairs.append_pair(&format!("condition.{index}.field"), &condition.field);
+            pairs.append_pair(&format!("condition.{index}.op"), condition.op.label());
+            pairs.append_pair(&format!("condition.{index}.value"), &condition.value);
         }
 
         for (index, test) in self.tests.iter().enumerate() {
@@ -393,6 +452,33 @@ fn read_test(tests: &mut BTreeMap<usize, TestRow>, key: &str, value: &str) {
     }
 }
 
+/// Files one `condition.{index}.attribute` pair under its condition.
+///
+/// A key that is not a condition row passes through untouched, as
+/// [`read_row`] does with its own.
+fn read_condition(conditions: &mut BTreeMap<usize, ConditionRow>, key: &str, value: &str) {
+    let Some(rest) = key.strip_prefix("condition.") else {
+        return;
+    };
+
+    let Some((index, attribute)) = rest.split_once('.') else {
+        return;
+    };
+
+    let Ok(index) = index.parse::<usize>() else {
+        return;
+    };
+
+    let condition = conditions.entry(index).or_default();
+
+    match attribute {
+        "field" => condition.field = value.to_owned(),
+        "op" => condition.op = value.to_owned(),
+        "value" => condition.value = value.to_owned(),
+        _ => {}
+    }
+}
+
 /// Files one `field.{index}.attribute` pair under its row.
 ///
 /// A key that is not a field row passes through untouched. The editor's own
@@ -448,6 +534,7 @@ fn read(body: &str) -> Posted {
             "based_on" => posted.based_on = value.into_owned(),
             _ => {
                 read_test(&mut posted.tests, &key, &value);
+                read_condition(&mut posted.conditions, &key, &value);
                 read_row(&mut posted.rows, &key, &value);
             }
         }
@@ -485,6 +572,27 @@ fn draft_field(row: Row) -> Field {
     }
 }
 
+/// Resolves one posted row into a condition.
+///
+/// An operator that compares no value keeps whatever the input beside it
+/// held, because the editor renders that input under every operator and the
+/// reader's text survives a change of mind about the operator.
+fn condition(row: ConditionRow) -> Result<Condition, FormError> {
+    let op = Op::from_label(&row.op).context(UnknownOpSnafu { op: &row.op })?;
+    let field = row.field.trim().to_owned();
+
+    ensure!(
+        !op.takes_value() || !row.value.trim().is_empty(),
+        MissingValueSnafu { field: &field }
+    );
+
+    Ok(Condition {
+        field,
+        op,
+        value: row.value,
+    })
+}
+
 /// Resolves one posted row into a field.
 ///
 /// The pattern is dropped when the kind supplies one, so a premade kind keeps
@@ -516,7 +624,9 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{EditorRows, FormError, RulesetForm, encode_preset, slug, unique_slug};
+    use super::{
+        Condition, EditorRows, FormError, Op, RulesetForm, encode_preset, slug, unique_slug,
+    };
     use crate::ruleset::{Field, FieldKind, PRESETS, RulesetTest};
 
     fn text(name: &str, pattern: &str, required: bool, identity: bool) -> Field {
@@ -553,6 +663,7 @@ mod tests {
                     },
                     text("season", r"S\d+", false, false),
                 ],
+                conditions: Vec::new(),
                 tests: Vec::new(),
             },
             "the index orders the rows, and an absent checkbox reads false"
@@ -714,6 +825,11 @@ mod tests {
                     identity: true,
                 },
             ],
+            conditions: vec![Condition {
+                field: "season".to_owned(),
+                op: Op::AtLeast,
+                value: "2".to_owned(),
+            }],
             tests: vec![RulesetTest {
                 title: "The.Hollow.Meridian.S04E06.1080p".to_owned(),
                 expected: BTreeMap::from([
@@ -728,6 +844,7 @@ mod tests {
             template: true,
             based_on: None,
             fields: vec![text("show", "^.+", true, true)],
+            conditions: Vec::new(),
             tests: Vec::new(),
         };
 
@@ -752,6 +869,7 @@ mod tests {
                 template: true,
                 based_on: None,
                 fields: Vec::new(),
+                conditions: Vec::new(),
                 tests: Vec::new(),
             }),
             "a select the editor hides still posts, and a template is based on nothing"
@@ -764,6 +882,7 @@ mod tests {
                 template: false,
                 based_on: None,
                 fields: Vec::new(),
+                conditions: Vec::new(),
                 tests: Vec::new(),
             }),
             "a ruleset that stands alone declares every field itself"
@@ -790,6 +909,7 @@ mod tests {
                         identity: false,
                     },
                 ],
+                conditions: Vec::new(),
                 tests: vec![RulesetTest {
                     title: String::new(),
                     expected: BTreeMap::new(),
@@ -855,6 +975,7 @@ mod tests {
                 template: false,
                 based_on: None,
                 fields: vec![text("show", ".*", false, false)],
+                conditions: Vec::new(),
                 tests: Vec::new(),
             }),
             "the rules come from the fields, so a compare runs before the reader names anything"
@@ -866,6 +987,64 @@ mod tests {
                 kind: "colour".to_owned()
             }),
             "a rule still does not compile from a type this build does not know"
+        );
+    }
+
+    #[test]
+    fn conditions_read_field_op_and_value() {
+        assert_eq!(
+            RulesetForm::parse(
+                "name=Series&role=standalone\
+                 &condition.1.field=episodeNumber&condition.1.op=at+least&condition.1.value=10\
+                 &condition.0.field=resolution&condition.0.op=equals&condition.0.value=1080p\
+                 &condition.2.field=&condition.2.op=equals&condition.2.value="
+            ),
+            Ok(RulesetForm {
+                name: "Series".to_owned(),
+                template: false,
+                based_on: None,
+                fields: Vec::new(),
+                conditions: vec![
+                    Condition {
+                        field: "resolution".to_owned(),
+                        op: Op::Equals,
+                        value: "1080p".to_owned(),
+                    },
+                    Condition {
+                        field: "episodeNumber".to_owned(),
+                        op: Op::AtLeast,
+                        value: "10".to_owned(),
+                    },
+                ],
+                tests: Vec::new(),
+            }),
+            "the index orders the conditions, and a row naming no field is one the reader added"
+        );
+
+        assert_eq!(
+            RulesetForm::parse("name=X&condition.0.field=show&condition.0.op=rhymes+with"),
+            Err(FormError::UnknownOp {
+                op: "rhymes with".to_owned()
+            }),
+        );
+
+        assert_eq!(
+            RulesetForm::parse("name=X&condition.0.field=show&condition.0.op=equals"),
+            Err(FormError::MissingValue {
+                field: "show".to_owned()
+            }),
+            "an equality with nothing to compare against asserts nothing"
+        );
+
+        assert_eq!(
+            RulesetForm::parse("name=X&condition.0.field=show&condition.0.op=present")
+                .map(|form| form.conditions),
+            Ok(vec![Condition {
+                field: "show".to_owned(),
+                op: Op::Present,
+                value: String::new(),
+            }]),
+            "an operator that compares no value needs none"
         );
     }
 }

@@ -130,6 +130,13 @@ pub(crate) struct Ruleset {
     /// editor shows.
     pub(crate) fields: Vec<Field>,
 
+    /// Each comparison this ruleset makes on a value its regex read.
+    ///
+    /// The regex decides which titles have the shape this ruleset describes,
+    /// and these decide which of those it wants. A ruleset with none claims
+    /// every title its regex reads.
+    pub(crate) conditions: Vec<Condition>,
+
     /// What the reader expects this ruleset to read from named titles.
     ///
     /// The engine never reads these. They exist for the editor, which runs
@@ -339,6 +346,130 @@ pub(crate) struct RulesetTest {
 
     /// Keyed by field name, in that name's order.
     pub(crate) expected: BTreeMap<String, String>,
+}
+
+/// How a condition compares the value its field read.
+///
+/// The four orderings compare numbers, so a ruleset writes one only on a
+/// number, season, or episode field. [`Self::Present`] and [`Self::Absent`]
+/// ask whether the field read anything at all and carry no value of their
+/// own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Op {
+    Equals,
+    NotEquals,
+    LessThan,
+    AtMost,
+    GreaterThan,
+    AtLeast,
+    Present,
+    Absent,
+}
+
+impl Op {
+    /// Every operator, in the order the editor's dropdown lists them.
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::Equals,
+        Self::NotEquals,
+        Self::LessThan,
+        Self::AtMost,
+        Self::GreaterThan,
+        Self::AtLeast,
+        Self::Present,
+        Self::Absent,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Equals => "equals",
+            Self::NotEquals => "not equals",
+            Self::LessThan => "less than",
+            Self::AtMost => "at most",
+            Self::GreaterThan => "greater than",
+            Self::AtLeast => "at least",
+            Self::Present => "present",
+            Self::Absent => "absent",
+        }
+    }
+
+    /// The operator named by `label`, or [`None`] for anything else.
+    pub(crate) fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|op| op.label() == label)
+    }
+
+    /// Whether this operator ranks two numbers rather than comparing text.
+    pub(crate) fn orders(self) -> bool {
+        matches!(
+            self,
+            Self::LessThan | Self::AtMost | Self::GreaterThan | Self::AtLeast
+        )
+    }
+
+    /// Whether this operator compares against a value the reader writes.
+    ///
+    /// [`Self::Present`] and [`Self::Absent`] ask about the value's existence
+    /// alone, so the editor's input beside one asserts nothing.
+    pub(crate) fn takes_value(self) -> bool {
+        !matches!(self, Self::Present | Self::Absent)
+    }
+}
+
+/// One comparison a ruleset makes on a value its regex read.
+///
+/// The field names one of the ruleset's resolved fields. A condition on any
+/// other name never compiles, because the value it asks about is one no rule
+/// produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Condition {
+    pub(crate) field: String,
+    pub(crate) op: Op,
+
+    /// What the field's value is compared against, in the form the reader
+    /// typed it.
+    ///
+    /// It normalizes through the field's kind before an equality compares it,
+    /// so a show typed as `The Hollow Meridian` meets `The.Hollow.Meridian`.
+    /// An operator that takes no value ignores this.
+    pub(crate) value: String,
+}
+
+impl Condition {
+    /// Reports whether the value `read` meets this condition.
+    ///
+    /// `read` is the normalized value the field produced, or [`None`] when
+    /// the field read nothing. Every operator but [`Op::Absent`] fails on
+    /// [`None`], so a ruleset that names a value its title does not carry
+    /// claims nothing.
+    ///
+    /// An ordering parses both sides as numbers and fails when either side is
+    /// not one. A field whose kind ranks may still read text the pattern let
+    /// through, and text has no place on a number line.
+    pub(crate) fn holds(&self, kind: FieldKind, read: Option<&str>) -> bool {
+        let Some(read) = read else {
+            return self.op == Op::Absent;
+        };
+
+        match self.op {
+            Op::Absent => false,
+            Op::Present => true,
+            Op::Equals => read == kind.normalize(&self.value),
+            Op::NotEquals => read != kind.normalize(&self.value),
+            Op::LessThan | Op::AtMost | Op::GreaterThan | Op::AtLeast => {
+                let (Ok(read), Ok(against)) =
+                    (read.parse::<u64>(), self.value.trim().parse::<u64>())
+                else {
+                    return false;
+                };
+
+                match self.op {
+                    Op::LessThan => read < against,
+                    Op::AtMost => read <= against,
+                    Op::GreaterThan => read > against,
+                    _ => read >= against,
+                }
+            }
+        }
+    }
 }
 
 impl Field {
@@ -601,7 +732,7 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use super::{Field, FieldKind, PRESETS, Ruleset};
+    use super::{Condition, Field, FieldKind, Op, PRESETS, Ruleset};
     use crate::rules::{Component, Engine, compose};
 
     /// Reads `title` through the pattern `kind` supplies, as the engine does.
@@ -658,6 +789,7 @@ mod tests {
             template: false,
             based_on: None,
             fields: fields.to_vec(),
+            conditions: Vec::new(),
             tests: Vec::new(),
         }])
         .expect("the fields compose into one regex");
@@ -910,5 +1042,49 @@ mod tests {
             ],
             "the gap after a show that is not tight does not cut the run short"
         );
+    }
+
+    fn condition(field: &str, op: Op, value: &str) -> Condition {
+        Condition {
+            field: field.to_owned(),
+            op,
+            value: value.to_owned(),
+        }
+    }
+
+    #[test]
+    fn equals_compares_normalized_text() {
+        let typed = condition("show", Op::Equals, "The Hollow Meridian");
+
+        assert!(
+            typed.holds(FieldKind::Text, Some("the hollow meridian")),
+            "the reader's spacing normalizes to what the field read"
+        );
+        assert!(
+            !typed.holds(FieldKind::Text, Some("ashfall county")),
+            "and another show is another show"
+        );
+    }
+
+    #[test]
+    fn an_ordering_compares_numbers() {
+        let tenth = condition("episodeNumber", Op::AtLeast, "10");
+
+        assert!(tenth.holds(FieldKind::Episode, Some("12")));
+        assert!(!tenth.holds(FieldKind::Episode, Some("9")));
+        assert!(
+            !tenth.holds(FieldKind::Episode, Some("abc")),
+            "a value off the number line meets no ordering"
+        );
+    }
+
+    #[test]
+    fn absent_holds_on_no_value_and_the_rest_fail() {
+        assert!(
+            condition("episodeNumber", Op::Absent, "").holds(FieldKind::Episode, None),
+            "a pack names no episode, which is what a pack-only ruleset asks for"
+        );
+        assert!(!condition("episodeNumber", Op::Present, "").holds(FieldKind::Episode, None));
+        assert!(!condition("episodeNumber", Op::Equals, "6").holds(FieldKind::Episode, None));
     }
 }
