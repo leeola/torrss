@@ -528,8 +528,7 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[&Field]) 
     }
 }
 
-/// Every saved test's verdict against the draft, with the count that pass
-/// first.
+/// Every saved test's verdict against the draft.
 ///
 /// Both editors render this. A parser draft carries its own fields and a
 /// ruleset draft names a stored parser, and a verdict reads the same either
@@ -537,19 +536,10 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[&Field]) 
 /// every field the two disagree about.
 #[component]
 pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
-    let passing = judged
-        .iter()
-        .filter(|(_, verdict)| *verdict == Verdict::Pass)
-        .count();
-
     view! {
         if !judged.is_empty() {
             <div class="border-t border-slate-800 px-4 py-3">
-                <p class="text-xs text-slate-400">
-                    (passing) " of " (judged.len()) " pass"
-                </p>
-
-                <ul class="mt-2 space-y-2">
+                <ul class="space-y-2">
                     for (test, verdict) in judged {
                         <li>
                             <div class="flex flex-wrap items-center gap-2">
