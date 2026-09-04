@@ -62,7 +62,7 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
             fields: vec![
                 field("show", Text, Some(r"^(?<show>[\w.]+?)"), true, true),
                 field("season", Season, None, true, true),
-                field("episode", Episode, None, false, true),
+                field("episodeNumber", Episode, None, false, true),
                 field(
                     "resolution",
                     Enum,
@@ -187,9 +187,9 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                 ),
                 field("show", Text, Some(r"\s(?<show>.+?)"), true, true),
                 field(
-                    "episode",
+                    "episodeNumber",
                     Number,
-                    Some(r"\s-\s(?<episode>\d{2,3})"),
+                    Some(r"\s-\s(?<episodeNumber>\d{2,3})"),
                     true,
                     true,
                 ),

@@ -399,14 +399,15 @@ impl FieldKind {
     /// precedes it in field order, so a loose number elsewhere in a title
     /// never reads as an episode.
     ///
-    /// Each names its capture group after the field the shipped rulesets give
-    /// it. A ruleset that names the field something else still reads it,
-    /// because `compose` in [`crate::rules`] then wraps the whole component in
-    /// a group under that name.
+    /// Each names its capture group after the preset that carries it, so a
+    /// field started from that preset reads the number alone. A field of this
+    /// kind under another name reads the whole component, prefix included,
+    /// because `compose` in [`crate::rules`] wraps it in a group under that
+    /// name.
     pub(crate) fn pattern(self) -> Option<&'static str> {
         match self {
             Self::Season => Some(r"(?i)[. _-](?:S|Season[. _]?)(?<season>\d{1,2})"),
-            Self::Episode => Some(r"(?i)E(?<episode>\d{1,3})"),
+            Self::Episode => Some(r"(?i)E(?<episodeNumber>\d{1,3})"),
             Self::Text | Self::Number | Self::Enum | Self::Boolean => None,
         }
     }
@@ -488,7 +489,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         identity: true,
     },
     Preset {
-        name: "episode",
+        name: "episodeNumber",
         kind: FieldKind::Episode,
         pattern: None,
         required: false,
@@ -565,8 +566,14 @@ mod tests {
     ///
     /// The pattern is one component, so it composes before it compiles.
     fn read(kind: FieldKind, title: &str) -> Option<String> {
+        let name = PRESETS
+            .iter()
+            .find(|preset| preset.kind == kind)
+            .expect("a preset carries every premade kind")
+            .name;
+
         let component = Component {
-            name: kind.label(),
+            name,
             pattern: kind.pattern().expect("a premade kind"),
             required: true,
         };
@@ -575,7 +582,7 @@ mod tests {
 
         regex
             .captures(title)
-            .and_then(|caps| caps.name(kind.label()))
+            .and_then(|caps| caps.name(name))
             .map(|value| value.as_str().to_owned())
     }
 
@@ -673,7 +680,7 @@ mod tests {
         let fields = [
             "show",
             "season",
-            "episode",
+            "episodeNumber",
             "resolution",
             "source",
             "codec",
@@ -728,7 +735,7 @@ mod tests {
             [
                 ("show", "coastal ecology".to_owned()),
                 ("season", "2".to_owned()),
-                ("episode", "5".to_owned()),
+                ("episodeNumber", "5".to_owned()),
                 ("resolution", "1080p".to_owned()),
                 ("source", "web dl".to_owned()),
                 ("codec", "x265".to_owned()),

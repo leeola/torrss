@@ -288,7 +288,7 @@ mod tests {
             [
                 ("show", "The.Hollow.Meridian", true),
                 ("season", "04", true),
-                ("episode", "06", true),
+                ("episodeNumber", "06", true),
                 ("resolution", "1080p", false),
                 ("source", "Broadcast", false),
                 ("audio", "AAC.Stereo", false),
