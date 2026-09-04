@@ -8,7 +8,7 @@
 //! else, so the editor runs every test on every keystroke.
 
 use crate::ruleset::RulesetTest;
-use crate::server::matches::{self, Rule};
+use crate::server::matches::{self, Rules};
 
 /// What a draft made of one saved test.
 #[derive(Debug, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub(super) struct Mismatch {
 ///
 /// A field the test does not name is not checked, so a test pins down the one
 /// value the reader cares about and stays silent about the rest.
-pub(super) fn verdict(rules: &[Rule], test: &RulesetTest) -> Verdict {
+pub(super) fn verdict(rules: &Rules, test: &RulesetTest) -> Verdict {
     let Some(values) = matches::values(rules, &test.title) else {
         return Verdict::Unclaimed;
     };

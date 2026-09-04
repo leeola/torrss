@@ -31,7 +31,7 @@ use crate::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format, held,
         listing::{self, Standing},
-        matches::{self, Edits, Match, PatternError, Rule},
+        matches::{self, Edits, Match, PatternError, Rules},
         query::IdList,
         verdict::{self, Verdict},
     },
@@ -1744,7 +1744,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 /// [`Match`] borrows the title it describes and cannot outlive the read.
 fn compute_matches<'a>(
     registry: &FeedRegistry,
-    before: &[Rule],
+    before: &Rules,
     after: &[&Field],
     items: &'a [StoredItem],
 ) -> (Vec<Match<'a>>, Vec<PatternError>) {
@@ -2050,7 +2050,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
     let items = store::items(&services.db, None).await?;
     // A ruleset with nothing saved has no rules to lose, so the whole draft
     // reads as gained.
-    let before = saved.map_or_else(Vec::new, |saved| {
+    let before = saved.map_or_else(Rules::default, |saved| {
         let fields = saved.resolved_fields(engine.template_of(saved));
         let fields = fields.iter().map(|field| field.field).collect::<Vec<_>>();
 

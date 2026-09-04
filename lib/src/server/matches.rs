@@ -21,6 +21,9 @@ use std::ops::Range;
 use regex::Regex;
 use url::form_urlencoded;
 
+// `compose` is imported directly rather than through its module, because the
+// `rules` function below takes that name in this scope.
+use crate::rules::{Component, compose};
 use crate::ruleset::{Diff, Field, FieldKind, Segment};
 
 /// Every field attribute the editor's form carries, keyed by field name.
@@ -46,10 +49,6 @@ struct FieldEdit {
 }
 
 /// One field resolved into something that runs against a title.
-///
-/// `regex` is [`None`] when the pattern failed to compile or none was
-/// available at all. Such a rule claims nothing, and a required one turns
-/// every title away.
 #[derive(Debug)]
 pub(super) struct Rule {
     name: String,
@@ -67,6 +66,19 @@ pub(super) struct Rule {
     kind: FieldKind,
 
     required: bool,
+}
+
+/// Every field of one draft, composed into the regex it matches with.
+///
+/// The regex is [`None`] when any pattern failed to compile or none was
+/// available at all, so a draft the reader is still fixing claims nothing
+/// rather than claiming everything.
+///
+/// The default claims nothing too, which is what an unsaved ruleset offers as
+/// the rules an edit is measured against.
+#[derive(Debug, Default)]
+pub(super) struct Rules {
+    pub(super) fields: Vec<Rule>,
     regex: Option<Regex>,
 }
 
@@ -169,8 +181,8 @@ impl Edits {
 /// because the form posts every input of a row together and an unchecked box
 /// posts nothing. A caller that builds an edit by hand supplies the checkbox
 /// too, or the field turns optional.
-pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<PatternError>) {
-    let mut rules = Vec::with_capacity(fields.len());
+pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternError>) {
+    let mut resolved = Vec::with_capacity(fields.len());
     let mut errors = Vec::new();
 
     for (position, field) in fields.iter().enumerate() {
@@ -189,40 +201,83 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Vec<Rule>, Vec<Pattern
             .and_then(|edit| edit.name.clone())
             .unwrap_or_else(|| field.name.clone());
 
-        let regex = match pattern {
-            Some(pattern) => match Regex::new(&pattern) {
-                Ok(regex) => Some(regex),
-                Err(error) => {
-                    errors.push(PatternError {
-                        field: field.name.to_owned(),
-                        message: error.to_string(),
-                    });
+        let Some(pattern) = pattern else {
+            errors.push(PatternError {
+                field: field.name.to_owned(),
+                message:
+                    "no pattern. A template leaves one blank for the ruleset based on it to fill."
+                        .to_owned(),
+            });
 
-                    None
-                }
-            },
-            None => {
-                errors.push(PatternError {
-                    field: field.name.to_owned(),
-                    message:
-                        "no pattern. A template leaves one blank for the ruleset based on it to fill."
-                            .to_owned(),
-                });
-
-                None
-            }
+            continue;
         };
 
-        rules.push(Rule {
-            name,
-            position,
-            kind,
+        // Each component compiles alone first, so a bad regex reports under
+        // the field that carries it rather than under the whole draft.
+        if let Err(error) = Regex::new(&compose(&[Component {
+            name: &name,
+            pattern: &pattern,
             required,
-            regex,
-        });
+        }])) {
+            errors.push(PatternError {
+                field: field.name.to_owned(),
+                message: error.to_string(),
+            });
+
+            continue;
+        }
+
+        resolved.push((
+            Rule {
+                name,
+                position,
+                kind,
+                required,
+            },
+            pattern,
+        ));
     }
 
-    (rules, errors)
+    // A field that failed above never reaches the composition, so the whole
+    // compiles only when every part stands.
+    let regex = errors.is_empty().then(|| {
+        let components = resolved
+            .iter()
+            .map(|(rule, pattern)| Component {
+                name: &rule.name,
+                pattern,
+                required: rule.required,
+            })
+            .collect::<Vec<_>>();
+
+        Regex::new(&compose(&components))
+    });
+
+    let regex = match regex {
+        Some(Ok(regex)) => Some(regex),
+        Some(Err(error)) => {
+            // A `PatternError` names one field, and two fields that write one
+            // group name are equally to blame. The first is where a reader
+            // starts reading.
+            errors.push(PatternError {
+                field: resolved
+                    .first()
+                    .map_or_else(String::new, |(rule, _)| rule.name.clone()),
+                message: format!("the fields do not compose into one regex: {error}"),
+            });
+
+            None
+        }
+        None => None,
+    };
+
+    (
+        Rules {
+            fields: resolved.into_iter().map(|(rule, _)| rule).collect(),
+            regex,
+        },
+        errors,
+    )
 }
 
 /// What one title became under the saved rules and the edited ones.
@@ -240,7 +295,7 @@ pub(super) struct Diffed<'a> {
 /// the title, and from `before` otherwise, so a removed title keeps the
 /// highlighting and the values the edit gives up. That is what
 /// [`Diff::Removed`] promises the reader.
-pub(super) fn diff<'a>(before: &[Rule], after: &[Rule], title: &'a str) -> Diffed<'a> {
+pub(super) fn diff<'a>(before: &Rules, after: &Rules, title: &'a str) -> Diffed<'a> {
     let was = captures(before, title);
     let now = captures(after, title);
 
@@ -266,7 +321,7 @@ pub(super) fn diff<'a>(before: &[Rule], after: &[Rule], title: &'a str) -> Diffe
 /// The value is normalized rather than raw, because that is the form a saved
 /// test asserts and the form the identity stores. A test on the raw capture
 /// passes on a title the library files elsewhere.
-pub(super) fn values(rules: &[Rule], title: &str) -> Option<Vec<(String, String)>> {
+pub(super) fn values(rules: &Rules, title: &str) -> Option<Vec<(String, String)>> {
     Some(read(title, &captures(rules, title)?))
 }
 
@@ -276,31 +331,29 @@ struct Capture<'a> {
     range: Range<usize>,
 }
 
-/// Returns where each rule matched in `title`, or nothing when a required
-/// rule missed.
-fn captures<'a>(rules: &'a [Rule], title: &str) -> Option<Vec<Capture<'a>>> {
-    let mut captured = Vec::new();
+/// Returns where each rule matched in `title`, or nothing when the composed
+/// regex does not claim it.
+///
+/// One match answers for every rule. A required rule is a plain group, so the
+/// regex fails without it. An optional one is a skippable group that yields no
+/// capture when it skips.
+fn captures<'a>(rules: &'a Rules, title: &str) -> Option<Vec<Capture<'a>>> {
+    let caps = rules.regex.as_ref()?.captures(title)?;
 
-    for rule in rules {
-        // The capture group carries the rule's name by convention, but a
-        // pattern written without one still works through group 1.
-        let matched = rule.regex.as_ref().and_then(|regex| {
-            regex
-                .captures(title)
-                .and_then(|caps| caps.name(&rule.name).or_else(|| caps.get(1)))
-        });
+    Some(
+        rules
+            .fields
+            .iter()
+            .filter_map(|rule| {
+                let found = caps.name(&rule.name)?;
 
-        match matched {
-            Some(found) => captured.push(Capture {
-                rule,
-                range: found.range(),
-            }),
-            None if rule.required => return None,
-            None => {}
-        }
-    }
-
-    Some(captured)
+                Some(Capture {
+                    rule,
+                    range: found.range(),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// Reads each capture out of `title` in the form its kind produces.
@@ -318,9 +371,8 @@ fn read(title: &str, captured: &[Capture<'_>]) -> Vec<(String, String)> {
 
 /// Cuts `title` into claimed and unclaimed runs.
 ///
-/// Two rules sometimes claim overlapping text. The one that starts earlier
-/// keeps its run and the later one drops out, because a character belongs to
-/// one part and a twice-rendered character breaks the title.
+/// The groups of one regex never overlap, so every claimed run stands whole
+/// once the captures are in start order.
 fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'a>> {
     captured.sort_by_key(|capture| capture.range.start);
 
@@ -329,10 +381,6 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
 
     for Capture { rule, range } in captured {
         let position = rule.position;
-
-        if range.start < cut {
-            continue;
-        }
 
         if range.start > cut {
             segments.push(Segment {
@@ -385,7 +433,7 @@ pub(super) mod tests {
     /// The saved fields every edit below is measured against.
     pub(in crate::server) fn declared() -> Vec<Field> {
         vec![
-            field("show", Text, Some(r"^(?<show>[\w.]+?)\.S\d"), true, true),
+            field("show", Text, Some(r"^(?<show>[\w.]+?)"), true, true),
             field("season", Season, None, true, true),
         ]
     }
@@ -397,7 +445,7 @@ pub(super) mod tests {
     pub(in crate::server) const TITLE: &str = "The.Hollow.Meridian.S04E06.1080p";
 
     /// The rules the saved fields produce, with no edit applied.
-    pub(in crate::server) fn saved(fields: &[&Field]) -> Vec<super::Rule> {
+    pub(in crate::server) fn saved(fields: &[&Field]) -> super::Rules {
         rules(fields, &Edits::default()).0
     }
 
@@ -457,12 +505,12 @@ pub(super) mod tests {
         let declared = declared();
         let fields = resolved(&declared);
 
-        // A space-separated title, which the saved show pattern never crosses.
+        // A space-separated title. The saved show component never crosses a
+        // space, so it never reaches the season component that follows it.
         let spaced = "Ashfall Ridge S02E01";
 
-        let edits = Edits::parse(
-            "show.pattern=%5E(%3F%3Cshow%3E%5B%5Cw+%20%5D%2B%3F)%20S%5Cd&show.required=on",
-        );
+        let edits =
+            Edits::parse("show.pattern=%5E(%3F%3Cshow%3E%5B%5Cw%20%5D%2B%3F)&show.required=on");
         let (edited, errors) = rules(&fields, &edits);
 
         assert_eq!(errors, Vec::new(), "both patterns compile");
@@ -528,7 +576,7 @@ pub(super) mod tests {
         let narrowed = rules(
             &fields,
             &Edits::parse(
-                "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow%5C.Meridian)%5C.S%5Cd&show.required=on",
+                "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow%5C.Meridian)&show.required=on",
             ),
         )
         .0;
@@ -577,27 +625,6 @@ pub(super) mod tests {
                 ("E06.1080p", None),
             ],
             "a run covers the captured group, so the pattern's anchor text stays untinted"
-        );
-    }
-
-    #[test]
-    fn an_overlapping_span_is_dropped() {
-        let declared = declared();
-        let fields = resolved(&declared);
-
-        let edits = Edits::parse(
-            "show.pattern=%5E(%3F%3Cshow%3EThe%5C.Hollow)&season.pattern=(%3F%3Cseason%3EHollow)",
-        );
-        let (edited, _) = rules(&fields, &edits);
-        let segments = diff(&edited, &edited, TITLE).segments;
-
-        assert_eq!(
-            segments
-                .iter()
-                .map(|segment| (segment.text, segment.field))
-                .collect::<Vec<_>>(),
-            [("The.Hollow", Some(0)), (".Meridian.S04E06.1080p", None)],
-            "the season span starts inside the show span, so it is dropped"
         );
     }
 }
