@@ -515,7 +515,8 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
     // Named `registered` rather than `feeds`, because the `#[page]` attribute
-    // on the admin list below puts a unit struct named `feeds` in this scope.
+    // on the `/admin/feeds` page below puts a unit struct named `feeds` in
+    // this scope.
     let registered = registry.entries();
 
     // A bookmark outlives the registration it names, because a restart empties
@@ -741,8 +742,8 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
     Ok(registry.entries().len() as f64)
 }
 
-#[page("/admin")]
-async fn admin(cx: &Cx) -> Result {
+#[page("/admin/rulesets")]
+async fn ruleset_index(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     view! {
@@ -1485,7 +1486,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         <script>(Unescaped::new_unchecked(ROW_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin" class="hover:text-slate-300">"Rulesets"</a>
+            <a href="/admin/rulesets" class="hover:text-slate-300">"Rulesets"</a>
             " / "
             <span class="text-slate-300">
                 if name.is_empty() { "New" } else { (&name) }
@@ -2369,5 +2370,5 @@ async fn remove_ruleset(cx: &Cx) -> Result<SeeOther> {
         return Err(not_found().into());
     }
 
-    Ok(see_other("/admin"))
+    Ok(see_other("/admin/rulesets"))
 }
