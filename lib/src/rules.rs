@@ -115,7 +115,6 @@ pub(crate) struct Engine {
     ///
     /// Nothing parses through one yet. They are kept so the pages that list
     /// and edit a parser read the same snapshot every other page reads.
-    #[allow(dead_code, reason = "the parser pages read this through parsers()")]
     parsers: Vec<Parser>,
 }
 
@@ -305,13 +304,11 @@ impl Engine {
     }
 
     /// Every parser this engine was built from, in declaration order.
-    #[allow(dead_code, reason = "the parser index lists these")]
     pub(crate) fn parsers(&self) -> impl Iterator<Item = &Parser> {
         self.parsers.iter()
     }
 
     /// Finds the parser named by `id`.
-    #[allow(dead_code, reason = "the parser editor opens the one it is routed to")]
     pub(crate) fn parser(&self, id: &str) -> Option<&Parser> {
         self.parsers.iter().find(|parser| parser.id == id)
     }

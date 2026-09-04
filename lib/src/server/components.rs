@@ -5,11 +5,11 @@ use topcoat::{
 
 use super::format;
 use super::listing::ParsedValue;
-use super::matches::Match;
+use super::matches::{Match, PatternError};
 use crate::feed::store::FeedCheck;
-use crate::parser::{Field, FieldKind, Segment, Tint, TitleTest};
+use crate::parser::{Field, FieldKind, Parser, Segment, Tint, TitleTest};
 use crate::rules::Engine;
-use crate::ruleset::{Condition, FieldSource, Op, ResolvedField, Ruleset};
+use crate::ruleset::{Condition, Diff, FieldSource, Op, ResolvedField, Ruleset};
 use crate::store::StoredItem;
 use crate::torrent::{Torrent, TorrentState};
 use url::form_urlencoded;
@@ -17,16 +17,18 @@ use url::form_urlencoded;
 /// Renders a filename with every claimed run tinted by the field that
 /// claimed it.
 ///
-/// Each claimed run links to that field's row, anchored inside `ruleset`'s
-/// editor, so a reader jumps from a value to the rule behind it.
+/// Each claimed run links to that field's row, anchored inside the page
+/// `editor` names, so a reader jumps from a value to the rule behind it. A
+/// parser and a ruleset each read a name through their own fields, so the
+/// caller passes the path of the editor the runs belong to.
 #[component]
-pub(crate) async fn filename(segments: &[Segment<'_>], ruleset: &str) -> Result {
+pub(crate) async fn filename(segments: &[Segment<'_>], editor: &str) -> Result {
     view! {
         <span class="font-mono text-sm break-all">
             for segment in segments {
                 match segment.field {
                     Some(position) => <a
-                        href=(format!("/admin/rulesets/{ruleset}#field-{position}"))
+                        href=(format!("{editor}#field-{position}"))
                         class=(class!(
                             "rounded-sm px-0.5 py-px hover:underline hover:decoration-dotted",
                             Tint::at(position).classes(),
@@ -106,7 +108,7 @@ pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current:
 /// fails until the ruleset claims it, which is how a reader says "make this
 /// match".
 #[component]
-pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
+pub(crate) async fn match_row(matched: &Match<'_>, editor: &str) -> Result {
     let payload = {
         let mut pairs = form_urlencoded::Serializer::new(String::new());
 
@@ -127,7 +129,7 @@ pub(crate) async fn match_row(matched: &Match<'_>, ruleset: &str) -> Result {
             ))
         >
             <div class="min-w-0 flex-1">
-                filename(segments: &matched.segments, ruleset: ruleset)
+                filename(segments: &matched.segments, editor: editor)
 
                 <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                     <span class=(class!(
@@ -904,5 +906,255 @@ mod tests {
             "The Hollow Meridian, removed-since-the-grab",
             "a ruleset no longer declared still shows, by the id that was recorded"
         );
+    }
+}
+
+/// The structural edits the field rows make to the form.
+///
+/// The row buttons are rendered by a shard, which cannot reach the signals
+/// the editor declared, so one delegated handler there names the action and
+/// this carries it out. It lives in the page because `raw!` takes a string
+/// literal, and three handlers would otherwise carry three copies.
+///
+/// An action arrives as a plain string, because the event vocabulary carries
+/// a target's name and value and nothing structural: the button says what to
+/// do in its own `value` rather than the handler reading the DOM around it.
+///
+/// An action splits at its first `:`, so an argument holding one survives.
+/// A field name is the reader's own text and reaches `replace` as that
+/// argument, and `test` carries a whole form encoding as its own.
+///
+/// The two counters match a whole key rather than its suffix. A test
+/// expectation on a field named `name` ends `.name` too, and counting it
+/// opens the next row at an index another row already holds.
+///
+/// `add` reads the preset menu beside its button, which is the one control
+/// that says what a new row starts as. An option's value is a form encoding
+/// of the row, as the `test` action's argument is, so the script copies pairs
+/// and knows no preset.
+///
+/// `move-up` and `move-down` trade one row's keys with its neighbor's. The
+/// rows are keyed by their index and `RulesetForm::parse` orders by it, so a
+/// move renames two rows' keys and touches nothing else. A move off either
+/// end returns the form unchanged, because the row it would trade with does
+/// not exist.
+///
+/// Every branch returns the form serialized, which is what both the rows and
+/// the matches read.
+pub(crate) const ROW_ACTIONS: &str = r"
+window.torrssRows = {
+  form: () => new URLSearchParams(new FormData(document.querySelector('form[data-rows]'))),
+  next: (params) => [...params.keys()].filter((key) => /^field\.\d+\.name$/.test(key)).length,
+  nextTest: (params) => [...params.keys()].filter((key) => /^test\.\d+\.title$/.test(key)).length,
+  nextCondition: (params) =>
+    [...params.keys()].filter((key) => /^condition\.\d+\.field$/.test(key)).length,
+  serialize: () => window.torrssRows.form().toString(),
+  drop: (params, prefix) => {
+    for (const key of [...params.keys()]) {
+      if (key.startsWith(prefix)) {
+        params.delete(key);
+      }
+    }
+  },
+  swap: (params, a, b) => {
+    const moved = new URLSearchParams();
+
+    for (const [key, value] of params) {
+      const row = key.match(/^field\.(\d+)\./);
+      const index = row === null ? null : Number(row[1]);
+
+      if (index === a) {
+        moved.append(`field.${b}.${key.slice(row[0].length)}`, value);
+      } else if (index === b) {
+        moved.append(`field.${a}.${key.slice(row[0].length)}`, value);
+      } else {
+        moved.append(key, value);
+      }
+    }
+
+    return moved.toString();
+  },
+  apply: (action) => {
+    const params = window.torrssRows.form();
+    const index = window.torrssRows.next(params);
+    const cut = action.indexOf(':');
+    const name = cut === -1 ? action : action.slice(0, cut);
+    const argument = cut === -1 ? '' : action.slice(cut + 1);
+
+    if (name === 'add') {
+      const preset = document.getElementById('field-preset').value;
+
+      if (preset === '') {
+        params.append(`field.${index}.name`, '');
+        return params.toString();
+      }
+
+      for (const [key, value] of new URLSearchParams(preset)) {
+        params.append(`field.${index}.${key}`, value);
+      }
+      return params.toString();
+    }
+
+    if (name === 'add-test') {
+      params.append(`test.${window.torrssRows.nextTest(params)}.title`, '');
+      return params.toString();
+    }
+
+    if (name === 'add-condition') {
+      params.append(`condition.${window.torrssRows.nextCondition(params)}.field`, '');
+      return params.toString();
+    }
+
+    if (name === 'move-up' || name === 'move-down') {
+      const from = Number(argument);
+      const to = name === 'move-up' ? from - 1 : from + 1;
+
+      if (to < 0 || to >= index) {
+        return params.toString();
+      }
+
+      return window.torrssRows.swap(params, from, to);
+    }
+
+    if (name === 'remove') {
+      window.torrssRows.drop(params, `field.${argument}.`);
+      return params.toString();
+    }
+
+    if (name === 'remove-test') {
+      window.torrssRows.drop(params, `test.${argument}.`);
+      return params.toString();
+    }
+
+    if (name === 'remove-condition') {
+      window.torrssRows.drop(params, `condition.${argument}.`);
+      return params.toString();
+    }
+
+    if (name === 'test') {
+      const slot = window.torrssRows.nextTest(params);
+      for (const [key, value] of new URLSearchParams(argument)) {
+        if (key === 'title') {
+          params.append(`test.${slot}.title`, value);
+        } else if (key.startsWith('expect.')) {
+          params.append(`test.${slot}.${key}`, value);
+        }
+      }
+      return params.toString();
+    }
+
+    const row = [...document.querySelectorAll('#field-rows [data-name]')]
+      .find((one) => one.dataset.name === argument);
+    if (!row) {
+      return params.toString();
+    }
+
+    for (const attribute of ['name', 'kind', 'pattern']) {
+      params.append(`field.${index}.${attribute}`, row.dataset[attribute]);
+    }
+    for (const flag of ['required', 'identity', 'tight']) {
+      if (row.dataset[flag]) {
+        params.append(`field.${index}.${flag}`, 'on');
+      }
+    }
+
+    return params.toString();
+  },
+};
+";
+
+/// The stored titles the edited rules claim, and what the edit changed.
+///
+/// The list carries whichever diff state the reader chose, or every one of
+/// them when they chose none.
+///
+/// The chosen state is browser state rather than a query key, because the
+/// draft it filters is browser state too. A reload that carries the filter
+/// throws away the edit the filter describes.
+#[component]
+pub(crate) async fn match_section(
+    editor: &str,
+    matched: &[Match<'_>],
+    errors: &[PatternError],
+    filter: Option<Diff>,
+) -> Result {
+    let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
+
+    let listed: Vec<_> = matched
+        .iter()
+        .filter(|one| filter.is_none_or(|state| one.diff == state))
+        .collect();
+
+    view! {
+        <section id="matches" class="mt-8 scroll-mt-24">
+            <div class="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
+                    <p class="mt-1 text-sm text-slate-400">
+                        (format::count(matched.len(), "stored title", "stored titles"))
+                        " against the edited rules."
+                    </p>
+                </div>
+                <p class="text-xs text-slate-500">
+                    (count(Diff::Added)) " gained, " (count(Diff::Removed)) " lost"
+                </p>
+            </div>
+
+            for error in errors {
+                <p class="mt-2 text-xs text-rose-300">(&error.field) ": " (&error.message)</p>
+            }
+
+            <nav class="mt-4 flex flex-wrap gap-2">
+                diff_filter(
+                    value: "",
+                    label: "All",
+                    count: matched.len(),
+                    current: filter.is_none(),
+                )
+                for state in Diff::ALL {
+                    diff_filter(
+                        value: state.slug(),
+                        label: state.label(),
+                        count: count(*state),
+                        current: filter == Some(*state),
+                    )
+                }
+            </nav>
+
+            if listed.is_empty() {
+                <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                    "No stored title sits in this state."
+                </p>
+            } else {
+                <ul class="mt-4 flex flex-col gap-2">
+                    for one in listed {
+                        match_row(matched: one, editor: editor)
+                    }
+                </ul>
+            }
+        </section>
+    }
+}
+
+/// One parser on the parser index.
+///
+/// The card carries the name and how many fields the parser composes, and no
+/// state badge. A parser claims nothing, so there is nothing about it to be
+/// on or off.
+#[component]
+pub(crate) async fn parser_card(parser: &Parser) -> Result {
+    view! {
+        <li id=(format!("parser-{}", parser.id)) class="scroll-mt-24">
+            <a
+                href=(format!("/admin/parsers/{}", parser.id))
+                class="block rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700"
+            >
+                <h2 class="text-sm font-semibold text-slate-100">(&parser.name)</h2>
+
+                <p class="mt-1 text-xs text-slate-500">
+                    (format::count(parser.fields.len(), "field", "fields"))
+                </p>
+            </a>
+        </li>
     }
 }

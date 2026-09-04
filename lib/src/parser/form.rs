@@ -10,11 +10,9 @@
 //!
 //! The ruleset editor posts the same field and test rows inside a larger
 //! body, so [`crate::ruleset::form`] reads them through the row types and
-//! resolvers here and adds only what a ruleset carries on top.
-
-// FIXME: Nothing outside the tests posts a parser form. The parser editor
-// pages are the caller this waits on.
-#![allow(dead_code)]
+//! resolvers here and adds only what a ruleset carries on top. Both editors
+//! re-render their rows through that one reader, so a parser body reaches it
+//! as a form that names no template.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,21 +33,6 @@ pub(crate) struct ParserForm {
     pub(crate) tests: Vec<TitleTest>,
 }
 
-/// The rows a parser editor holds, kept exactly as the form posted them.
-///
-/// A row the reader just added has a blank name and names no kind yet.
-/// [`ParserForm::parse`] drops it, because a stored parser carries no
-/// nameless field. The row shards read this instead, so the row the reader
-/// asked for appears.
-///
-/// A blank parser name is no error here either. The new page has none until
-/// the reader types one, and the rows list before that.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct ParserRows {
-    pub(crate) fields: Vec<Field>,
-    pub(crate) tests: Vec<TitleTest>,
-}
-
 /// A posted parser body sorted into its parts, before anything judges it.
 #[derive(Default)]
 struct Posted {
@@ -60,18 +43,6 @@ struct Posted {
     rows: BTreeMap<usize, Row>,
 
     tests: BTreeMap<usize, TestRow>,
-}
-
-impl ParserRows {
-    /// Reads every row a form-encoded body carries, refusing none of them.
-    pub(crate) fn parse(body: &str) -> Self {
-        let posted = read(body);
-
-        Self {
-            fields: posted.rows.into_values().map(draft_field).collect(),
-            tests: posted.tests.into_values().map(draft_test).collect(),
-        }
-    }
 }
 
 impl ParserForm {
@@ -89,7 +60,7 @@ impl ParserForm {
     ///
     /// A row with an empty name is skipped rather than refused, because that
     /// is what an added row looks like before the reader fills it in. The
-    /// editor lists such a row through [`ParserRows`], which keeps it.
+    /// editor lists such a row through `EditorRows`, which keeps it.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
         let form = Self::parse_draft(body)?;
         ensure!(!form.name.is_empty(), EmptyNameSnafu);
@@ -225,17 +196,6 @@ fn read(body: &str) -> Posted {
     }
 
     posted
-}
-
-/// Resolves one posted test row into a saved test, refusing nothing.
-///
-/// A row the reader just added carries a blank title, which the editor lists
-/// and a save drops.
-pub(crate) fn draft_test(row: TestRow) -> TitleTest {
-    TitleTest {
-        title: row.title.trim().to_owned(),
-        expected: row.expected,
-    }
 }
 
 /// Why a posted parser or ruleset is not one.
@@ -480,7 +440,7 @@ pub(crate) fn field(row: Row, blank_allowed: bool) -> Result<Field, FormError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{FormError, ParserForm, ParserRows, encode_preset, slug, unique_slug};
+    use super::{FormError, ParserForm, encode_preset, slug, unique_slug};
     use crate::parser::{Field, FieldKind, PRESETS, TitleTest};
 
     fn text(name: &str, pattern: &str, required: bool, identity: bool) -> Field {
@@ -638,34 +598,6 @@ mod tests {
             ParserForm::parse(&series.encode()),
             Ok(series),
             "what the editor seeds its draft with is what a post reads back"
-        );
-    }
-
-    #[test]
-    fn rows_keep_a_blank_row_and_need_no_name() {
-        assert_eq!(
-            ParserRows::parse(
-                "name=&field.0.name=show&field.0.kind=text\
-                 &field.0.pattern=%5E.%2B&field.1.name=&test.0.title="
-            ),
-            ParserRows {
-                fields: vec![
-                    text("show", "^.+", false, false),
-                    Field {
-                        name: String::new(),
-                        kind: FieldKind::Text,
-                        pattern: None,
-                        required: false,
-                        tight: false,
-                        identity: false,
-                    },
-                ],
-                tests: vec![TitleTest {
-                    title: String::new(),
-                    expected: BTreeMap::new(),
-                }],
-            },
-            "an added row lists under the first kind, and the page needs no name yet"
         );
     }
 

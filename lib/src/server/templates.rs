@@ -45,6 +45,11 @@ async fn site_header(cx: &Cx) -> Result {
                 <nav class="flex items-center gap-1 text-sm">
                     nav_link(href: "/", label: "Feed", current: path == "/")
                     nav_link(
+                        href: "/admin/parsers",
+                        label: "Parsers",
+                        current: path.starts_with("/admin/parsers"),
+                    )
+                    nav_link(
                         href: "/admin/rulesets",
                         label: "Rulesets",
                         current: path.starts_with("/admin/rulesets"),

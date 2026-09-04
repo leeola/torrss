@@ -45,161 +45,6 @@ use crate::{
 
 path_param!(ruleset_id);
 path_param!(feed_id);
-
-/// The structural edits the field rows make to the form.
-///
-/// The row buttons are rendered by a shard, which cannot reach the signals
-/// the editor declared, so one delegated handler there names the action and
-/// this carries it out. It lives in the page because `raw!` takes a string
-/// literal, and three handlers would otherwise carry three copies.
-///
-/// An action arrives as a plain string, because the event vocabulary carries
-/// a target's name and value and nothing structural: the button says what to
-/// do in its own `value` rather than the handler reading the DOM around it.
-///
-/// An action splits at its first `:`, so an argument holding one survives.
-/// A field name is the reader's own text and reaches `replace` as that
-/// argument, and `test` carries a whole form encoding as its own.
-///
-/// The two counters match a whole key rather than its suffix. A test
-/// expectation on a field named `name` ends `.name` too, and counting it
-/// opens the next row at an index another row already holds.
-///
-/// `add` reads the preset menu beside its button, which is the one control
-/// that says what a new row starts as. An option's value is a form encoding
-/// of the row, as the `test` action's argument is, so the script copies pairs
-/// and knows no preset.
-///
-/// `move-up` and `move-down` trade one row's keys with its neighbor's. The
-/// rows are keyed by their index and `RulesetForm::parse` orders by it, so a
-/// move renames two rows' keys and touches nothing else. A move off either
-/// end returns the form unchanged, because the row it would trade with does
-/// not exist.
-///
-/// Every branch returns the form serialized, which is what both the rows and
-/// the matches read.
-const ROW_ACTIONS: &str = r"
-window.torrssRows = {
-  form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
-  next: (params) => [...params.keys()].filter((key) => /^field\.\d+\.name$/.test(key)).length,
-  nextTest: (params) => [...params.keys()].filter((key) => /^test\.\d+\.title$/.test(key)).length,
-  nextCondition: (params) =>
-    [...params.keys()].filter((key) => /^condition\.\d+\.field$/.test(key)).length,
-  serialize: () => window.torrssRows.form().toString(),
-  drop: (params, prefix) => {
-    for (const key of [...params.keys()]) {
-      if (key.startsWith(prefix)) {
-        params.delete(key);
-      }
-    }
-  },
-  swap: (params, a, b) => {
-    const moved = new URLSearchParams();
-
-    for (const [key, value] of params) {
-      const row = key.match(/^field\.(\d+)\./);
-      const index = row === null ? null : Number(row[1]);
-
-      if (index === a) {
-        moved.append(`field.${b}.${key.slice(row[0].length)}`, value);
-      } else if (index === b) {
-        moved.append(`field.${a}.${key.slice(row[0].length)}`, value);
-      } else {
-        moved.append(key, value);
-      }
-    }
-
-    return moved.toString();
-  },
-  apply: (action) => {
-    const params = window.torrssRows.form();
-    const index = window.torrssRows.next(params);
-    const cut = action.indexOf(':');
-    const name = cut === -1 ? action : action.slice(0, cut);
-    const argument = cut === -1 ? '' : action.slice(cut + 1);
-
-    if (name === 'add') {
-      const preset = document.getElementById('field-preset').value;
-
-      if (preset === '') {
-        params.append(`field.${index}.name`, '');
-        return params.toString();
-      }
-
-      for (const [key, value] of new URLSearchParams(preset)) {
-        params.append(`field.${index}.${key}`, value);
-      }
-      return params.toString();
-    }
-
-    if (name === 'add-test') {
-      params.append(`test.${window.torrssRows.nextTest(params)}.title`, '');
-      return params.toString();
-    }
-
-    if (name === 'add-condition') {
-      params.append(`condition.${window.torrssRows.nextCondition(params)}.field`, '');
-      return params.toString();
-    }
-
-    if (name === 'move-up' || name === 'move-down') {
-      const from = Number(argument);
-      const to = name === 'move-up' ? from - 1 : from + 1;
-
-      if (to < 0 || to >= index) {
-        return params.toString();
-      }
-
-      return window.torrssRows.swap(params, from, to);
-    }
-
-    if (name === 'remove') {
-      window.torrssRows.drop(params, `field.${argument}.`);
-      return params.toString();
-    }
-
-    if (name === 'remove-test') {
-      window.torrssRows.drop(params, `test.${argument}.`);
-      return params.toString();
-    }
-
-    if (name === 'remove-condition') {
-      window.torrssRows.drop(params, `condition.${argument}.`);
-      return params.toString();
-    }
-
-    if (name === 'test') {
-      const slot = window.torrssRows.nextTest(params);
-      for (const [key, value] of new URLSearchParams(argument)) {
-        if (key === 'title') {
-          params.append(`test.${slot}.title`, value);
-        } else if (key.startsWith('expect.')) {
-          params.append(`test.${slot}.${key}`, value);
-        }
-      }
-      return params.toString();
-    }
-
-    const row = [...document.querySelectorAll('#field-rows [data-name]')]
-      .find((one) => one.dataset.name === argument);
-    if (!row) {
-      return params.toString();
-    }
-
-    for (const attribute of ['name', 'kind', 'pattern']) {
-      params.append(`field.${index}.${attribute}`, row.dataset[attribute]);
-    }
-    for (const flag of ['required', 'identity', 'tight']) {
-      if (row.dataset[flag]) {
-        params.append(`field.${index}.${flag}`, 'on');
-      }
-    }
-
-    return params.toString();
-  },
-};
-";
-
 /// The three roles the editor offers, each with the label and the note its
 /// radio carries.
 ///
@@ -1500,7 +1345,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
         // The row buttons the shard renders reach the signals above through
         // this, which one delegated handler on the form below calls.
-        <script>(Unescaped::new_unchecked(ROW_ACTIONS))</script>
+        <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
             <a href="/admin/rulesets" class="hover:text-slate-300">"Rulesets"</a>
@@ -1512,6 +1357,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
         <form
             id="ruleset-fields"
+            data-rows="true"
             method="post"
             // Only a create posts the form itself. A save runs through the
             // procedure below, and Delete names its own action, so the editor
@@ -1874,7 +1720,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 ///
 /// The items arrive from the caller rather than being read here, because a
 /// [`Match`] borrows the title it describes and cannot outlive the read.
-fn compute_matches<'a>(
+pub(super) fn compute_matches<'a>(
     registry: &FeedRegistry,
     before: &Rules,
     after: &[&Field],
@@ -1915,7 +1761,7 @@ fn compute_matches<'a>(
 /// A ruleset built on a template lists the template's order, as
 /// [`Ruleset::resolved_fields`] defines it, so its rows carry no arrows.
 #[shard]
-async fn field_rows(cx: &Cx, rows: String) -> Result {
+pub(super) async fn field_rows(cx: &Cx, rows: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     let posted = EditorRows::parse(&rows);
@@ -2021,7 +1867,7 @@ fn draft_rows<'a>(
 /// Only a structural change re-renders these. A keystroke takes the focus
 /// out of the input under the cursor.
 #[shard]
-async fn test_rows(cx: &Cx, rows: String) -> Result {
+pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     let posted = EditorRows::parse(&rows);
@@ -2078,7 +1924,7 @@ async fn condition_rows(cx: &Cx, rows: String) -> Result {
 /// A draft that does not parse renders nothing. The Matches section reports
 /// the same error on the same draft, and one message is enough.
 #[shard]
-async fn test_results(cx: &Cx, draft: String) -> Result {
+pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
     let Ok(posted) = RulesetForm::parse_draft(&draft) else {
@@ -2161,7 +2007,7 @@ async fn test_results(cx: &Cx, draft: String) -> Result {
 /// A ruleset posts only the rows it replaces, so the template supplies the
 /// rest. Matching by name rather than by position is what lets the reader
 /// reorder or drop a row without the override landing on a different field.
-fn draft_fields<'a>(template: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Field> {
+pub(super) fn draft_fields<'a>(template: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Field> {
     let Some(template) = template else {
         return own.iter().collect();
     };
@@ -2233,86 +2079,15 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
         &items,
     );
 
+    let editor_path = format!("/admin/rulesets/{ruleset}");
+
     view! {
-        match_section(
-            ruleset: &ruleset,
+        components::match_section(
+            editor: &editor_path,
             matched: &matched,
             errors: &errors,
             filter: Diff::from_slug(&diff),
         )
-    }
-}
-
-/// The stored titles the edited rules claim, and what the edit changed.
-///
-/// The list carries whichever diff state the reader chose, or every one of
-/// them when they chose none.
-///
-/// The chosen state is browser state rather than a query key, because the
-/// draft it filters is browser state too. A reload that carries the filter
-/// throws away the edit the filter describes.
-#[component]
-async fn match_section(
-    ruleset: &str,
-    matched: &[Match<'_>],
-    errors: &[PatternError],
-    filter: Option<Diff>,
-) -> Result {
-    let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
-
-    let listed: Vec<_> = matched
-        .iter()
-        .filter(|one| filter.is_none_or(|state| one.diff == state))
-        .collect();
-
-    view! {
-        <section id="matches" class="mt-8 scroll-mt-24">
-            <div class="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                    <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
-                    <p class="mt-1 text-sm text-slate-400">
-                        (format::count(matched.len(), "stored title", "stored titles"))
-                        " against the edited rules."
-                    </p>
-                </div>
-                <p class="text-xs text-slate-500">
-                    (count(Diff::Added)) " gained, " (count(Diff::Removed)) " lost"
-                </p>
-            </div>
-
-            for error in errors {
-                <p class="mt-2 text-xs text-rose-300">(&error.field) ": " (&error.message)</p>
-            }
-
-            <nav class="mt-4 flex flex-wrap gap-2">
-                components::diff_filter(
-                    value: "",
-                    label: "All",
-                    count: matched.len(),
-                    current: filter.is_none(),
-                )
-                for state in Diff::ALL {
-                    components::diff_filter(
-                        value: state.slug(),
-                        label: state.label(),
-                        count: count(*state),
-                        current: filter == Some(*state),
-                    )
-                }
-            </nav>
-
-            if listed.is_empty() {
-                <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                    "No stored title sits in this state."
-                </p>
-            } else {
-                <ul class="mt-4 flex flex-col gap-2">
-                    for one in listed {
-                        components::match_row(matched: one, ruleset: ruleset)
-                    }
-                </ul>
-            }
-        </section>
     }
 }
 

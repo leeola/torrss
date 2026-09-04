@@ -12,6 +12,7 @@ mod handlers;
 mod held;
 mod listing;
 mod matches;
+mod parsers;
 mod query;
 mod router;
 mod serve;

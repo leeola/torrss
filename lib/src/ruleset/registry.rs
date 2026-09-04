@@ -154,10 +154,6 @@ impl Rulesets {
     /// Returns [`SaveError::Engine`] when the resulting set does not
     /// compile, before anything is written. A pattern the reader broke
     /// mid-edit therefore leaves the stored parsers as they were.
-    #[allow(
-        dead_code,
-        reason = "the parser editor's Save posts to a route that writes through this"
-    )]
     pub(crate) async fn save_parser(&self, parser: Parser) -> Result<(), SaveError> {
         let engine = self.rebuilt_with_parser(parser.clone())?;
 
@@ -170,10 +166,6 @@ impl Rulesets {
     /// Removes the parser `id`, and reports whether one was there.
     ///
     /// Nothing parses through a parser yet, so no ruleset holds one back.
-    #[allow(
-        dead_code,
-        reason = "the parser editor's Delete posts to a route that writes through this"
-    )]
     pub(crate) async fn remove_parser(&self, id: &str) -> Result<bool, SaveError> {
         if !self.parsers.remove(id).await.context(StoreSnafu)? {
             return Ok(false);
