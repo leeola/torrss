@@ -2175,6 +2175,13 @@ fn write_failed(error: SaveError) -> Error {
 /// The id comes from the name, counting up past a slug already taken. It
 /// never changes after, so the library rows and the grab records that carry
 /// it survive every later rename.
+///
+/// A ruleset is stored enabled, so it filters the feed from its first save.
+/// A reader who wrote a working rule meant it to run, and a ruleset that
+/// claims nothing until they find the switch reads as a rule that failed.
+///
+/// A template is stored disabled. It claims nothing and carries no switch, so
+/// the flag decides nothing about it.
 #[route(POST "/admin/rulesets")]
 async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     let rulesets = app_context::<Arc<Rulesets>>(cx);
@@ -2191,7 +2198,7 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
         .save(Ruleset {
             id: id.clone(),
             name: posted.name,
-            enabled: false,
+            enabled: !posted.template,
             template: posted.template,
             based_on: posted.based_on,
             fields: posted.fields,

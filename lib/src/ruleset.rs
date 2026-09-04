@@ -100,11 +100,10 @@ pub(crate) struct Ruleset {
 
     pub(crate) name: String,
 
-    /// Whether the ruleset runs when the process starts.
+    /// Whether the ruleset claims titles.
     ///
-    /// This seeds the switch state once. [`crate::server`] holds the live
-    /// value from then on, which a reader flips at runtime without editing
-    /// this declaration.
+    /// A new ruleset stores `true`, and the editor's switch flips the stored
+    /// value through `Rulesets::set_enabled`.
     ///
     /// A disabled ruleset filters nothing, so its releases stay out of the
     /// feed.
