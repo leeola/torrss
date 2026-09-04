@@ -9,6 +9,7 @@ use super::router;
 use crate::feed::registry;
 use crate::feed::registry::FeedRegistry;
 use crate::feed::store::FeedStore;
+use crate::parser::store::ParserStore;
 use crate::ruleset::registry::Rulesets;
 use crate::ruleset::store::RulesetStore;
 use crate::services::Services;
@@ -63,9 +64,12 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
     );
 
     let rulesets = Arc::new(
-        Rulesets::load(RulesetStore::new(services.db.clone()))
-            .await
-            .map_err(io::Error::other)?,
+        Rulesets::load(
+            RulesetStore::new(services.db.clone()),
+            ParserStore::new(services.db.clone()),
+        )
+        .await
+        .map_err(io::Error::other)?,
     );
 
     // Named `scan_state` because the module `scan` has to stay in scope for
