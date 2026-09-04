@@ -49,7 +49,7 @@ fn field(
 /// Panics when a pattern fails to compile, which makes a bad fixture
 /// pattern a failure of the test run rather than a silent miss.
 pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
-    Engine::from_rulesets(rulesets()).expect("every fixture pattern is a valid regex")
+    Engine::new(Vec::new(), rulesets()).expect("every fixture pattern is a valid regex")
 });
 
 /// The five rulesets the tests parse against.

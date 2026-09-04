@@ -60,7 +60,7 @@ impl Rulesets {
     /// table edited outside the application.
     pub(crate) async fn load(store: RulesetStore) -> Result<Self, LoadError> {
         let rulesets = store.list().await.context(load_error::StoreSnafu)?;
-        let engine = Engine::from_rulesets(rulesets).context(load_error::EngineSnafu)?;
+        let engine = Engine::new(Vec::new(), rulesets).context(load_error::EngineSnafu)?;
 
         Ok(Self {
             store,
@@ -172,7 +172,7 @@ impl Rulesets {
         rulesets.push(ruleset);
 
         Ok(Arc::new(
-            Engine::from_rulesets(rulesets).context(EngineSnafu)?,
+            Engine::new(Vec::new(), rulesets).context(EngineSnafu)?,
         ))
     }
 
@@ -183,7 +183,7 @@ impl Rulesets {
     /// which the router refuses.
     async fn reload(&self) -> Result<(), SaveError> {
         let rulesets = self.store.list().await.context(StoreSnafu)?;
-        let engine = Engine::from_rulesets(rulesets).context(EngineSnafu)?;
+        let engine = Engine::new(Vec::new(), rulesets).context(EngineSnafu)?;
 
         self.swap(Arc::new(engine));
 

@@ -481,16 +481,19 @@ mod tests {
     /// Each value comes back normalized by its field's kind, which is the
     /// form the identity stores.
     fn read_fields(fields: &[Field], title: &str) -> Vec<(String, String)> {
-        let engine = Engine::from_rulesets(vec![Ruleset {
-            id: "scene".to_owned(),
-            name: "Scene".to_owned(),
-            enabled: true,
-            template: false,
-            based_on: None,
-            fields: fields.to_vec(),
-            conditions: Vec::new(),
-            tests: Vec::new(),
-        }])
+        let engine = Engine::new(
+            Vec::new(),
+            vec![Ruleset {
+                id: "scene".to_owned(),
+                name: "Scene".to_owned(),
+                enabled: true,
+                template: false,
+                based_on: None,
+                fields: fields.to_vec(),
+                conditions: Vec::new(),
+                tests: Vec::new(),
+            }],
+        )
         .expect("the fields compose into one regex");
 
         engine
