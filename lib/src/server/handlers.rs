@@ -68,6 +68,12 @@ path_param!(feed_id);
 /// of the row, as the `test` action's argument is, so the script copies pairs
 /// and knows no preset.
 ///
+/// `move-up` and `move-down` trade one row's keys with its neighbor's. The
+/// rows are keyed by their index and `RulesetForm::parse` orders by it, so a
+/// move renames two rows' keys and touches nothing else. A move off either
+/// end returns the form unchanged, because the row it would trade with does
+/// not exist.
+///
 /// Every branch returns the form serialized, which is what both the rows and
 /// the matches read.
 ///
@@ -105,6 +111,24 @@ window.torrssRows = {
       }
     }
   },
+  swap: (params, a, b) => {
+    const moved = new URLSearchParams();
+
+    for (const [key, value] of params) {
+      const row = key.match(/^field\.(\d+)\./);
+      const index = row === null ? null : Number(row[1]);
+
+      if (index === a) {
+        moved.append(`field.${b}.${key.slice(row[0].length)}`, value);
+      } else if (index === b) {
+        moved.append(`field.${a}.${key.slice(row[0].length)}`, value);
+      } else {
+        moved.append(key, value);
+      }
+    }
+
+    return moved.toString();
+  },
   apply: (action) => {
     const params = window.torrssRows.form();
     const index = window.torrssRows.next(params);
@@ -129,6 +153,17 @@ window.torrssRows = {
     if (name === 'add-test') {
       params.append(`test.${window.torrssRows.nextTest(params)}.title`, '');
       return params.toString();
+    }
+
+    if (name === 'move-up' || name === 'move-down') {
+      const from = Number(argument);
+      const to = name === 'move-up' ? from - 1 : from + 1;
+
+      if (to < 0 || to >= index) {
+        return params.toString();
+      }
+
+      return window.torrssRows.swap(params, from, to);
     }
 
     if (name === 'remove') {
@@ -1778,6 +1813,9 @@ fn compute_matches<'a>(
 /// Only a structural change re-renders these. A keystroke moves the matches
 /// alone, because re-rendering a row under the cursor takes the focus with
 /// it.
+///
+/// A ruleset built on a template lists the template's order, as
+/// [`Ruleset::resolved_fields`] defines it, so its rows carry no arrows.
 #[shard]
 async fn field_rows(cx: &Cx, rows: String) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
@@ -1790,7 +1828,12 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
 
     view! {
         for (position, (index, resolved)) in rows.iter().enumerate() {
-            components::field_row(index: *index, position: position, resolved: *resolved)
+            components::field_row(
+                index: *index,
+                position: position,
+                movable: template.is_none(),
+                resolved: *resolved,
+            )
         }
     }
 }

@@ -340,10 +340,14 @@ fn passed(engine: &Engine, rulesets: &[String]) -> String {
 /// template's, and editing it here would suggest a change this ruleset does
 /// not hold. The trailing column is the way in: it replaces the template's
 /// value with one this ruleset owns.
+///
+/// `movable` gives the row its arrows. A row moves only where this ruleset
+/// owns the order, which a ruleset built on a template does not.
 #[component]
 pub(crate) async fn field_row(
     index: usize,
     position: usize,
+    movable: bool,
     resolved: ResolvedField<'_>,
 ) -> Result {
     let field = resolved.field;
@@ -453,24 +457,46 @@ pub(crate) async fn field_row(
 
             <div class="md:col-span-2 md:justify-self-end">
                 <label class="block text-xs text-slate-500">"Source"</label>
-                <button
-                    type="button"
-                    // A `type="button"` never joins `FormData`, so the name
-                    // stays out of the form encoding the shard parses.
-                    name="row-action"
-                    value=(if locked {
-                        format!("replace:{}", field.name)
-                    } else {
-                        format!("remove:{index}")
-                    })
-                    class=(class!(
-                        "mt-1 inline-block rounded-md border px-2 py-1 text-xs transition-colors",
-                        "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200" if locked
-                            else "border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/20",
-                    ))
-                >
-                    if locked { "replace" } else { "remove" }
+                <div class="mt-1 flex items-center gap-1">
+                    if movable {
+                        <button
+                            type="button"
+                            name="row-action"
+                            value=(format!("move-up:{index}"))
+                            title="Move up"
+                            class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+                        >
+                            "\u{2191}"
+                        </button>
+                        <button
+                            type="button"
+                            name="row-action"
+                            value=(format!("move-down:{index}"))
+                            title="Move down"
+                            class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+                        >
+                            "\u{2193}"
+                        </button>
+                    }
+                    <button
+                        type="button"
+                        // A `type="button"` never joins `FormData`, so the name
+                        // stays out of the form encoding the shard parses.
+                        name="row-action"
+                        value=(if locked {
+                            format!("replace:{}", field.name)
+                        } else {
+                            format!("remove:{index}")
+                        })
+                        class=(class!(
+                            "inline-block rounded-md border px-2 py-1 text-xs transition-colors",
+                            "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200" if locked
+                                else "border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/20",
+                        ))
+                    >
+                        if locked { "replace" } else { "remove" }
                     </button>
+                </div>
             </div>
         </div>
     }
