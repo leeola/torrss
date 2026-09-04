@@ -307,6 +307,15 @@ pub(crate) struct Field {
 
     pub(crate) required: bool,
 
+    /// Whether the next field's run starts where this one ends.
+    ///
+    /// A lazy run such as a show name has no end of its own. The component
+    /// after it is what stops it, so nothing may come between the two. A
+    /// field that is not tight lets the next field's run sit anywhere after
+    /// its own, which is how a resolution reads past an episode name the
+    /// ruleset does not claim.
+    pub(crate) tight: bool,
+
     /// Whether this field is part of the key that decides whether two
     /// releases are the same item.
     ///
@@ -393,7 +402,8 @@ impl FieldKind {
     /// run and its leading separator and nothing else.
     ///
     /// The season reads `S01`, `S1`, `Season.1`, and `Season 1`. It checks
-    /// nothing about what follows, because the next component consumes that.
+    /// nothing about what follows, because the next component consumes that,
+    /// while the season stays tight.
     ///
     /// The episode needs no season prefix of its own. The season component
     /// precedes it in field order, so a loose number elsewhere in a title
@@ -449,14 +459,22 @@ pub(crate) struct Preset {
     pub(crate) pattern: Option<&'static str>,
     pub(crate) required: bool,
     pub(crate) identity: bool,
+
+    #[allow(
+        dead_code,
+        reason = "a preset names every flag its row starts with, and the editor's menu encoding is what reads this one"
+    )]
+    pub(crate) tight: bool,
 }
 
 /// The rows a reader starts from, drawn from scene naming.
 ///
 /// Each is one component of the composed regex, so it carries the separator
-/// before its run and nothing after it. The component that follows guards the
-/// end of the run, and the reader orders the rows as the tracker orders the
-/// tokens.
+/// before its run and nothing after it. A tight preset is one whose run only
+/// the next component ends: the show, the movie, the season, and the episode
+/// name. Every other preset lets the next component sit anywhere after its
+/// own run, so a resolution reads past an episode name the ruleset does not
+/// claim. The reader still orders the rows as the tracker orders the tokens.
 ///
 /// Each names its capture group after its preset, because that is the name the
 /// row starts with. A reader who renames the field keeps a working rule,
@@ -480,6 +498,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"^(?<show>[\w.]+?)"),
         required: true,
         identity: true,
+        tight: true,
     },
     Preset {
         name: "movie",
@@ -487,6 +506,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"^(?<movie>[\w.]+?)"),
         required: true,
         identity: true,
+        tight: true,
     },
     Preset {
         name: "season",
@@ -494,6 +514,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: None,
         required: true,
         identity: true,
+        tight: true,
     },
     Preset {
         name: "episodeNumber",
@@ -501,6 +522,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: None,
         required: false,
         identity: true,
+        tight: false,
     },
     Preset {
         name: "episodeName",
@@ -508,6 +530,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\.(?<episodeName>[\w.]+?)"),
         required: false,
         identity: false,
+        tight: true,
     },
     Preset {
         name: "year",
@@ -515,6 +538,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\.(?<year>(?:19|20)\d{2})"),
         required: true,
         identity: true,
+        tight: false,
     },
     Preset {
         name: "resolution",
@@ -522,6 +546,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\.(?<resolution>480p|720p|1080p|2160p)"),
         required: false,
         identity: false,
+        tight: false,
     },
     Preset {
         name: "source",
@@ -529,6 +554,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\.(?<source>WEB-?DL|WEBRip|BluRay|BDRip|HDTV|DVDRip|Remux)"),
         required: false,
         identity: false,
+        tight: false,
     },
     Preset {
         name: "codec",
@@ -536,6 +562,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\.(?<codec>[xXhH]\.?26[45]|HEVC|AV1|XviD)"),
         required: false,
         identity: false,
+        tight: false,
     },
     Preset {
         name: "audio",
@@ -543,6 +570,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\.(?<audio>DDP?\d\.\d|AAC|DTS(?:-HD)?|TrueHD|Atmos|FLAC)"),
         required: false,
         identity: false,
+        tight: false,
     },
     Preset {
         name: "publisher",
@@ -550,6 +578,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"-(?<publisher>[A-Za-z0-9]+)"),
         required: false,
         identity: false,
+        tight: false,
     },
     Preset {
         name: "checksum",
@@ -557,6 +586,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"\[(?<checksum>[0-9A-Fa-f]{8})\]"),
         required: false,
         identity: false,
+        tight: false,
     },
     Preset {
         name: "extension",
@@ -564,6 +594,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: Some(r"(?<extension>\.mkv|\.mp4|\.avi)$"),
         required: false,
         identity: false,
+        tight: false,
     },
 ];
 
@@ -590,6 +621,7 @@ mod tests {
             name,
             pattern: kind.pattern().expect("a premade kind"),
             required: true,
+            tight: true,
         };
 
         let regex = Regex::new(&compose(std::slice::from_ref(&component))).expect("a valid regex");
@@ -612,6 +644,7 @@ mod tests {
             kind: preset.kind,
             pattern: preset.pattern.map(str::to_owned),
             required: preset.required,
+            tight: preset.tight,
             identity: preset.identity,
         }
     }
@@ -761,6 +794,63 @@ mod tests {
                 ("extension", "mkv".to_owned()),
             ],
             "each preset reads its own run when the rows follow the tracker's order"
+        );
+    }
+
+    #[test]
+    fn presets_read_past_a_run_no_field_claims() {
+        let fields = ["show", "season", "episodeNumber", "resolution"].map(preset_field);
+
+        let engine = Engine::from_rulesets(vec![Ruleset {
+            id: "scene".to_owned(),
+            name: "Scene".to_owned(),
+            enabled: true,
+            template: false,
+            based_on: None,
+            fields: fields.to_vec(),
+            tests: Vec::new(),
+        }])
+        .expect("the presets compose into one regex");
+
+        let read = |title: &str| {
+            engine
+                .parse(title)
+                .unwrap_or_else(|| panic!("{title} is claimed"))
+                .values
+                .iter()
+                .map(|(name, raw)| {
+                    let kind = fields
+                        .iter()
+                        .find(|field| &field.name == name)
+                        .expect("a field of the ruleset")
+                        .kind;
+
+                    (name.clone(), kind.normalize(raw))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            [
+                read(
+                    "Coastal.Ecology.S02E05.Some.Episode.Name.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv"
+                ),
+                read("Coastal.Ecology.S02E05.Some.Name.WEB-DL.x265-OpenReel.mkv"),
+            ],
+            [
+                vec![
+                    ("show".to_owned(), "coastal ecology".to_owned()),
+                    ("season".to_owned(), "2".to_owned()),
+                    ("episodeNumber".to_owned(), "5".to_owned()),
+                    ("resolution".to_owned(), "1080p".to_owned()),
+                ],
+                vec![
+                    ("show".to_owned(), "coastal ecology".to_owned()),
+                    ("season".to_owned(), "2".to_owned()),
+                    ("episodeNumber".to_owned(), "5".to_owned()),
+                ],
+            ],
+            "the resolution reads past a run no field claims, and skips where the title carries none"
         );
     }
 

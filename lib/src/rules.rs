@@ -150,6 +150,7 @@ pub(crate) struct Component<'a> {
     pub(crate) name: &'a str,
     pub(crate) pattern: &'a str,
     pub(crate) required: bool,
+    pub(crate) tight: bool,
 }
 
 /// Joins every component into the one regex a ruleset matches with.
@@ -163,11 +164,14 @@ pub(crate) struct Component<'a> {
 /// component is wrapped again and made skippable, so it skips as a whole and
 /// a title that lacks it still claims.
 ///
-/// Nothing goes between two components. The reader writes each separator into
-/// the component that follows it, and an implicit `.*?` lets a lazy first
-/// component stop after one character.
+/// A component that follows a tight one starts where that one ends, with
+/// nothing between. One that follows a field that is not tight starts with a
+/// lazy gap, `.*?`, inside its own wrapper, so an optional component skips
+/// the gap along with its run and a title that lacks the field still claims.
+/// The reader still writes each separator into the component that follows it.
 pub(crate) fn compose(components: &[Component<'_>]) -> String {
     let mut composed = String::new();
+    let mut gap = false;
 
     for component in components {
         let names_itself = component
@@ -183,11 +187,15 @@ pub(crate) fn compose(components: &[Component<'_>]) -> String {
             format!("(?<{}>{})", component.name, component.pattern)
         };
 
+        let part = if gap { format!(".*?{part}") } else { part };
+
         if component.required {
             composed.push_str(&part);
         } else {
             composed.push_str(&format!("(?:{part})?"));
         }
+
+        gap = !component.tight;
     }
 
     composed
@@ -357,6 +365,7 @@ impl Compiled {
                     name: &field.name,
                     pattern: matcher,
                     required: field.required,
+                    tight: field.tight,
                 };
 
                 Regex::new(&compose(std::slice::from_ref(&component))).context(PatternSnafu {
@@ -375,6 +384,7 @@ impl Compiled {
                 name: &resolved.field.name,
                 pattern,
                 required: resolved.field.required,
+                tight: resolved.field.tight,
             })
             .collect::<Vec<_>>();
 
@@ -446,6 +456,7 @@ fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
             name: &field.name,
             pattern: matcher,
             required: field.required,
+            tight: field.tight,
         };
 
         Regex::new(&compose(std::slice::from_ref(&component))).context(PatternSnafu {
@@ -708,6 +719,7 @@ mod tests {
             kind: FieldKind::Text,
             pattern: pattern.map(ToOwned::to_owned),
             required: true,
+            tight: true,
             identity: true,
         }
     }
@@ -795,21 +807,34 @@ mod tests {
                     name: "show",
                     pattern: "^(?<show>.+?)",
                     required: true,
+                    tight: true,
                 },
                 Component {
                     name: "season",
                     pattern: r"\.S(?<season>\d+)",
                     required: true,
+                    tight: true,
                 },
                 Component {
                     name: "episode",
                     pattern: r"E\d+",
                     required: false,
+                    tight: false,
+                },
+                Component {
+                    name: "resolution",
+                    pattern: r"\.(?<resolution>\d+p)",
+                    required: false,
+                    tight: false,
                 },
             ]),
-            r"(?:^(?<show>.+?))(?:\.S(?<season>\d+))(?:(?<episode>E\d+))?",
-            "a component that names its own group is only wrapped, and one that \
-             does not is named after its field"
+            concat!(
+                r"(?:^(?<show>.+?))(?:\.S(?<season>\d+))(?:(?<episode>E\d+))?",
+                r"(?:.*?(?:\.(?<resolution>\d+p)))?",
+            ),
+            "a component that names its own group is only wrapped, one that does \
+             not is named after its field, and one after a field that is not \
+             tight starts with the gap"
         );
     }
 
@@ -827,6 +852,7 @@ mod tests {
                     kind: FieldKind::Text,
                     pattern: Some(r"(?<a>\w)".to_owned()),
                     required: true,
+                    tight: true,
                     identity: true,
                 },
                 Field {
@@ -834,6 +860,7 @@ mod tests {
                     kind: FieldKind::Text,
                     pattern: Some(r"(?<a>\w)".to_owned()),
                     required: true,
+                    tight: true,
                     identity: false,
                 },
             ],

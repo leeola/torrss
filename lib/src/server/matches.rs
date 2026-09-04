@@ -66,6 +66,10 @@ pub(super) struct Rule {
     kind: FieldKind,
 
     required: bool,
+
+    /// Whether the next rule's run starts where this one ends, as
+    /// [`Field::tight`] defines it.
+    tight: bool,
 }
 
 /// Every field of one draft, composed into the regex it matches with.
@@ -181,6 +185,10 @@ impl Edits {
 /// because the form posts every input of a row together and an unchecked box
 /// posts nothing. A caller that builds an edit by hand supplies the checkbox
 /// too, or the field turns optional.
+///
+/// An edit carries no tight flag. Every caller passes [`Edits::default`], and
+/// the live draft reaches here as fields `RulesetForm::parse_draft` already
+/// read, so the flag arrives on the field rather than beside it.
 pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternError>) {
     let mut resolved = Vec::with_capacity(fields.len());
     let mut errors = Vec::new();
@@ -218,6 +226,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternErro
             name: &name,
             pattern: &pattern,
             required,
+            tight: field.tight,
         }])) {
             errors.push(PatternError {
                 field: field.name.to_owned(),
@@ -233,6 +242,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternErro
                 position,
                 kind,
                 required,
+                tight: field.tight,
             },
             pattern,
         ));
@@ -247,6 +257,7 @@ pub(super) fn rules(fields: &[&Field], edits: &Edits) -> (Rules, Vec<PatternErro
                 name: &rule.name,
                 pattern,
                 required: rule.required,
+                tight: rule.tight,
             })
             .collect::<Vec<_>>();
 
@@ -426,6 +437,7 @@ pub(super) mod tests {
             kind,
             pattern: pattern.map(ToOwned::to_owned),
             required,
+            tight: true,
             identity,
         }
     }

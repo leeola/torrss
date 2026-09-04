@@ -470,6 +470,7 @@ fn draft_field(row: Row) -> Field {
         kind,
         pattern: own_pattern(kind, row.pattern),
         required: row.required,
+        tight: true,
         identity: row.identity,
     }
 }
@@ -496,6 +497,7 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
         kind,
         pattern,
         required: row.required,
+        tight: true,
         identity: row.identity,
     })
 }
@@ -513,6 +515,7 @@ mod tests {
             kind: FieldKind::Text,
             pattern: Some(pattern.to_owned()),
             required,
+            tight: true,
             identity,
         }
     }
@@ -694,6 +697,7 @@ mod tests {
                     kind: FieldKind::Season,
                     pattern: None,
                     required: false,
+                    tight: true,
                     identity: true,
                 },
             ],
@@ -769,6 +773,7 @@ mod tests {
                         kind: FieldKind::Text,
                         pattern: None,
                         required: false,
+                        tight: true,
                         identity: false,
                     },
                 ],

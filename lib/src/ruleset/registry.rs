@@ -235,6 +235,7 @@ mod tests {
                 kind: FieldKind::Text,
                 pattern: Some(pattern.to_owned()),
                 required: true,
+                tight: true,
                 identity: true,
             }],
             tests: Vec::new(),

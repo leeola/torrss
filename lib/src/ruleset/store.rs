@@ -271,6 +271,7 @@ fn field(row: &sqlx::sqlite::SqliteRow) -> Result<Field, sqlx::Error> {
             .ok_or_else(|| sqlx::Error::decode(format!("unknown field kind {kind}")))?,
         pattern: row.try_get("pattern")?,
         required: row.try_get("required")?,
+        tight: true,
         identity: row.try_get("identity")?,
     })
 }
@@ -289,6 +290,7 @@ mod tests {
             kind: FieldKind::Text,
             pattern: pattern.map(ToOwned::to_owned),
             required: true,
+            tight: true,
             identity: false,
         }
     }
