@@ -8,10 +8,6 @@
 //! rename changes the name a page shows and orphans nothing that points at
 //! the parser.
 
-// FIXME: Nothing outside the tests holds a ParserStore. The shared ruleset
-// registry is the caller this waits on.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use sqlx::{Row, SqlitePool};

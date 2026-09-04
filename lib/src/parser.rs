@@ -11,6 +11,7 @@
 //! a filename with the field that claimed it, and [`Tint`] is the color that
 //! field wears wherever the reader meets it.
 
+pub(crate) mod form;
 pub(crate) mod store;
 
 use std::collections::BTreeMap;

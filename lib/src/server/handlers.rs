@@ -23,9 +23,10 @@ use url::Url;
 use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
+    parser::form as parser_form,
     parser::{Field, PRESETS},
     rules::Engine,
-    ruleset::form::{self, BASED_ROLE, EditorRows, RulesetForm, STANDALONE_ROLE, TEMPLATE_ROLE},
+    ruleset::form::{BASED_ROLE, EditorRows, RulesetForm, STANDALONE_ROLE, TEMPLATE_ROLE},
     ruleset::registry::{Rulesets, SaveError},
     ruleset::{Condition, Diff, FieldSource, ResolvedField, Ruleset},
     server::{
@@ -1775,7 +1776,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         >
                             <option value="">"blank"</option>
                             for preset in PRESETS {
-                                <option value=(form::encode_preset(preset))>(preset.name)</option>
+                                <option value=(parser_form::encode_preset(preset))>(preset.name)</option>
                             }
                         </select>
 
@@ -2358,7 +2359,7 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     let id = {
         let engine = rulesets.engine();
 
-        form::unique_slug(&posted.name, |id| engine.ruleset(id).is_some())
+        parser_form::unique_slug(&posted.name, |id| engine.ruleset(id).is_some())
             .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?
     };
 

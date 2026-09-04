@@ -10,11 +10,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use snafu::{OptionExt, Snafu, ensure};
+use snafu::{OptionExt, ensure};
 use url::form_urlencoded;
 
 use super::{Condition, Op};
-use crate::parser::{Field, FieldKind, Preset, TitleTest};
+use crate::parser::form::{
+    DuplicateNameSnafu, EmptyNameSnafu, FormError, MissingValueSnafu, Row, TestRow, UnknownOpSnafu,
+    draft_field, encode_field, encode_test, field, read_row, read_test,
+};
+use crate::parser::{Field, TitleTest};
 
 /// The role a posted ruleset names, which decides what its base means.
 ///
@@ -56,56 +60,6 @@ pub(crate) struct RulesetForm {
     pub(crate) conditions: Vec<Condition>,
 
     pub(crate) tests: Vec<TitleTest>,
-}
-
-/// Why a posted ruleset is not one.
-///
-/// Every variant names what the reader has to change, because the message
-/// reaches them as the body of a 400.
-#[derive(Debug, PartialEq, Eq, Snafu)]
-pub(crate) enum FormError {
-    #[snafu(display("the ruleset needs a name"))]
-    EmptyName,
-
-    #[snafu(display("no field type is named {kind}"))]
-    UnknownKind { kind: String },
-
-    #[snafu(display("field {field} needs a pattern, because its type supplies none"))]
-    MissingPattern { field: String },
-
-    #[snafu(display("two fields are named {field}"))]
-    DuplicateName { field: String },
-
-    #[snafu(display("no condition is named {op}"))]
-    UnknownOp { op: String },
-
-    #[snafu(display("the condition on {field} needs a value"))]
-    MissingValue { field: String },
-}
-
-/// One field row as the form posted it, before it becomes a [`Field`].
-///
-/// Every attribute is a string here, because a form posts text. The checkbox
-/// flags are `bool` already. A checkbox posts its name only when checked, so
-/// absence is `false` rather than missing.
-#[derive(Default)]
-struct Row {
-    name: String,
-    kind: String,
-    pattern: Option<String>,
-    required: bool,
-    identity: bool,
-    tight: bool,
-}
-
-/// One test row as the form posted it, before it becomes a [`TitleTest`].
-///
-/// Keyed `test.{index}.title` and `test.{index}.expect.{field}`, so a reader
-/// names as few fields as they mean to assert.
-#[derive(Default)]
-struct TestRow {
-    title: String,
-    expected: BTreeMap<String, String>,
 }
 
 /// One condition row as the form posted it, before it becomes a
@@ -319,24 +273,7 @@ impl RulesetForm {
         }
 
         for (index, field) in self.fields.iter().enumerate() {
-            pairs.append_pair(&format!("field.{index}.name"), &field.name);
-            pairs.append_pair(&format!("field.{index}.kind"), field.kind.label());
-
-            if let Some(pattern) = &field.pattern {
-                pairs.append_pair(&format!("field.{index}.pattern"), pattern);
-            }
-
-            if field.required {
-                pairs.append_pair(&format!("field.{index}.required"), "on");
-            }
-
-            if field.identity {
-                pairs.append_pair(&format!("field.{index}.identity"), "on");
-            }
-
-            if field.tight {
-                pairs.append_pair(&format!("field.{index}.tight"), "on");
-            }
+            encode_field(&mut pairs, index, field);
         }
 
         for (index, condition) in self.conditions.iter().enumerate() {
@@ -346,110 +283,10 @@ impl RulesetForm {
         }
 
         for (index, test) in self.tests.iter().enumerate() {
-            pairs.append_pair(&format!("test.{index}.title"), &test.title);
-
-            for (field, expected) in &test.expected {
-                pairs.append_pair(&format!("test.{index}.expect.{field}"), expected);
-            }
+            encode_test(&mut pairs, index, test);
         }
 
         pairs.finish()
-    }
-}
-
-/// Writes the pairs one field row carries, for a preset menu to hand over.
-///
-/// The keys are the ones [`read_row`] reads, without the `field.{index}.`
-/// prefix a whole form adds. So a row built from these parses as if the
-/// reader had typed it, and the script that builds it copies pairs and knows
-/// no preset.
-pub(crate) fn encode_preset(preset: &Preset) -> String {
-    let mut pairs = form_urlencoded::Serializer::new(String::new());
-
-    pairs.append_pair("name", preset.name);
-    pairs.append_pair("kind", preset.kind.label());
-
-    if let Some(pattern) = preset.pattern {
-        pairs.append_pair("pattern", pattern);
-    }
-
-    if preset.required {
-        pairs.append_pair("required", "on");
-    }
-
-    if preset.identity {
-        pairs.append_pair("identity", "on");
-    }
-
-    if preset.tight {
-        pairs.append_pair("tight", "on");
-    }
-
-    pairs.finish()
-}
-
-/// Turns `name` into the id a ruleset carries in its URL.
-///
-/// Every run of characters outside the alphabet and the digits becomes one
-/// `-`, so two names that differ only in punctuation reach the same slug and
-/// the caller sees the collision.
-pub(crate) fn slug(name: &str) -> String {
-    let mut slug = String::with_capacity(name.len());
-
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.extend(character.to_lowercase());
-        } else if !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-
-    slug.trim_matches('-').to_owned()
-}
-
-/// Returns a slug of `name` that `taken` reports free, or [`None`] when the
-/// name slugs to nothing.
-///
-/// A collision appends a counter rather than a random suffix, so the second
-/// "Series Episodes" reads as `series-episodes-2` and stays guessable.
-pub(crate) fn unique_slug(name: &str, taken: impl Fn(&str) -> bool) -> Option<String> {
-    let base = slug(name);
-
-    if base.is_empty() {
-        return None;
-    }
-
-    if !taken(&base) {
-        return Some(base);
-    }
-
-    (2..).map(|n| format!("{base}-{n}")).find(|id| !taken(id))
-}
-
-/// Files one `test.{index}.title` or `test.{index}.expect.{field}` pair under
-/// its test.
-///
-/// A key that is not a test row passes through untouched, as [`read_row`]
-/// does with its own.
-fn read_test(tests: &mut BTreeMap<usize, TestRow>, key: &str, value: &str) {
-    let Some(rest) = key.strip_prefix("test.") else {
-        return;
-    };
-
-    let Some((index, attribute)) = rest.split_once('.') else {
-        return;
-    };
-
-    let Ok(index) = index.parse::<usize>() else {
-        return;
-    };
-
-    let test = tests.entry(index).or_default();
-
-    if attribute == "title" {
-        test.title = value.to_owned();
-    } else if let Some(field) = attribute.strip_prefix("expect.") {
-        test.expected.insert(field.to_owned(), value.to_owned());
     }
 }
 
@@ -476,36 +313,6 @@ fn read_condition(conditions: &mut BTreeMap<usize, ConditionRow>, key: &str, val
         "field" => condition.field = value.to_owned(),
         "op" => condition.op = value.to_owned(),
         "value" => condition.value = value.to_owned(),
-        _ => {}
-    }
-}
-
-/// Files one `field.{index}.attribute` pair under its row.
-///
-/// A key that is not a field row passes through untouched. The editor's own
-/// controls share the body with the field inputs.
-fn read_row(rows: &mut BTreeMap<usize, Row>, key: &str, value: &str) {
-    let Some(rest) = key.strip_prefix("field.") else {
-        return;
-    };
-
-    let Some((index, attribute)) = rest.split_once('.') else {
-        return;
-    };
-
-    let Ok(index) = index.parse::<usize>() else {
-        return;
-    };
-
-    let row = rows.entry(index).or_default();
-
-    match attribute {
-        "name" => row.name = value.to_owned(),
-        "kind" => row.kind = value.to_owned(),
-        "pattern" => row.pattern = Some(value.to_owned()),
-        "required" => row.required = true,
-        "identity" => row.identity = true,
-        "tight" => row.tight = true,
         _ => {}
     }
 }
@@ -544,35 +351,6 @@ fn read(body: &str) -> Posted {
     posted
 }
 
-/// The pattern a row stores for itself, or nothing when it stores none.
-///
-/// A premade kind carries its own regex, so a row of that kind keeps no copy
-/// of what the editor rendered. A blank pattern is no pattern.
-fn own_pattern(kind: FieldKind, pattern: Option<String>) -> Option<String> {
-    if kind.pattern().is_some() {
-        return None;
-    }
-
-    pattern.filter(|pattern| !pattern.trim().is_empty())
-}
-
-/// Resolves one posted row into a field, refusing nothing.
-///
-/// A kind this build does not know falls back to the first option its select
-/// renders, which is what a row that named none posted.
-fn draft_field(row: Row) -> Field {
-    let kind = FieldKind::from_label(&row.kind).unwrap_or(FieldKind::Text);
-
-    Field {
-        name: row.name.trim().to_owned(),
-        kind,
-        pattern: own_pattern(kind, row.pattern),
-        required: row.required,
-        tight: row.tight,
-        identity: row.identity,
-    }
-}
-
 /// Resolves one posted row into a condition.
 ///
 /// An operator that compares no value keeps whatever the input beside it
@@ -594,41 +372,12 @@ fn condition(row: ConditionRow) -> Result<Condition, FormError> {
     })
 }
 
-/// Resolves one posted row into a field.
-///
-/// The pattern is dropped when the kind supplies one, so a premade kind keeps
-/// its built-in regex rather than storing a copy the editor rendered.
-///
-/// A template keeps an empty pattern as a blank rather than refusing it. A
-/// template names the field and the flags, and the ruleset built on it writes
-/// the regex.
-fn field(row: Row, template: bool) -> Result<Field, FormError> {
-    let kind = FieldKind::from_label(&row.kind).context(UnknownKindSnafu { kind: &row.kind })?;
-
-    let pattern = own_pattern(kind, row.pattern);
-
-    if pattern.is_none() && kind.pattern().is_none() {
-        ensure!(template, MissingPatternSnafu { field: &row.name });
-    }
-
-    Ok(Field {
-        name: row.name.trim().to_owned(),
-        kind,
-        pattern,
-        required: row.required,
-        tight: row.tight,
-        identity: row.identity,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{
-        Condition, EditorRows, FormError, Op, RulesetForm, encode_preset, slug, unique_slug,
-    };
-    use crate::parser::{Field, FieldKind, PRESETS, TitleTest};
+    use super::{Condition, EditorRows, FormError, Op, RulesetForm};
+    use crate::parser::{Field, FieldKind, TitleTest};
 
     fn text(name: &str, pattern: &str, required: bool, identity: bool) -> Field {
         Field {
@@ -668,64 +417,6 @@ mod tests {
                 tests: Vec::new(),
             },
             "the index orders the rows, and an absent checkbox reads false"
-        );
-    }
-
-    #[test]
-    fn a_row_with_no_name_is_skipped() {
-        let form = RulesetForm::parse(
-            "name=Series\
-             &field.0.name=show&field.0.kind=text&field.0.pattern=%5E.%2B\
-             &field.1.name=&field.1.kind=text&field.1.pattern=",
-        )
-        .expect("the body parses");
-
-        assert_eq!(
-            form.fields,
-            vec![text("show", "^.+", false, false)],
-            "an added row the reader never filled in is not a field"
-        );
-    }
-
-    #[test]
-    fn tests_read_the_title_and_each_expected_value() {
-        let form = RulesetForm::parse(
-            "name=Series\
-             &test.1.title=Coastal.Drift.2024&test.1.expect.show=coastal%20drift\
-             &test.1.expect.year=\
-             &test.0.title=The.Hollow.Meridian.S04E06&test.0.expect.season=4\
-             &test.2.title=%20%20",
-        )
-        .expect("the body parses");
-
-        assert_eq!(
-            form.tests,
-            vec![
-                TitleTest {
-                    title: "The.Hollow.Meridian.S04E06".to_owned(),
-                    expected: BTreeMap::from([("season".to_owned(), "4".to_owned())]),
-                },
-                TitleTest {
-                    title: "Coastal.Drift.2024".to_owned(),
-                    expected: BTreeMap::from([("show".to_owned(), "coastal drift".to_owned())]),
-                },
-            ],
-            "the index orders them, a blank expectation asserts nothing, and a blank title \
-             is a row the reader never filled in"
-        );
-    }
-
-    #[test]
-    fn a_premade_kind_stores_no_pattern_of_its_own() {
-        let form = RulesetForm::parse(
-            "name=Series&field.0.name=season&field.0.kind=season\
-             &field.0.pattern=whatever%20the%20editor%20rendered",
-        )
-        .expect("the body parses");
-
-        assert_eq!(
-            form.fields[0].pattern, None,
-            "the kind's own pattern applies, so the row stores none"
         );
     }
 
@@ -782,30 +473,6 @@ mod tests {
                 field: "show".to_owned()
             }),
             "only a template leaves one"
-        );
-    }
-
-    #[test]
-    fn a_name_slugs_to_one_dash_per_run() {
-        assert_eq!(slug("The Hollow Meridian!"), "the-hollow-meridian");
-        assert_eq!(slug("  --  "), "");
-    }
-
-    #[test]
-    fn a_taken_slug_counts_up() {
-        assert_eq!(
-            unique_slug("Series Episodes", |id| id == "series-episodes"),
-            Some("series-episodes-2".to_owned())
-        );
-        assert_eq!(
-            unique_slug("Series Episodes", |id| id.starts_with("series-episodes")
-                && id != "series-episodes-3"),
-            Some("series-episodes-3".to_owned())
-        );
-        assert_eq!(
-            unique_slug("!!!", |_| false),
-            None,
-            "a name that slugs to nothing names nothing"
         );
     }
 
@@ -917,53 +584,6 @@ mod tests {
                 }],
             },
             "an added row lists under the first part and kind, and the page needs no name yet"
-        );
-    }
-
-    #[test]
-    fn two_rows_with_one_name_are_refused() {
-        assert_eq!(
-            RulesetForm::parse(
-                "name=Films&field.0.name=year&field.0.kind=number&field.0.pattern=x\
-                 &field.1.name=year&field.1.kind=number&field.1.pattern=y"
-            ),
-            Err(FormError::DuplicateName {
-                field: "year".to_owned()
-            }),
-            "one name is one field, so a second row under it has no rule of its own"
-        );
-
-        assert!(
-            RulesetForm::parse(
-                "name=Films&field.0.name=year&field.0.kind=number&field.0.pattern=x\
-                 &field.1.name=Year&field.1.kind=number&field.1.pattern=y"
-            )
-            .is_ok(),
-            "a name is compared as typed, because that is how the rules look it up"
-        );
-    }
-
-    #[test]
-    fn a_preset_encodes_the_keys_a_row_reads() {
-        assert_eq!(
-            encode_preset(&PRESETS[5]),
-            "name=year&kind=number&pattern=%5C.%28%3F%3Cyear%3E%28%3F%3A19%7C20%29%5Cd%7B2%7D%29\
-             &required=on&identity=on",
-            "the pairs are what read_row reads, minus the prefix a whole form adds"
-        );
-
-        assert_eq!(
-            encode_preset(&PRESETS[6]),
-            "name=resolution&kind=enum\
-             &pattern=%5C.%28%3F%3Cresolution%3E480p%7C720p%7C1080p%7C2160p%29",
-            "a flag left unset posts nothing, as an unchecked box does"
-        );
-
-        assert_eq!(
-            encode_preset(&PRESETS[0]),
-            "name=show&kind=text&pattern=%5E%28%3F%3Cshow%3E%5B%5Cw.%5D%2B%29\
-             &required=on&identity=on&tight=on",
-            "a tight preset posts the flag as a checked box does"
         );
     }
 
