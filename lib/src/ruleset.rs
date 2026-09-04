@@ -463,9 +463,16 @@ pub(crate) struct Preset {
 /// because `compose` in [`crate::rules`] then wraps the whole component in a
 /// group under the new name.
 ///
-/// The first five decide what a release is, so they are required or part of
-/// the identity. The rest describe one copy of it, and two copies that differ
-/// only in codec are still one release.
+/// The show, movie, season, episode number, and year decide what a release
+/// is, so they are required or part of the identity. The rest describe one
+/// copy of it, and two copies that differ only in codec are still one
+/// release.
+///
+/// The episode name is a lazy run, as the show is. The component after it has
+/// to be required, because an optional one lets the run stop after one
+/// character. The show relies on the required season for that, and the
+/// episode name relies on the row the reader marks required after it, such as
+/// a resolution.
 pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "show",
@@ -494,6 +501,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         pattern: None,
         required: false,
         identity: true,
+    },
+    Preset {
+        name: "episodeName",
+        kind: FieldKind::Text,
+        pattern: Some(r"\.(?<episodeName>[\w.]+?)"),
+        required: false,
+        identity: false,
     },
     Preset {
         name: "year",
@@ -586,6 +600,22 @@ mod tests {
             .map(|value| value.as_str().to_owned())
     }
 
+    /// The field a new row starts as when the reader picks the preset `name`.
+    fn preset_field(name: &str) -> Field {
+        let preset = PRESETS
+            .iter()
+            .find(|preset| preset.name == name)
+            .unwrap_or_else(|| panic!("{name} is a preset"));
+
+        Field {
+            name: preset.name.to_owned(),
+            kind: preset.kind,
+            pattern: preset.pattern.map(str::to_owned),
+            required: preset.required,
+            identity: preset.identity,
+        }
+    }
+
     #[test]
     fn season_kind_reads_each_form() {
         let titles = [
@@ -670,7 +700,7 @@ mod tests {
                 .map(|preset| preset.name)
                 .collect::<BTreeSet<_>>()
                 .len(),
-            12,
+            13,
             "each preset names a distinct field, so two never collide in one ruleset"
         );
     }
@@ -688,20 +718,7 @@ mod tests {
             "publisher",
             "extension",
         ]
-        .map(|name| {
-            let preset = PRESETS
-                .iter()
-                .find(|preset| preset.name == name)
-                .unwrap_or_else(|| panic!("{name} is a preset"));
-
-            Field {
-                name: preset.name.to_owned(),
-                kind: preset.kind,
-                pattern: preset.pattern.map(str::to_owned),
-                required: preset.required,
-                identity: preset.identity,
-            }
-        });
+        .map(preset_field);
 
         let engine = Engine::from_rulesets(vec![Ruleset {
             id: "scene".to_owned(),
@@ -744,6 +761,79 @@ mod tests {
                 ("extension", "mkv".to_owned()),
             ],
             "each preset reads its own run when the rows follow the tracker's order"
+        );
+    }
+
+    #[test]
+    fn episode_name_reads_up_to_a_required_guard() {
+        // The resolution is the required component the lazy name runs up to.
+        // Every other row keeps what its preset ships.
+        let fields = [
+            "show",
+            "season",
+            "episodeNumber",
+            "episodeName",
+            "resolution",
+        ]
+        .map(|name| {
+            let field = preset_field(name);
+
+            Field {
+                required: field.required || name == "resolution",
+                ..field
+            }
+        });
+
+        let engine = Engine::from_rulesets(vec![Ruleset {
+            id: "scene".to_owned(),
+            name: "Scene".to_owned(),
+            enabled: true,
+            template: false,
+            based_on: None,
+            fields: fields.to_vec(),
+            tests: Vec::new(),
+        }])
+        .expect("the presets compose into one regex");
+
+        let read = |title: &str| {
+            engine
+                .parse(title)
+                .unwrap_or_else(|| panic!("{title} is claimed"))
+                .values
+                .iter()
+                .map(|(name, raw)| {
+                    let kind = fields
+                        .iter()
+                        .find(|field| &field.name == name)
+                        .expect("a field of the ruleset")
+                        .kind;
+
+                    (name.clone(), kind.normalize(raw))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            [
+                read("Coastal.Ecology.S02E05.The.Tide.Line.1080p.mkv"),
+                read("Coastal.Ecology.S02E05.1080p.mkv"),
+            ],
+            [
+                vec![
+                    ("show".to_owned(), "coastal ecology".to_owned()),
+                    ("season".to_owned(), "2".to_owned()),
+                    ("episodeNumber".to_owned(), "5".to_owned()),
+                    ("episodeName".to_owned(), "the tide line".to_owned()),
+                    ("resolution".to_owned(), "1080p".to_owned()),
+                ],
+                vec![
+                    ("show".to_owned(), "coastal ecology".to_owned()),
+                    ("season".to_owned(), "2".to_owned()),
+                    ("episodeNumber".to_owned(), "5".to_owned()),
+                    ("resolution".to_owned(), "1080p".to_owned()),
+                ],
+            ],
+            "the name runs up to the required resolution, and skips where the title carries none"
         );
     }
 }
