@@ -367,6 +367,7 @@ pub(crate) async fn field_row(
             data-pattern=(field.matcher().unwrap_or_default())
             data-required=(if field.required { "on" } else { "" })
             data-identity=(if field.identity { "on" } else { "" })
+            data-tight=(if field.tight { "on" } else { "" })
         >
             <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Name"</label>
@@ -397,7 +398,7 @@ pub(crate) async fn field_row(
                 </select>
             </div>
 
-            <div class="md:col-span-4">
+            <div class="md:col-span-3">
                 <label class="block text-xs text-slate-500">"Pattern"</label>
                 // The input locks only where the kind supplies the pattern and
                 // the field takes it. A blank has nothing to take, and an
@@ -450,6 +451,22 @@ pub(crate) async fn field_row(
                     type="checkbox"
                     name=(format!("field.{index}.identity"))
                     checked=(field.identity)
+                    disabled=(locked)
+                    class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
+                >
+            </div>
+
+            <div class="md:col-span-1 md:justify-self-center">
+                <label
+                    class="block text-xs text-slate-500"
+                    title="The next field starts where this one ends, with nothing between"
+                >
+                    "Tight"
+                </label>
+                <input
+                    type="checkbox"
+                    name=(format!("field.{index}.tight"))
+                    checked=(field.tight)
                     disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
                 >

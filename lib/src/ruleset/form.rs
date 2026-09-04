@@ -86,6 +86,7 @@ struct Row {
     pattern: Option<String>,
     required: bool,
     identity: bool,
+    tight: bool,
 }
 
 /// One test row as the form posted it, before it becomes a [`RulesetTest`].
@@ -278,6 +279,10 @@ impl RulesetForm {
             if field.identity {
                 pairs.append_pair(&format!("field.{index}.identity"), "on");
             }
+
+            if field.tight {
+                pairs.append_pair(&format!("field.{index}.tight"), "on");
+            }
         }
 
         for (index, test) in self.tests.iter().enumerate() {
@@ -314,6 +319,10 @@ pub(crate) fn encode_preset(preset: &Preset) -> String {
 
     if preset.identity {
         pairs.append_pair("identity", "on");
+    }
+
+    if preset.tight {
+        pairs.append_pair("tight", "on");
     }
 
     pairs.finish()
@@ -409,6 +418,7 @@ fn read_row(rows: &mut BTreeMap<usize, Row>, key: &str, value: &str) {
         "pattern" => row.pattern = Some(value.to_owned()),
         "required" => row.required = true,
         "identity" => row.identity = true,
+        "tight" => row.tight = true,
         _ => {}
     }
 }
@@ -470,7 +480,7 @@ fn draft_field(row: Row) -> Field {
         kind,
         pattern: own_pattern(kind, row.pattern),
         required: row.required,
-        tight: true,
+        tight: row.tight,
         identity: row.identity,
     }
 }
@@ -497,7 +507,7 @@ fn field(row: Row, template: bool) -> Result<Field, FormError> {
         kind,
         pattern,
         required: row.required,
-        tight: true,
+        tight: row.tight,
         identity: row.identity,
     })
 }
@@ -515,7 +525,7 @@ mod tests {
             kind: FieldKind::Text,
             pattern: Some(pattern.to_owned()),
             required,
-            tight: true,
+            tight: false,
             identity,
         }
     }
@@ -526,7 +536,7 @@ mod tests {
             "name=Series&role=standalone\
              &field.2.name=season&field.2.kind=text&field.2.pattern=S%5Cd%2B\
              &field.0.name=show&field.0.kind=text&field.0.pattern=%5E.%2B\
-             &field.0.required=on&field.0.identity=on",
+             &field.0.required=on&field.0.identity=on&field.0.tight=on",
         )
         .expect("the body parses");
 
@@ -537,7 +547,10 @@ mod tests {
                 template: false,
                 based_on: None,
                 fields: vec![
-                    text("show", "^.+", true, true),
+                    Field {
+                        tight: true,
+                        ..text("show", "^.+", true, true)
+                    },
                     text("season", r"S\d+", false, false),
                 ],
                 tests: Vec::new(),
@@ -773,7 +786,7 @@ mod tests {
                         kind: FieldKind::Text,
                         pattern: None,
                         required: false,
-                        tight: true,
+                        tight: false,
                         identity: false,
                     },
                 ],
@@ -823,6 +836,13 @@ mod tests {
             "name=resolution&kind=enum\
              &pattern=%5C.%28%3F%3Cresolution%3E480p%7C720p%7C1080p%7C2160p%29",
             "a flag left unset posts nothing, as an unchecked box does"
+        );
+
+        assert_eq!(
+            encode_preset(&PRESETS[0]),
+            "name=show&kind=text&pattern=%5E%28%3F%3Cshow%3E%5B%5Cw.%5D%2B%3F%29\
+             &required=on&identity=on&tight=on",
+            "a tight preset posts the flag as a checked box does"
         );
     }
 

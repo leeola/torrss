@@ -175,7 +175,7 @@ window.torrssRows = {
     for (const attribute of ['name', 'kind', 'pattern']) {
       params.append(`field.${index}.${attribute}`, row.dataset[attribute]);
     }
-    for (const flag of ['required', 'identity']) {
+    for (const flag of ['required', 'identity', 'tight']) {
       if (row.dataset[flag]) {
         params.append(`field.${index}.${flag}`, 'on');
       }

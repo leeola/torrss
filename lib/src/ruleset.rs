@@ -459,11 +459,6 @@ pub(crate) struct Preset {
     pub(crate) pattern: Option<&'static str>,
     pub(crate) required: bool,
     pub(crate) identity: bool,
-
-    #[allow(
-        dead_code,
-        reason = "a preset names every flag its row starts with, and the editor's menu encoding is what reads this one"
-    )]
     pub(crate) tight: bool,
 }
 
