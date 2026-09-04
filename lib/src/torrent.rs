@@ -17,6 +17,7 @@
 use std::fmt::{self, Debug, Formatter};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use snafu::Snafu;
 use url::Url;
@@ -90,6 +91,11 @@ pub struct Torrent {
     pub size: u64,
     /// Completed fraction, from 0.0 to 1.0.
     pub progress: f32,
+
+    /// When the client added the torrent, or nothing when it did not say.
+    ///
+    /// An [`Option`] because every field qBittorrent reports is optional.
+    pub added_at: Option<DateTime<Utc>>,
 }
 
 /// How far along a torrent is.

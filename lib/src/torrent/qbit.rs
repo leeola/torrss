@@ -10,6 +10,7 @@
 //! rather than the trait impl.
 
 use async_trait::async_trait;
+use chrono::DateTime;
 use qbit_rs::model::{
     AddTorrentArg, Credential, GetTorrentListArg, Sep, State, Torrent as QbitTorrent, TorrentFile,
     TorrentSource as QbitSource,
@@ -149,6 +150,9 @@ fn torrent(raw: QbitTorrent) -> Option<Torrent> {
         size: raw.total_size.or(raw.size).unwrap_or(0).max(0) as u64,
         progress: raw.progress.unwrap_or(0.0) as f32,
         state: state(raw.state),
+        added_at: raw
+            .added_on
+            .and_then(|seconds| DateTime::from_timestamp(seconds, 0)),
     })
 }
 
@@ -189,6 +193,7 @@ fn error(error: QbitError) -> TorrentError {
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
     use qbit_rs::model::{Sep, State, Torrent as QbitTorrent, TorrentSource as QbitSource};
     use qbit_rs::{ApiError, Error as QbitError};
     use url::Url;
@@ -292,6 +297,7 @@ mod tests {
             size: Some(2048),
             progress: Some(0.5),
             state: Some(State::StalledUP),
+            added_on: Some(1_700_000_000),
             ..blank
         };
 
@@ -303,6 +309,7 @@ mod tests {
                 state: TorrentState::Seeding,
                 size: 0,
                 progress: 0.5,
+                added_at: DateTime::from_timestamp(1_700_000_000, 0),
             }),
             "an unknown total size clamps to zero rather than wrapping"
         );

@@ -997,7 +997,8 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
     }
 }
 
-/// The torrents the client holds that a ruleset claims, newest grab first.
+/// The torrents the client holds that a ruleset claims, grabbed first, then
+/// by the time the client added them.
 ///
 /// The list is read from the client rather than from the library table,
 /// because the state and the progress live only in the client, and the block

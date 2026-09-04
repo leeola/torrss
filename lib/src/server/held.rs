@@ -33,8 +33,8 @@ pub(super) struct Held {
 
 /// Pairs each claimed torrent with the grab that moved it.
 ///
-/// The newest grab comes first, then every torrent with no grab in the order
-/// the client reported them.
+/// Every torrent a grab moved leads, then the rest. Each group orders by the
+/// time the client added the torrent, newest first.
 pub(super) fn held(engine: &Engine, torrents: Vec<Torrent>, accepted: &[Accepted]) -> Vec<Held> {
     let mut grabbed: HashMap<String, DateTime<Utc>> = HashMap::new();
 
@@ -64,9 +64,11 @@ pub(super) fn held(engine: &Engine, torrents: Vec<Torrent>, accepted: &[Accepted
         })
         .collect();
 
-    // `None` sorts last under `Reverse`, and the sort is stable, so an
-    // ungrabbed torrent keeps the client's own order behind the grabbed ones.
-    held.sort_by_key(|held| Reverse(held.grabbed_at));
+    // `false` sorts before `true`, so a grabbed torrent leads whatever its
+    // date. `Reverse(None)` sorts last and the sort is stable, so a torrent
+    // the client gave no added time for trails its own group in the client's
+    // order.
+    held.sort_by_key(|held| (held.grabbed_at.is_none(), Reverse(held.torrent.added_at)));
 
     held
 }
@@ -91,6 +93,8 @@ mod tests {
         "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
     const HOLLOW_E08: &str =
         "The.Hollow.Meridian.S04E08.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
+    const HOLLOW_E09: &str =
+        "The.Hollow.Meridian.S04E09.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
 
     const NONSENSE: &str = "just some words with no structure at all";
 
@@ -102,13 +106,14 @@ mod tests {
             .expect("the test date is unambiguous")
     }
 
-    fn torrent(id: &str, name: &str) -> Torrent {
+    fn torrent(id: &str, name: &str, day: u32) -> Torrent {
         Torrent {
             id: TorrentId(id.to_owned()),
             name: name.to_owned(),
             state: TorrentState::Seeding,
             size: 0,
             progress: 1.0,
+            added_at: Some(at(day)),
         }
     }
 
@@ -126,7 +131,7 @@ mod tests {
     #[test]
     fn unclaimed_torrent_is_left_out() {
         assert_eq!(
-            held_of(vec![torrent("t1", NONSENSE)], &[]),
+            held_of(vec![torrent("t1", NONSENSE, 1)], &[]),
             Vec::new(),
             "no ruleset claims the name, so no rule put it there"
         );
@@ -135,9 +140,12 @@ mod tests {
     #[test]
     fn torrent_carries_the_grab_of_its_identity() {
         assert_eq!(
-            held_of(vec![torrent("t1", HOLLOW_E06)], &[accepted(HOLLOW_E06, 2)]),
+            held_of(
+                vec![torrent("t1", HOLLOW_E06, 1)],
+                &[accepted(HOLLOW_E06, 2)]
+            ),
             vec![Held {
-                torrent: torrent("t1", HOLLOW_E06),
+                torrent: torrent("t1", HOLLOW_E06, 1),
                 ruleset: CLAIMANT.to_owned(),
                 grabbed_at: Some(at(2)),
             }],
@@ -148,9 +156,9 @@ mod tests {
     #[test]
     fn torrent_with_no_grab_carries_no_time() {
         assert_eq!(
-            held_of(vec![torrent("t1", HOLLOW_E06)], &[]),
+            held_of(vec![torrent("t1", HOLLOW_E06, 1)], &[]),
             vec![Held {
-                torrent: torrent("t1", HOLLOW_E06),
+                torrent: torrent("t1", HOLLOW_E06, 1),
                 ruleset: CLAIMANT.to_owned(),
                 grabbed_at: None,
             }],
@@ -162,11 +170,11 @@ mod tests {
     fn latest_grab_of_one_identity_wins() {
         assert_eq!(
             held_of(
-                vec![torrent("t1", HOLLOW_E06)],
+                vec![torrent("t1", HOLLOW_E06, 1)],
                 &[accepted(HOLLOW_E06, 2), accepted(HOLLOW_E06_OTHER, 3)],
             ),
             vec![Held {
-                torrent: torrent("t1", HOLLOW_E06),
+                torrent: torrent("t1", HOLLOW_E06, 1),
                 ruleset: CLAIMANT.to_owned(),
                 grabbed_at: Some(at(3)),
             }],
@@ -175,34 +183,40 @@ mod tests {
     }
 
     #[test]
-    fn grabbed_torrents_sort_newest_first_then_the_rest() {
+    fn grabbed_torrents_lead_and_each_group_sorts_by_added_time() {
         assert_eq!(
             held_of(
                 vec![
-                    torrent("t1", HOLLOW_E07),
-                    torrent("t2", HOLLOW_E06),
-                    torrent("t3", HOLLOW_E08),
+                    torrent("t1", HOLLOW_E07, 5),
+                    torrent("t2", HOLLOW_E06, 4),
+                    torrent("t3", HOLLOW_E08, 3),
+                    torrent("t4", HOLLOW_E09, 6),
                 ],
                 &[accepted(HOLLOW_E06, 2), accepted(HOLLOW_E08, 4)],
             ),
             vec![
                 Held {
-                    torrent: torrent("t3", HOLLOW_E08),
-                    ruleset: CLAIMANT.to_owned(),
-                    grabbed_at: Some(at(4)),
-                },
-                Held {
-                    torrent: torrent("t2", HOLLOW_E06),
+                    torrent: torrent("t2", HOLLOW_E06, 4),
                     ruleset: CLAIMANT.to_owned(),
                     grabbed_at: Some(at(2)),
                 },
                 Held {
-                    torrent: torrent("t1", HOLLOW_E07),
+                    torrent: torrent("t3", HOLLOW_E08, 3),
+                    ruleset: CLAIMANT.to_owned(),
+                    grabbed_at: Some(at(4)),
+                },
+                Held {
+                    torrent: torrent("t4", HOLLOW_E09, 6),
+                    ruleset: CLAIMANT.to_owned(),
+                    grabbed_at: None,
+                },
+                Held {
+                    torrent: torrent("t1", HOLLOW_E07, 5),
                     ruleset: CLAIMANT.to_owned(),
                     grabbed_at: None,
                 },
             ],
-            "the newest grab leads, and an ungrabbed torrent follows them all"
+            "a grab leads whatever its date, and the added time orders each group"
         );
     }
 }

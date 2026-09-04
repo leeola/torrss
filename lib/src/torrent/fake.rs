@@ -90,6 +90,7 @@ impl FakeTorrents {
             state: TorrentState::Seeding,
             size: 0,
             progress: 1.0,
+            added_at: None,
         });
 
         id
@@ -195,6 +196,7 @@ impl TorrentClient for FakeTorrents {
             state: TorrentState::Queued,
             size: 0,
             progress: 0.0,
+            added_at: None,
         });
 
         Ok(())
@@ -259,6 +261,7 @@ mod tests {
             state: TorrentState::Queued,
             size: 0,
             progress: 0.0,
+            added_at: None,
         }
     }
 
@@ -343,6 +346,7 @@ mod tests {
                 state: TorrentState::Error("disk full".to_owned()),
                 size: 0,
                 progress: 1.0,
+                added_at: None,
             }]),
             "seed records no add request and starts seeding"
         );
