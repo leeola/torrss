@@ -840,7 +840,7 @@ mod tests {
 
         assert_eq!(
             encode_preset(&PRESETS[0]),
-            "name=show&kind=text&pattern=%5E%28%3F%3Cshow%3E%5B%5Cw.%5D%2B%3F%29\
+            "name=show&kind=text&pattern=%5E%28%3F%3Cshow%3E%5B%5Cw.%5D%2B%29\
              &required=on&identity=on&tight=on",
             "a tight preset posts the flag as a checked box does"
         );

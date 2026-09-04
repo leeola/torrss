@@ -309,7 +309,7 @@ pub(crate) struct Field {
 
     /// Whether the next field's run starts where this one ends.
     ///
-    /// A lazy run such as a show name has no end of its own. The component
+    /// A run such as a show name has no end of its own. The component
     /// after it is what stops it, so nothing may come between the two. A
     /// field that is not tight lets the next field's run sit anywhere after
     /// its own, which is how a resolution reads past an episode name the
@@ -481,16 +481,18 @@ pub(crate) struct Preset {
 /// copy of it, and two copies that differ only in codec are still one
 /// release.
 ///
-/// The episode name is a lazy run, as the show is. The component after it has
-/// to be required, because an optional one lets the run stop after one
-/// character. The show relies on the required season for that, and the
-/// episode name relies on the row the reader marks required after it, such as
-/// a resolution.
+/// The show, the movie, and the episode name are greedy runs. A run reads to
+/// the end of its class when no required component follows it, so a lone show
+/// reads a whole `foo.bar`. A required component after it makes the run stop
+/// at the last place that component fits, so a title with two season tokens
+/// reads the later one. An optional component after it skips rather than
+/// reads, so a resolution after an episode name has to be required to be
+/// read.
 pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "show",
         kind: FieldKind::Text,
-        pattern: Some(r"^(?<show>[\w.]+?)"),
+        pattern: Some(r"^(?<show>[\w.]+)"),
         required: true,
         identity: true,
         tight: true,
@@ -498,7 +500,7 @@ pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "movie",
         kind: FieldKind::Text,
-        pattern: Some(r"^(?<movie>[\w.]+?)"),
+        pattern: Some(r"^(?<movie>[\w.]+)"),
         required: true,
         identity: true,
         tight: true,
@@ -522,7 +524,7 @@ pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "episodeName",
         kind: FieldKind::Text,
-        pattern: Some(r"\.(?<episodeName>[\w.]+?)"),
+        pattern: Some(r"\.(?<episodeName>[\w.]+)"),
         required: false,
         identity: false,
         tight: true,
@@ -644,6 +646,39 @@ mod tests {
         }
     }
 
+    /// Reads `title` through a standalone ruleset over `fields`.
+    ///
+    /// Each value comes back normalized by its field's kind, which is the
+    /// form the identity stores.
+    fn read_fields(fields: &[Field], title: &str) -> Vec<(String, String)> {
+        let engine = Engine::from_rulesets(vec![Ruleset {
+            id: "scene".to_owned(),
+            name: "Scene".to_owned(),
+            enabled: true,
+            template: false,
+            based_on: None,
+            fields: fields.to_vec(),
+            tests: Vec::new(),
+        }])
+        .expect("the fields compose into one regex");
+
+        engine
+            .parse(title)
+            .unwrap_or_else(|| panic!("{title} is claimed"))
+            .values
+            .iter()
+            .map(|(name, raw)| {
+                let kind = fields
+                    .iter()
+                    .find(|field| &field.name == name)
+                    .expect("a field of the ruleset")
+                    .kind;
+
+                (name.clone(), kind.normalize(raw))
+            })
+            .collect()
+    }
+
     #[test]
     fn season_kind_reads_each_form() {
         let titles = [
@@ -748,46 +783,23 @@ mod tests {
         ]
         .map(preset_field);
 
-        let engine = Engine::from_rulesets(vec![Ruleset {
-            id: "scene".to_owned(),
-            name: "Scene".to_owned(),
-            enabled: true,
-            template: false,
-            based_on: None,
-            fields: fields.to_vec(),
-            tests: Vec::new(),
-        }])
-        .expect("the presets compose into one regex");
-
-        let parsed = engine
-            .parse("Coastal.Ecology.S02E05.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv")
-            .expect("a scene title the presets claim");
-
         assert_eq!(
-            parsed
-                .values
-                .iter()
-                .map(|(name, raw)| {
-                    let kind = fields
-                        .iter()
-                        .find(|field| &field.name == name)
-                        .expect("a field of the ruleset")
-                        .kind;
-
-                    (name.as_str(), kind.normalize(raw))
-                })
-                .collect::<Vec<_>>(),
+            read_fields(
+                &fields,
+                "Coastal.Ecology.S02E05.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv"
+            ),
             [
-                ("show", "coastal ecology".to_owned()),
-                ("season", "2".to_owned()),
-                ("episodeNumber", "5".to_owned()),
-                ("resolution", "1080p".to_owned()),
-                ("source", "web dl".to_owned()),
-                ("codec", "x265".to_owned()),
-                ("audio", "ddp5 1".to_owned()),
-                ("publisher", "openreel".to_owned()),
-                ("extension", "mkv".to_owned()),
-            ],
+                ("show", "coastal ecology"),
+                ("season", "2"),
+                ("episodeNumber", "5"),
+                ("resolution", "1080p"),
+                ("source", "web dl"),
+                ("codec", "x265"),
+                ("audio", "ddp5 1"),
+                ("publisher", "openreel"),
+                ("extension", "mkv"),
+            ]
+            .map(|(name, value)| (name.to_owned(), value.to_owned())),
             "each preset reads its own run when the rows follow the tracker's order"
         );
     }
@@ -796,41 +808,16 @@ mod tests {
     fn presets_read_past_a_run_no_field_claims() {
         let fields = ["show", "season", "episodeNumber", "resolution"].map(preset_field);
 
-        let engine = Engine::from_rulesets(vec![Ruleset {
-            id: "scene".to_owned(),
-            name: "Scene".to_owned(),
-            enabled: true,
-            template: false,
-            based_on: None,
-            fields: fields.to_vec(),
-            tests: Vec::new(),
-        }])
-        .expect("the presets compose into one regex");
-
-        let read = |title: &str| {
-            engine
-                .parse(title)
-                .unwrap_or_else(|| panic!("{title} is claimed"))
-                .values
-                .iter()
-                .map(|(name, raw)| {
-                    let kind = fields
-                        .iter()
-                        .find(|field| &field.name == name)
-                        .expect("a field of the ruleset")
-                        .kind;
-
-                    (name.clone(), kind.normalize(raw))
-                })
-                .collect::<Vec<_>>()
-        };
-
         assert_eq!(
             [
-                read(
+                read_fields(
+                    &fields,
                     "Coastal.Ecology.S02E05.Some.Episode.Name.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv"
                 ),
-                read("Coastal.Ecology.S02E05.Some.Name.WEB-DL.x265-OpenReel.mkv"),
+                read_fields(
+                    &fields,
+                    "Coastal.Ecology.S02E05.Some.Name.WEB-DL.x265-OpenReel.mkv"
+                ),
             ],
             [
                 vec![
@@ -851,7 +838,7 @@ mod tests {
 
     #[test]
     fn episode_name_reads_up_to_a_required_guard() {
-        // The resolution is the required component the lazy name runs up to.
+        // The resolution is the required component the greedy name runs up to.
         // Every other row keeps what its preset ships.
         let fields = [
             "show",
@@ -869,39 +856,10 @@ mod tests {
             }
         });
 
-        let engine = Engine::from_rulesets(vec![Ruleset {
-            id: "scene".to_owned(),
-            name: "Scene".to_owned(),
-            enabled: true,
-            template: false,
-            based_on: None,
-            fields: fields.to_vec(),
-            tests: Vec::new(),
-        }])
-        .expect("the presets compose into one regex");
-
-        let read = |title: &str| {
-            engine
-                .parse(title)
-                .unwrap_or_else(|| panic!("{title} is claimed"))
-                .values
-                .iter()
-                .map(|(name, raw)| {
-                    let kind = fields
-                        .iter()
-                        .find(|field| &field.name == name)
-                        .expect("a field of the ruleset")
-                        .kind;
-
-                    (name.clone(), kind.normalize(raw))
-                })
-                .collect::<Vec<_>>()
-        };
-
         assert_eq!(
             [
-                read("Coastal.Ecology.S02E05.The.Tide.Line.1080p.mkv"),
-                read("Coastal.Ecology.S02E05.1080p.mkv"),
+                read_fields(&fields, "Coastal.Ecology.S02E05.The.Tide.Line.1080p.mkv"),
+                read_fields(&fields, "Coastal.Ecology.S02E05.1080p.mkv"),
             ],
             [
                 vec![
@@ -919,6 +877,38 @@ mod tests {
                 ],
             ],
             "the name runs up to the required resolution, and skips where the title carries none"
+        );
+    }
+
+    #[test]
+    fn a_show_preset_alone_reads_the_whole_title() {
+        assert_eq!(
+            read_fields(&["show"].map(preset_field), "Coastal.Ecology"),
+            [("show".to_owned(), "coastal ecology".to_owned())],
+            "a run with no component after it reads to the end of its class"
+        );
+    }
+
+    #[test]
+    fn a_show_that_is_not_tight_reads_up_to_the_season() {
+        let fields = [
+            Field {
+                tight: false,
+                ..preset_field("show")
+            },
+            preset_field("season"),
+        ];
+
+        assert_eq!(
+            read_fields(
+                &fields,
+                "Coastal.Ecology.S02E05.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv"
+            ),
+            [
+                ("show".to_owned(), "coastal ecology".to_owned()),
+                ("season".to_owned(), "2".to_owned()),
+            ],
+            "the gap after a show that is not tight does not cut the run short"
         );
     }
 }
