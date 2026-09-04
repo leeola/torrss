@@ -24,7 +24,7 @@ use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
     rules::Engine,
-    ruleset::form::{self, EditorRows, RulesetForm},
+    ruleset::form::{self, BASED_ROLE, EditorRows, RulesetForm, STANDALONE_ROLE, TEMPLATE_ROLE},
     ruleset::registry::{Rulesets, SaveError},
     ruleset::{Diff, Field, FieldSource, PRESETS, ResolvedField, Ruleset},
     server::{
@@ -76,34 +76,12 @@ path_param!(feed_id);
 ///
 /// Every branch returns the form serialized, which is what both the rows and
 /// the matches read.
-///
-/// `exclusive` disables whichever of the Template checkbox and the Based on
-/// select the other rules out. It sets the DOM directly rather than through a
-/// bound attribute, because the runtime applies a bound attribute in a
-/// microtask, after the handler has already serialized the form. A bound
-/// `disabled` leaves the first re-render carrying both values.
-///
-/// `reserialize` pairs the two in that order, because a `raw!` statement
-/// returns nothing and a handler writes its signals from the value of one
-/// expression.
 const ROW_ACTIONS: &str = r"
 window.torrssRows = {
   form: () => new URLSearchParams(new FormData(document.getElementById('ruleset-fields'))),
   next: (params) => [...params.keys()].filter((key) => /^field\.\d+\.name$/.test(key)).length,
   nextTest: (params) => [...params.keys()].filter((key) => /^test\.\d+\.title$/.test(key)).length,
   serialize: () => window.torrssRows.form().toString(),
-  exclusive: () => {
-    const template = document.querySelector('#ruleset-fields input[name=template]');
-    const base = document.getElementById('based_on');
-
-    base.disabled = template.checked;
-    template.disabled = base.value !== '';
-  },
-  reserialize: () => {
-    window.torrssRows.exclusive();
-
-    return window.torrssRows.serialize();
-  },
   drop: (params, prefix) => {
     for (const key of [...params.keys()]) {
       if (key.startsWith(prefix)) {
@@ -207,6 +185,29 @@ window.torrssRows = {
   },
 };
 ";
+
+/// The three roles the editor offers, each with the label and the note its
+/// radio carries.
+///
+/// A ruleset is exactly one of these, so the group has no illegal state and
+/// nothing has to police one control from another's handler.
+const ROLES: [(&str, &str, &str); 3] = [
+    (
+        TEMPLATE_ROLE,
+        "Is a template",
+        "It claims nothing. Rulesets based on it carry its fields and fill in the ones it leaves blank.",
+    ),
+    (
+        STANDALONE_ROLE,
+        "Stands alone",
+        "It declares every field here.",
+    ),
+    (
+        BASED_ROLE,
+        "Is based on a template",
+        "It carries the template's fields and replaces the ones it names.",
+    ),
+];
 
 /// The selection the feed page keeps while the listing re-renders.
 ///
@@ -1418,6 +1419,22 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
     let enabled_now = ruleset.is_some_and(|ruleset| ruleset.enabled);
     let is_template = ruleset.is_some_and(|ruleset| ruleset.template);
 
+    // Only a template is offered, because only a template serves as one. A
+    // template is based on nothing, so the one chain a choice here closes is
+    // onto itself.
+    let templates: Vec<&Ruleset> = engine
+        .templates()
+        .filter(|one| one.id != ruleset_id)
+        .collect();
+
+    let initial_role = if is_template {
+        TEMPLATE_ROLE
+    } else if based_on.is_empty() {
+        STANDALONE_ROLE
+    } else {
+        BASED_ROLE
+    };
+
     // What the browser posts on the first keystroke: the ruleset's own rows,
     // because a disabled inherited input sends nothing.
     let initial_draft = RulesetForm {
@@ -1437,6 +1454,9 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
     view! {
         signal draft = initial_draft;
         signal rows = initial_rows;
+        // The select renders under the based role alone, and the parser reads
+        // a base under that role alone, so this one signal decides both.
+        signal role = initial_role.to_owned();
         signal diff = String::new();
         signal enabled = enabled_now;
         // The id the switch and the save name. A handler outlives the render
@@ -1474,10 +1494,31 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
             // result enters the signal as the JavaScript value it is, and the
             // shard dehydrates every argument before it fetches, so a plain
             // string has to be hydrated on the way in.
-            @input=$(|_e: Event| draft.set(raw!(
-                "cx.hydrate(window.torrssRows.serialize())",
-                String::new()
-            )))
+            //
+            // A role or a base decides which fields the draft resolves
+            // against, so either re-renders the rows. A keystroke moves the
+            // draft alone, because re-rendering a row under the cursor takes
+            // the focus with it. The two guards are written apart because the
+            // expression grammar lists no `||`.
+            @input=$(|e: Event| {
+                if e.target.name == "role" {
+                    role.set(e.target.value);
+                    rows.set(raw!(
+                        "cx.hydrate(window.torrssRows.serialize())",
+                        String::new()
+                    ));
+                }
+                if e.target.name == "based_on" {
+                    rows.set(raw!(
+                        "cx.hydrate(window.torrssRows.serialize())",
+                        String::new()
+                    ));
+                }
+                draft.set(raw!(
+                    "cx.hydrate(window.torrssRows.serialize())",
+                    String::new()
+                ));
+            })
             // A row button is rendered by the shard, so its click is caught
             // here, where the signals live. The button names its action in
             // its own value, because the event vocabulary carries a target's
@@ -1523,63 +1564,50 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         }
                     </div>
 
-                    // Disabled while a base is chosen, because a ruleset on a
-                    // base is no template. A disabled checkbox posts no
-                    // value, which is the value that state needs.
-                    //
-                    // The handler is the select's below. A blank pattern
-                    // becomes legal the moment this is checked, so the rows
-                    // and the matches both re-read the form.
-                    <label class="mt-3 flex items-center gap-2 text-sm text-slate-300">
-                        <input
-                            type="checkbox"
-                            name="template"
-                            checked=(is_template)
-                            disabled=(!based_on.is_empty())
-                            // `reserialize` excludes before it reads, so the
-                            // draft carries the ruled-out control's value
-                            // from neither this write nor the form's own.
-                            @input=$(|_e: Event| {
-                                rows.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
-                                draft.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
-                            })
-                            class="size-4 rounded border-slate-700 bg-slate-950"
-                        >
-                        "Template"
-                    </label>
-                    <p class="mt-1 text-xs text-slate-500">
-                        "A template claims nothing. Rulesets based on it carry its fields and fill
-                        in the ones it leaves blank."
-                    </p>
-
-                    <label for="based_on" class="mt-3 block text-xs text-slate-500">
-                        "Based on"
-                    </label>
-                    // Disabled on a template, which is based on nothing. A
-                    // disabled select posts no value, which is the value a
-                    // template needs.
-                    <select
-                        id="based_on"
-                        name="based_on"
-                        disabled=(is_template)
-                        @input=$(|_e: Event| {
-                            rows.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
-                            draft.set(raw!("cx.hydrate(window.torrssRows.reserialize())", String::new()));
-                        })
-                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none disabled:text-slate-500"
-                    >
-                        <option value="" selected=(based_on.is_empty())>
-                            "None. Declare every field here."
-                        </option>
-                        // Only a template is offered, because only a template
-                        // serves as one. A template is based on nothing, so
-                        // the one chain a choice here closes is onto itself.
-                        for template in engine.templates().filter(|one| one.id != ruleset_id) {
-                            <option value=(&template.id) selected=(template.id == based_on)>
-                                (&template.name) " (" (template.fields.len()) " fields)"
-                            </option>
+                    // One group, so the reader names the role and no
+                    // combination of controls is illegal. The radios carry no
+                    // handler of their own: the form's delegated one below
+                    // catches them, where the signals live.
+                    <fieldset class="mt-3">
+                        <legend class="text-xs text-slate-500">"This ruleset"</legend>
+                        for (value, label, note) in ROLES {
+                            <label class="mt-2 flex items-start gap-2 text-sm text-slate-300">
+                                <input
+                                    type="radio"
+                                    name="role"
+                                    value=(value)
+                                    checked=(initial_role == value)
+                                    disabled=(value == BASED_ROLE && templates.is_empty())
+                                    class="mt-0.5 size-4 rounded-full border-slate-700 bg-slate-950"
+                                >
+                                <span>
+                                    (label)
+                                    <span class="block text-xs text-slate-500">(note)</span>
+                                </span>
+                            </label>
                         }
-                    </select>
+                    </fieldset>
+
+                    // Hidden rather than disabled, because a hidden select
+                    // still posts and the parser ignores a base under any
+                    // other role. The literal is required: a `const` names
+                    // nothing the browser expression can reach.
+                    <div :hidden=$(role.get() != "based")>
+                        <label for="based_on" class="mt-3 block text-xs text-slate-500">
+                            "Based on"
+                        </label>
+                        <select
+                            id="based_on"
+                            name="based_on"
+                            class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                        >
+                            for template in &templates {
+                                <option value=(&template.id) selected=(template.id == based_on)>
+                                    (&template.name) " (" (template.fields.len()) " fields)"
+                                </option>
+                            }
+                        </select>
+                    </div>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">

@@ -15,6 +15,20 @@ use url::form_urlencoded;
 
 use super::{Field, FieldKind, Preset, RulesetTest};
 
+/// The role a posted ruleset names, which decides what its base means.
+///
+/// A ruleset is one of these three and never two, so one radio group posts
+/// the whole choice and no combination of controls is illegal. An absent or
+/// unknown `role` reads as [`STANDALONE_ROLE`], which is what a body written
+/// outside the editor most likely means.
+pub(crate) const TEMPLATE_ROLE: &str = "template";
+
+/// See [`TEMPLATE_ROLE`].
+pub(crate) const STANDALONE_ROLE: &str = "standalone";
+
+/// See [`TEMPLATE_ROLE`].
+pub(crate) const BASED_ROLE: &str = "based";
+
 /// A ruleset as the editor's form describes it.
 ///
 /// The id is absent because the form never carries one. A create derives it
@@ -26,14 +40,14 @@ pub(crate) struct RulesetForm {
 
     /// Whether this ruleset only serves as a foundation for others.
     ///
-    /// A checkbox posts its name only when checked, so absence is `false`.
+    /// True under [`TEMPLATE_ROLE`] and false under either other role.
     pub(crate) template: bool,
 
     /// The template this ruleset is built on, or [`None`] for a ruleset that
     /// declares every field itself.
     ///
-    /// An empty value means none. A select posts its empty option rather than
-    /// omitting the key.
+    /// A base counts only under [`BASED_ROLE`], so a select the editor hides
+    /// still posts its value and no other role reads it.
     pub(crate) based_on: Option<String>,
 
     pub(crate) fields: Vec<Field>,
@@ -91,8 +105,8 @@ struct TestRow {
 #[derive(Default)]
 struct Posted {
     name: String,
+    role: String,
     based_on: String,
-    template: bool,
 
     /// Ordered by index, so the fields come out in the order the editor
     /// showed them however the browser ordered the pairs.
@@ -126,7 +140,7 @@ impl EditorRows {
         let posted = read(body);
 
         Self {
-            based_on: Some(posted.based_on.trim().to_owned()).filter(|id| !id.is_empty()),
+            based_on: based_on(&posted),
             fields: posted.rows.into_values().map(draft_field).collect(),
             tests: posted
                 .tests
@@ -180,7 +194,8 @@ impl RulesetForm {
         let posted = read(body);
 
         let name = posted.name.trim().to_owned();
-        let template = posted.template;
+        let template = posted.role == TEMPLATE_ROLE;
+        let based_on = based_on(&posted);
 
         let fields = posted
             .rows
@@ -203,7 +218,7 @@ impl RulesetForm {
         Ok(Self {
             name,
             template,
-            based_on: Some(posted.based_on.trim().to_owned()).filter(|id| !id.is_empty()),
+            based_on,
             fields,
             // A blank title is a row the reader added and has not filled in,
             // and a blank expectation is an input they left alone. Neither
@@ -227,18 +242,25 @@ impl RulesetForm {
     /// Writes the pairs a browser posts for this ruleset.
     ///
     /// The inverse of [`Self::parse`], which the editor uses to seed the
-    /// draft its live re-render reads. A checkbox is written only when set
-    /// and a pattern only when the kind supplies none, because that is what
-    /// a form actually sends and the draft has to start where the browser
-    /// takes over.
+    /// draft its live re-render reads. A base is written only under the based
+    /// role and a pattern only when the kind supplies none, because that is
+    /// what a form actually sends and the draft has to start where the
+    /// browser takes over.
     pub(crate) fn encode(&self) -> String {
         let mut pairs = form_urlencoded::Serializer::new(String::new());
 
         pairs.append_pair("name", &self.name);
-        pairs.append_pair("based_on", self.based_on.as_deref().unwrap_or_default());
 
         if self.template {
-            pairs.append_pair("template", "on");
+            pairs.append_pair("role", TEMPLATE_ROLE);
+        } else if self.based_on.is_some() {
+            pairs.append_pair("role", BASED_ROLE);
+        } else {
+            pairs.append_pair("role", STANDALONE_ROLE);
+        }
+
+        if let Some(based_on) = &self.based_on {
+            pairs.append_pair("based_on", based_on);
         }
 
         for (index, field) in self.fields.iter().enumerate() {
@@ -391,6 +413,20 @@ fn read_row(rows: &mut BTreeMap<usize, Row>, key: &str, value: &str) {
     }
 }
 
+/// The template a posted body names, or [`None`] under any other role.
+///
+/// The editor hides the select rather than disabling it, so a ruleset that
+/// once named a base still posts it after the reader picks another role. The
+/// role decides whether that value counts, which is what keeps a stale one
+/// out of a shard and out of a save.
+fn based_on(posted: &Posted) -> Option<String> {
+    if posted.role != BASED_ROLE {
+        return None;
+    }
+
+    Some(posted.based_on.trim().to_owned()).filter(|id| !id.is_empty())
+}
+
 /// Sorts a form-encoded body into its parts, judging none of them.
 fn read(body: &str) -> Posted {
     let mut posted = Posted::default();
@@ -398,8 +434,8 @@ fn read(body: &str) -> Posted {
     for (key, value) in form_urlencoded::parse(body.as_bytes()) {
         match key.as_ref() {
             "name" => posted.name = value.into_owned(),
+            "role" => posted.role = value.into_owned(),
             "based_on" => posted.based_on = value.into_owned(),
-            "template" => posted.template = true,
             _ => {
                 read_test(&mut posted.tests, &key, &value);
                 read_row(&mut posted.rows, &key, &value);
@@ -484,7 +520,7 @@ mod tests {
     #[test]
     fn rows_come_out_in_index_order_across_a_gap() {
         let form = RulesetForm::parse(
-            "name=Series&based_on=\
+            "name=Series&role=standalone\
              &field.2.name=season&field.2.kind=text&field.2.pattern=S%5Cd%2B\
              &field.0.name=show&field.0.kind=text&field.0.pattern=%5E.%2B\
              &field.0.required=on&field.0.identity=on",
@@ -567,7 +603,8 @@ mod tests {
 
     #[test]
     fn an_inherited_ruleset_keeps_the_parent_it_names() {
-        let form = RulesetForm::parse("name=Ashfall&based_on=series").expect("the body parses");
+        let form =
+            RulesetForm::parse("name=Ashfall&role=based&based_on=series").expect("the body parses");
 
         assert_eq!(form.based_on, Some("series".to_owned()));
         assert_eq!(
@@ -599,7 +636,7 @@ mod tests {
     fn a_template_keeps_a_blank_pattern() {
         const ROW: &str = "field.0.name=show&field.0.kind=text&field.0.pattern=";
 
-        let parsed = RulesetForm::parse(&format!("name=Series&template=on&{ROW}"))
+        let parsed = RulesetForm::parse(&format!("name=Series&role=template&{ROW}"))
             .expect("a template declares a blank");
 
         assert_eq!(
@@ -646,9 +683,9 @@ mod tests {
 
     #[test]
     fn an_encoded_form_parses_back_to_itself() {
-        let form = RulesetForm {
+        let based = RulesetForm {
             name: "Series Episodes".to_owned(),
-            template: true,
+            template: false,
             based_on: Some("series".to_owned()),
             fields: vec![
                 text("show", "^.+", true, true),
@@ -669,10 +706,50 @@ mod tests {
             }],
         };
 
+        let template = RulesetForm {
+            name: "Series".to_owned(),
+            template: true,
+            based_on: None,
+            fields: vec![text("show", "^.+", true, true)],
+            tests: Vec::new(),
+        };
+
         assert_eq!(
-            RulesetForm::parse(&form.encode()),
-            Ok(form),
+            RulesetForm::parse(&based.encode()),
+            Ok(based),
             "what the editor seeds its draft with is what a post reads back"
+        );
+        assert_eq!(
+            RulesetForm::parse(&template.encode()),
+            Ok(template),
+            "and a template round trips under its own role"
+        );
+    }
+
+    #[test]
+    fn a_base_counts_only_under_the_based_role() {
+        assert_eq!(
+            RulesetForm::parse("name=X&role=template&based_on=series"),
+            Ok(RulesetForm {
+                name: "X".to_owned(),
+                template: true,
+                based_on: None,
+                fields: Vec::new(),
+                tests: Vec::new(),
+            }),
+            "a select the editor hides still posts, and a template is based on nothing"
+        );
+
+        assert_eq!(
+            RulesetForm::parse("name=X&role=standalone&based_on=series"),
+            Ok(RulesetForm {
+                name: "X".to_owned(),
+                template: false,
+                based_on: None,
+                fields: Vec::new(),
+                tests: Vec::new(),
+            }),
+            "a ruleset that stands alone declares every field itself"
         );
     }
 
