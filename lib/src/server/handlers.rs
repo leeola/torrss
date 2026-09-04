@@ -1492,7 +1492,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                     "The fields decide which titles have this shape, and the conditions decide
                     which of those the ruleset claims. A value compares in its normalized form.
                     An ordering compares numbers, so it needs a number, season, or episode
-                    field."
+                    field. One of and none of take a comma-separated list, such as
+                    720p, 1080p."
                 </p>
 
                 condition_rows(rows: $(rows.get()))

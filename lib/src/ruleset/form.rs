@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(
             RulesetForm::parse(
                 "name=Hollow&parser=series\
-                 &condition.1.field=episodeNumber&condition.1.op=at+least&condition.1.value=10\
+                 &condition.1.field=episodeNumber&condition.1.op=one+of&condition.1.value=10,+12\
                  &condition.0.field=resolution&condition.0.op=equals&condition.0.value=1080p\
                  &condition.2.field=&condition.2.op=equals&condition.2.value="
             )
@@ -346,8 +346,8 @@ mod tests {
                 },
                 Condition {
                     field: "episodeNumber".to_owned(),
-                    op: Op::AtLeast,
-                    value: "10".to_owned(),
+                    op: Op::OneOf,
+                    value: "10, 12".to_owned(),
                 },
             ]),
             "the index orders the conditions, and a row naming no field is one the reader added"

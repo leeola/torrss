@@ -592,9 +592,18 @@ pub(crate) async fn condition_row(
                     type="text"
                     name=(format!("condition.{index}.value"))
                     value=(&condition.value)
-                    placeholder=(condition.op.takes_value().then_some("1080p"))
-                    title=((!condition.op.takes_value())
-                        .then_some("This comparison asks whether the field read anything at all"))
+                    placeholder=(condition.op.takes_value().then(|| if condition.op.lists() {
+                        "720p, 1080p"
+                    } else {
+                        "1080p"
+                    }))
+                    title=(if condition.op.lists() {
+                        Some("Separate each value with a comma")
+                    } else if condition.op.takes_value() {
+                        None
+                    } else {
+                        Some("This comparison asks whether the field read anything at all")
+                    })
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
                 >
             </div>

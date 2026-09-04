@@ -908,6 +908,26 @@ mod tests {
     }
 
     #[test]
+    fn a_list_condition_admits_each_listed_value() {
+        let engine = Engine::new(
+            vec![episodes()],
+            vec![on_parser(
+                "either-definition",
+                "series-episodes",
+                vec![condition("resolution", Op::OneOf, "720p, 1080p")],
+            )],
+        )
+        .expect("a list condition on a field the parser reads");
+
+        assert_eq!(engine.claimants(HOLLOW_1080), vec!["either-definition"]);
+        assert_eq!(
+            engine.claimants(HOLLOW_720),
+            vec!["either-definition"],
+            "one condition covers both resolutions, where equals needs a ruleset each"
+        );
+    }
+
+    #[test]
     fn a_condition_on_an_unread_field_is_an_error() {
         let Err(error) = Engine::new(
             vec![parser(

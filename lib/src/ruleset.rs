@@ -136,10 +136,16 @@ impl Diff {
 /// number, season, or episode field. [`Self::Present`] and [`Self::Absent`]
 /// ask whether the field read anything at all and carry no value of their
 /// own.
+///
+/// [`Self::OneOf`] and [`Self::NoneOf`] read their value as a list, so one
+/// condition names every resolution a reader wants rather than one ruleset
+/// per resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Op {
     Equals,
     NotEquals,
+    OneOf,
+    NoneOf,
     LessThan,
     AtMost,
     GreaterThan,
@@ -153,6 +159,8 @@ impl Op {
     pub(crate) const ALL: &'static [Self] = &[
         Self::Equals,
         Self::NotEquals,
+        Self::OneOf,
+        Self::NoneOf,
         Self::LessThan,
         Self::AtMost,
         Self::GreaterThan,
@@ -165,6 +173,8 @@ impl Op {
         match self {
             Self::Equals => "equals",
             Self::NotEquals => "not equals",
+            Self::OneOf => "one of",
+            Self::NoneOf => "none of",
             Self::LessThan => "less than",
             Self::AtMost => "at most",
             Self::GreaterThan => "greater than",
@@ -185,6 +195,14 @@ impl Op {
             self,
             Self::LessThan | Self::AtMost | Self::GreaterThan | Self::AtLeast
         )
+    }
+
+    /// Whether this operator reads its value as a comma-separated list.
+    ///
+    /// Every other operator compares the value whole, so a comma inside one
+    /// is a character like any other.
+    pub(crate) fn lists(self) -> bool {
+        matches!(self, Self::OneOf | Self::NoneOf)
     }
 
     /// Whether this operator compares against a value the reader writes.
@@ -212,6 +230,9 @@ pub(crate) struct Condition {
     /// It normalizes through the field's kind before an equality compares it,
     /// so a show typed as `The Hollow Meridian` meets `The.Hollow.Meridian`.
     /// An operator that takes no value ignores this.
+    ///
+    /// An operator that [`Op::lists`] reads this as a comma-separated list
+    /// instead, and normalizes each entry on its own.
     pub(crate) value: String,
 }
 
@@ -236,6 +257,8 @@ impl Condition {
             Op::Present => true,
             Op::Equals => read == kind.normalize(&self.value),
             Op::NotEquals => read != kind.normalize(&self.value),
+            Op::OneOf => self.choices().any(|choice| read == kind.normalize(choice)),
+            Op::NoneOf => !self.choices().any(|choice| read == kind.normalize(choice)),
             Op::LessThan | Op::AtMost | Op::GreaterThan | Op::AtLeast => {
                 let (Ok(read), Ok(against)) =
                     (read.parse::<u64>(), self.value.trim().parse::<u64>())
@@ -251,6 +274,18 @@ impl Condition {
                 }
             }
         }
+    }
+
+    /// Returns each entry of the value, read as a comma-separated list.
+    ///
+    /// A blank entry is dropped, so a trailing comma names nothing. Each
+    /// entry comes out as the reader typed it, because the kind normalizes
+    /// it only once it is compared.
+    fn choices(&self) -> impl Iterator<Item = &str> {
+        self.value
+            .split(',')
+            .map(str::trim)
+            .filter(|choice| !choice.is_empty())
     }
 }
 
@@ -278,6 +313,37 @@ mod tests {
         assert!(
             !typed.holds(FieldKind::Text, Some("ashfall county")),
             "and another show is another show"
+        );
+    }
+
+    #[test]
+    fn one_of_meets_any_listed_value() {
+        let either = condition("resolution", Op::OneOf, "720p, 1080p");
+
+        assert!(either.holds(FieldKind::Text, Some("720p")));
+        assert!(either.holds(FieldKind::Text, Some("1080p")));
+        assert!(
+            !either.holds(FieldKind::Text, Some("2160p")),
+            "a resolution the list does not name meets nothing"
+        );
+        assert!(
+            condition("season", Op::OneOf, "1, 03").holds(FieldKind::Season, Some("3")),
+            "each entry normalizes through the field's kind before it compares"
+        );
+    }
+
+    #[test]
+    fn none_of_refuses_every_listed_value() {
+        let neither = condition("show", Op::NoneOf, "The Hollow Meridian, Ashfall County");
+
+        assert!(
+            !neither.holds(FieldKind::Text, Some("ashfall county")),
+            "the second entry names this show, so the condition refuses it"
+        );
+        assert!(neither.holds(FieldKind::Text, Some("other")));
+        assert!(
+            !neither.holds(FieldKind::Text, None),
+            "every operator but absent fails on a field that read nothing"
         );
     }
 
