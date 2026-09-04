@@ -13,7 +13,7 @@ use std::fmt::{self, Display};
 use regex::Regex;
 use snafu::{OptionExt, ResultExt, Snafu, ensure};
 
-use crate::ruleset::{Field, FieldKind, Ruleset};
+use crate::ruleset::{FieldKind, Ruleset};
 
 /// What one ruleset made of a release name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +133,64 @@ pub(crate) enum EngineError {
         "ruleset {ruleset} leaves field {field} without a pattern, which only a template does"
     ))]
     BlankField { ruleset: String, field: String },
+
+    /// Every field compiled alone and the whole did not.
+    ///
+    /// Two fields that both write one group name is the one way to reach
+    /// this, because a name is what the composed regex reads each value by.
+    #[snafu(display("the fields of ruleset {ruleset} do not compose into one regex"))]
+    Composed {
+        ruleset: String,
+        source: regex::Error,
+    },
+}
+
+/// One field's contribution to a ruleset's composed regex.
+pub(crate) struct Component<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) pattern: &'a str,
+    pub(crate) required: bool,
+}
+
+/// Joins every component into the one regex a ruleset matches with.
+///
+/// A component that names no group of its own gets one named after its field,
+/// so every value comes back by name. One that already names that group is
+/// wrapped without renaming.
+///
+/// Each component is wrapped, which scopes an inline flag such as `(?i)` and
+/// a top-level alternation to the component that wrote it. An optional
+/// component is wrapped again and made skippable, so it skips as a whole and
+/// a title that lacks it still claims.
+///
+/// Nothing goes between two components. The reader writes each separator into
+/// the component that follows it, and an implicit `.*?` lets a lazy first
+/// component stop after one character.
+pub(crate) fn compose(components: &[Component<'_>]) -> String {
+    let mut composed = String::new();
+
+    for component in components {
+        let names_itself = component
+            .pattern
+            .contains(&format!("(?<{}>", component.name))
+            || component
+                .pattern
+                .contains(&format!("(?P<{}>", component.name));
+
+        let part = if names_itself {
+            format!("(?:{})", component.pattern)
+        } else {
+            format!("(?<{}>{})", component.name, component.pattern)
+        };
+
+        if component.required {
+            composed.push_str(&part);
+        } else {
+            composed.push_str(&format!("(?:{part})?"));
+        }
+    }
+
+    composed
 }
 
 struct Compiled {
@@ -142,15 +200,17 @@ struct Compiled {
     /// the ruleset's own id when it is based on nothing.
     root: String,
 
+    /// Every field composed into one regex, which each value comes out of by
+    /// its field's name.
+    regex: Regex,
+
     fields: Vec<CompiledField>,
 }
 
 struct CompiledField {
     name: String,
     kind: FieldKind,
-    required: bool,
     identity: bool,
-    regex: Regex,
 }
 
 impl Engine {
@@ -280,14 +340,58 @@ impl Compiled {
             None => None,
         };
 
+        let resolved = ruleset.resolved_fields(template);
+
+        // Each pattern compiles alone first, so a bad regex names the field
+        // that carries it rather than the whole ruleset.
+        let patterns = resolved
+            .iter()
+            .map(|resolved| {
+                let field = resolved.field;
+                let matcher = field.matcher().context(BlankFieldSnafu {
+                    ruleset: ruleset.id.clone(),
+                    field: field.name.clone(),
+                })?;
+
+                let component = Component {
+                    name: &field.name,
+                    pattern: matcher,
+                    required: field.required,
+                };
+
+                Regex::new(&compose(std::slice::from_ref(&component))).context(PatternSnafu {
+                    ruleset: ruleset.id.clone(),
+                    field: field.name.clone(),
+                })?;
+
+                Ok(matcher)
+            })
+            .collect::<Result<Vec<_>, EngineError>>()?;
+
+        let components = resolved
+            .iter()
+            .zip(&patterns)
+            .map(|(resolved, pattern)| Component {
+                name: &resolved.field.name,
+                pattern,
+                required: resolved.field.required,
+            })
+            .collect::<Vec<_>>();
+
         Ok(Self {
             id: ruleset.id.clone(),
             root: template.map_or_else(|| ruleset.id.clone(), |found| found.id.clone()),
-            fields: ruleset
-                .resolved_fields(template)
-                .into_iter()
-                .map(|resolved| CompiledField::new(resolved.field, &ruleset.id))
-                .collect::<Result<Vec<_>, _>>()?,
+            regex: Regex::new(&compose(&components)).context(ComposedSnafu {
+                ruleset: ruleset.id.clone(),
+            })?,
+            fields: resolved
+                .iter()
+                .map(|resolved| CompiledField {
+                    name: resolved.field.name.clone(),
+                    kind: resolved.field.kind,
+                    identity: resolved.field.identity,
+                })
+                .collect(),
         })
     }
 
@@ -338,7 +442,13 @@ fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
             continue;
         };
 
-        Regex::new(matcher).context(PatternSnafu {
+        let component = Component {
+            name: &field.name,
+            pattern: matcher,
+            required: field.required,
+        };
+
+        Regex::new(&compose(std::slice::from_ref(&component))).context(PatternSnafu {
             ruleset: ruleset.id.clone(),
             field: field.name.clone(),
         })?;
@@ -347,56 +457,32 @@ fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
     Ok(())
 }
 
-impl CompiledField {
-    fn new(field: &Field, ruleset: &str) -> Result<Self, EngineError> {
-        let matcher = field.matcher().context(BlankFieldSnafu {
-            ruleset: ruleset.to_owned(),
-            field: field.name.clone(),
-        })?;
-
-        Ok(Self {
-            name: field.name.clone(),
-            kind: field.kind,
-            required: field.required,
-            identity: field.identity,
-            regex: Regex::new(matcher).context(PatternSnafu {
-                ruleset: ruleset.to_owned(),
-                field: field.name.clone(),
-            })?,
-        })
-    }
-}
-
-/// Runs every field over `title`, or reports that the ruleset does not claim it.
+/// Runs the composed regex over `title`, or reports that the ruleset does not
+/// claim it.
 ///
-/// A ruleset claims a title only when every required field matched. An
-/// optional field that misses contributes nothing and blocks nothing, which
-/// is what lets one ruleset claim a feed title and a folder-named torrent.
+/// One match answers for every field. A required field is a plain group, so
+/// the regex fails without it and the ruleset claims nothing. An optional one
+/// is a skippable group that contributes no value when it skips, which is
+/// what lets one ruleset claim a feed title and a folder-named torrent.
 fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
-    let mut values = Vec::new();
+    let caps = ruleset.regex.captures(title)?;
 
-    for field in &ruleset.fields {
-        // The capture group carries the field's name by convention, but a
-        // pattern written without one still works through group 1.
-        let matched = field
-            .regex
-            .captures(title)
-            .and_then(|caps| caps.name(&field.name).or_else(|| caps.get(1)))
-            .map(|value| value.as_str().to_owned());
+    Some(
+        ruleset
+            .fields
+            .iter()
+            .filter_map(|field| {
+                let value = caps.name(&field.name)?;
 
-        match matched {
-            Some(raw) => values.push((field.name.clone(), raw)),
-            None if field.required => return None,
-            None => {}
-        }
-    }
-
-    Some(values)
+                Some((field.name.clone(), value.as_str().to_owned()))
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Engine, EngineError, Identity};
+    use super::{Component, Engine, EngineError, Identity, compose};
     use crate::ruleset::fixture::ENGINE;
     use crate::ruleset::{Field, FieldKind, Ruleset};
 
@@ -698,6 +784,68 @@ mod tests {
                     if ruleset == "derived" && template == "absent"
             ),
             "the message names both ends: {error}"
+        );
+    }
+
+    #[test]
+    fn compose_wraps_each_component_and_skips_an_optional_one() {
+        assert_eq!(
+            compose(&[
+                Component {
+                    name: "show",
+                    pattern: "^(?<show>.+?)",
+                    required: true,
+                },
+                Component {
+                    name: "season",
+                    pattern: r"\.S(?<season>\d+)",
+                    required: true,
+                },
+                Component {
+                    name: "episode",
+                    pattern: r"E\d+",
+                    required: false,
+                },
+            ]),
+            r"(?:^(?<show>.+?))(?:\.S(?<season>\d+))(?:(?<episode>E\d+))?",
+            "a component that names its own group is only wrapped, and one that \
+             does not is named after its field"
+        );
+    }
+
+    #[test]
+    fn two_fields_that_name_one_group_do_not_compose() {
+        let clashing = Ruleset {
+            id: "clash".to_owned(),
+            name: "Clash".to_owned(),
+            enabled: true,
+            template: false,
+            based_on: None,
+            fields: vec![
+                Field {
+                    name: "a".to_owned(),
+                    kind: FieldKind::Text,
+                    pattern: Some(r"(?<a>\w)".to_owned()),
+                    required: true,
+                    identity: true,
+                },
+                Field {
+                    name: "b".to_owned(),
+                    kind: FieldKind::Text,
+                    pattern: Some(r"(?<a>\w)".to_owned()),
+                    required: true,
+                    identity: false,
+                },
+            ],
+            tests: Vec::new(),
+        };
+
+        assert!(
+            matches!(
+                Engine::from_rulesets(vec![clashing]),
+                Err(EngineError::Composed { ref ruleset, .. }) if ruleset == "clash"
+            ),
+            "each field compiles alone, and the group name they share fails the whole"
         );
     }
 }

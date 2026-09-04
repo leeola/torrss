@@ -308,9 +308,17 @@ mod tests {
                 .iter()
                 .map(|value| value.name.clone())
                 .collect::<Vec<_>>(),
-            ["show", "season", "resolution", "source", "audio", "codec"],
-            "a pack names no episode, and the publisher pattern needs an \
-             extension after the group, which a folder name has not got"
+            [
+                "show",
+                "season",
+                "resolution",
+                "source",
+                "audio",
+                "codec",
+                "publisher"
+            ],
+            "a pack names no episode, and the extension is the one other \
+             component a folder name leaves out"
         );
     }
 

@@ -289,6 +289,10 @@ pub(crate) struct Field {
     /// The regex this field reads its value with, or `None` to take the
     /// pattern its kind supplies.
     ///
+    /// It is one component of the ruleset's composed regex, so it names its
+    /// own run and its leading separator and nothing else. The components
+    /// around it supply the context, so it guards against nothing itself.
+    ///
     /// A pattern declared on a premade kind wins over the built-in one. That
     /// is how a ruleset replaces a season with a single constant while
     /// keeping the kind's normalization.
@@ -382,21 +386,24 @@ impl FieldKind {
     /// Returns the pattern the kind supplies, or `None` when the field has to
     /// declare one.
     ///
-    /// The season pattern reads `S01`, `S1`, `S01E02`, `Season.1`, and
-    /// `Season 1`. It refuses `S123` and a bare year, because a season number
-    /// runs to two digits and a year carries no `S`. The episode pattern
-    /// requires the season prefix, so a loose number elsewhere in a title
+    /// Each is a component that follows the one before it, so it names its own
+    /// run and its leading separator and nothing else.
+    ///
+    /// The season reads `S01`, `S1`, `Season.1`, and `Season 1`. It checks
+    /// nothing about what follows, because the next component consumes that.
+    ///
+    /// The episode needs no season prefix of its own. The season component
+    /// precedes it in field order, so a loose number elsewhere in a title
     /// never reads as an episode.
     ///
-    /// Each pattern names its capture group after the field the shipped
-    /// rulesets give it. A ruleset that names the field something else still
-    /// reads it, because `captures` in [`crate::rules`] falls back to group 1.
+    /// Each names its capture group after the field the shipped rulesets give
+    /// it. A ruleset that names the field something else still reads it,
+    /// because `compose` in [`crate::rules`] then wraps the whole component in
+    /// a group under that name.
     pub(crate) fn pattern(self) -> Option<&'static str> {
         match self {
-            Self::Season => {
-                Some(r"(?i)(?:^|[. _-])(?:S|Season[. _]?)(?<season>\d{1,2})(?:E\d|[. _-]|$)")
-            }
-            Self::Episode => Some(r"(?i)S\d{1,2}E(?<episode>\d{1,3})"),
+            Self::Season => Some(r"(?i)[. _-](?:S|Season[. _]?)(?<season>\d{1,2})"),
+            Self::Episode => Some(r"(?i)E(?<episode>\d{1,3})"),
             Self::Text | Self::Number | Self::Enum | Self::Boolean => None,
         }
     }
@@ -544,14 +551,23 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{FieldKind, PRESETS};
+    use crate::rules::{Component, compose};
 
     /// Reads `title` through the pattern `kind` supplies, as the engine does.
+    ///
+    /// The pattern is one component, so it composes before it compiles.
     fn read(kind: FieldKind, title: &str) -> Option<String> {
-        let regex = Regex::new(kind.pattern().expect("a premade kind")).expect("a valid regex");
+        let component = Component {
+            name: kind.label(),
+            pattern: kind.pattern().expect("a premade kind"),
+            required: true,
+        };
+
+        let regex = Regex::new(&compose(std::slice::from_ref(&component))).expect("a valid regex");
 
         regex
             .captures(title)
-            .and_then(|caps| caps.name(kind.label()).or_else(|| caps.get(1)))
+            .and_then(|caps| caps.name(kind.label()))
             .map(|value| value.as_str().to_owned())
     }
 
@@ -578,25 +594,25 @@ mod tests {
                 Some("01".to_owned()),
                 Some("1".to_owned()),
                 Some("1".to_owned()),
-                None,
+                Some("12".to_owned()),
                 None,
             ],
-            "season read from each title"
+            "season read from each title, and the guard belongs to the next component"
         );
     }
 
     #[test]
-    fn episode_kind_needs_a_season_prefix() {
+    fn episode_kind_reads_the_number_behind_e() {
         assert_eq!(
             read(FieldKind::Episode, "Show.S04E06"),
             Some("06".to_owned()),
-            "episode behind a season"
+            "the season component precedes this one, so it needs no prefix of its own"
         );
 
         assert_eq!(
             read(FieldKind::Episode, "[OpenReel] Coastal.Ecology - 18"),
             None,
-            "loose number with no season"
+            "a loose number carries no E"
         );
     }
 
