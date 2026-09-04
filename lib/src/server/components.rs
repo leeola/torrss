@@ -270,24 +270,7 @@ pub(crate) async fn item_row(
                 </div>
 
                 if !details.values.is_empty() {
-                    <div class="mt-1.5 flex flex-wrap gap-1">
-                        for value in &details.values {
-                            <span
-                                title=(if value.identity {
-                                    format!("{} (identity)", value.name)
-                                } else {
-                                    value.name.to_owned()
-                                })
-                                class=(class!(
-                                    "rounded-sm px-1.5 py-0.5 font-mono text-xs",
-                                    Tint::at(value.position).classes(),
-                                    "ring-1 ring-current/40" if value.identity else "opacity-70",
-                                ))
-                            >
-                                (&value.value)
-                            </span>
-                        }
-                    </div>
+                    parsed_chips(values: &details.values)
                 }
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -678,10 +661,14 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 ///
 /// A torrent with no age was in the client before the store recorded any grab,
 /// so the row says so rather than leaving a gap.
+///
+/// The row also shows what the ruleset read out of the name, as a release on
+/// the home page does.
 #[component]
 pub(crate) async fn torrent_row(
     torrent: &Torrent,
     ruleset: &Claimant,
+    values: &[ParsedValue],
     ingested: Option<&str>,
 ) -> Result {
     // Each tint is a whole literal, because the Tailwind scanner reads class
@@ -702,6 +689,10 @@ pub(crate) async fn torrent_row(
                 <span class="font-mono text-sm break-all">(&torrent.name)</span>
                 <span class=(format!("rounded-full px-2 py-0.5 text-xs {tint}"))>(word)</span>
             </div>
+
+            if !values.is_empty() {
+                parsed_chips(values: values)
+            }
 
             <div class="mt-2 flex items-center gap-2 text-xs text-slate-500">
                 // The width is an inline style because it differs per row, and
@@ -731,6 +722,39 @@ pub(crate) async fn torrent_row(
                 </span>
             </div>
         </li>
+    }
+}
+
+/// The values a ruleset read out of one name, one chip per field.
+///
+/// Each chip is tinted by its field's position and ringed when that field
+/// decides whether two releases are the same. The field's name is on hover,
+/// because a value reads for itself and a label beside every one crowds the
+/// row.
+///
+/// The caller guards an empty list, so this renders one strip and a row with
+/// nothing parsed adds no empty element.
+#[component]
+pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result {
+    view! {
+        <div class="mt-1.5 flex flex-wrap gap-1">
+            for value in values {
+                <span
+                    title=(if value.identity {
+                        format!("{} (identity)", value.name)
+                    } else {
+                        value.name.to_owned()
+                    })
+                    class=(class!(
+                        "rounded-sm px-1.5 py-0.5 font-mono text-xs",
+                        Tint::at(value.position).classes(),
+                        "ring-1 ring-current/40" if value.identity else "opacity-70",
+                    ))
+                >
+                    (&value.value)
+                </span>
+            }
+        </div>
     }
 }
 

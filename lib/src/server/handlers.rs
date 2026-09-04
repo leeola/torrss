@@ -998,7 +998,8 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
 }
 
 /// The torrents the client holds that a ruleset claims, grabbed first, then
-/// by the time the client added them.
+/// by the time the client added them. Each row carries what the ruleset read
+/// out of the name.
 ///
 /// The list is read from the client rather than from the library table,
 /// because the state and the progress live only in the client, and the block
@@ -1027,17 +1028,19 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
             .iter()
             .map(|entry| {
                 let claimant = Claimant {
-                    id: entry.ruleset.clone(),
+                    id: entry.parsed.ruleset.clone(),
                     // A ruleset removed since the grab shows by its id, as a
                     // grabbed row does. The record is of what ran.
-                    name: engine
-                        .ruleset(&entry.ruleset)
-                        .map_or_else(|| entry.ruleset.clone(), |ruleset| ruleset.name.clone()),
+                    name: engine.ruleset(&entry.parsed.ruleset).map_or_else(
+                        || entry.parsed.ruleset.clone(),
+                        |ruleset| ruleset.name.clone(),
+                    ),
                 };
 
+                let values = listing::parsed_values(&engine, &entry.parsed);
                 let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
 
-                (&entry.torrent, claimant, age)
+                (&entry.torrent, claimant, values, age)
             })
             .collect::<Vec<_>>()
     });
@@ -1051,10 +1054,11 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                 "No torrent in the client matches a ruleset."
             </p>,
             Ok(entries) => <ul class="mt-2 flex flex-col gap-2">
-                for (torrent, claimant, age) in entries {
+                for (torrent, claimant, values, age) in entries {
                     components::torrent_row(
                         torrent: torrent,
                         ruleset: claimant,
+                        values: values.as_slice(),
                         ingested: age.as_deref(),
                     )
                 }

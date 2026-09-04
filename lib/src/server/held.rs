@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::rules::Engine;
+use crate::rules::{Engine, Parsed};
 use crate::store::grabs::Accepted;
 use crate::torrent::Torrent;
 
@@ -22,9 +22,15 @@ use crate::torrent::Torrent;
 pub(super) struct Held {
     pub(super) torrent: Torrent,
 
-    /// The ruleset that claimed the name, rather than the template behind it,
-    /// so the page names the rule the reader wrote.
-    pub(super) ruleset: String,
+    /// What the claimant made of the name.
+    ///
+    /// Its ruleset is the one that claimed the name, rather than the template
+    /// behind it, so the page names the rule the reader wrote.
+    ///
+    /// It carries the whole parse rather than rendered values, because
+    /// `Standing` on the home page does the same and the handler resolves the
+    /// values at render.
+    pub(super) parsed: Parsed,
 
     /// When the client accepted the grab, or nothing for a torrent it held
     /// before the store recorded any.
@@ -57,8 +63,10 @@ pub(super) fn held(engine: &Engine, torrents: Vec<Torrent>, accepted: &[Accepted
             let parsed = engine.parse(&torrent.name)?;
 
             Some(Held {
+                // Above `parsed`, because the lookup borrows the parse that
+                // the next field moves.
                 grabbed_at: grabbed.get(&parsed.identity.to_string()).copied(),
-                ruleset: parsed.ruleset,
+                parsed,
                 torrent,
             })
         })
@@ -78,6 +86,7 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
 
     use super::{Held, held};
+    use crate::rules::Parsed;
     use crate::ruleset::fixture::ENGINE;
     use crate::store::grabs::Accepted;
     use crate::torrent::{Torrent, TorrentId, TorrentState};
@@ -97,8 +106,6 @@ mod tests {
         "The.Hollow.Meridian.S04E09.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
 
     const NONSENSE: &str = "just some words with no structure at all";
-
-    const CLAIMANT: &str = "series-hollow-meridian";
 
     fn at(day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2025, 3, day, 12, 0, 0)
@@ -124,6 +131,11 @@ mod tests {
         }
     }
 
+    /// What the engine makes of `name`, which every claimed row carries.
+    fn parsed(name: &str) -> Parsed {
+        ENGINE.parse(name).expect("claimed")
+    }
+
     fn held_of(torrents: Vec<Torrent>, accepted: &[Accepted]) -> Vec<Held> {
         held(&ENGINE, torrents, accepted)
     }
@@ -146,7 +158,7 @@ mod tests {
             ),
             vec![Held {
                 torrent: torrent("t1", HOLLOW_E06, 1),
-                ruleset: CLAIMANT.to_owned(),
+                parsed: parsed(HOLLOW_E06),
                 grabbed_at: Some(at(2)),
             }],
             "the two names parse to one identity, which is what pairs them"
@@ -159,7 +171,7 @@ mod tests {
             held_of(vec![torrent("t1", HOLLOW_E06, 1)], &[]),
             vec![Held {
                 torrent: torrent("t1", HOLLOW_E06, 1),
-                ruleset: CLAIMANT.to_owned(),
+                parsed: parsed(HOLLOW_E06),
                 grabbed_at: None,
             }],
             "the client held it before the store recorded any grab"
@@ -175,7 +187,7 @@ mod tests {
             ),
             vec![Held {
                 torrent: torrent("t1", HOLLOW_E06, 1),
-                ruleset: CLAIMANT.to_owned(),
+                parsed: parsed(HOLLOW_E06),
                 grabbed_at: Some(at(3)),
             }],
             "two qualities are one identity, and the last grab moved what is held"
@@ -197,22 +209,22 @@ mod tests {
             vec![
                 Held {
                     torrent: torrent("t2", HOLLOW_E06, 4),
-                    ruleset: CLAIMANT.to_owned(),
+                    parsed: parsed(HOLLOW_E06),
                     grabbed_at: Some(at(2)),
                 },
                 Held {
                     torrent: torrent("t3", HOLLOW_E08, 3),
-                    ruleset: CLAIMANT.to_owned(),
+                    parsed: parsed(HOLLOW_E08),
                     grabbed_at: Some(at(4)),
                 },
                 Held {
                     torrent: torrent("t4", HOLLOW_E09, 6),
-                    ruleset: CLAIMANT.to_owned(),
+                    parsed: parsed(HOLLOW_E09),
                     grabbed_at: None,
                 },
                 Held {
                     torrent: torrent("t1", HOLLOW_E07, 5),
-                    ruleset: CLAIMANT.to_owned(),
+                    parsed: parsed(HOLLOW_E07),
                     grabbed_at: None,
                 },
             ],
