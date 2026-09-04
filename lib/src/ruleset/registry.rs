@@ -79,6 +79,10 @@ impl Rulesets {
 
     /// Writes `ruleset`, replacing the stored one of the same id.
     ///
+    /// A template is written disabled whatever the caller passed. It claims
+    /// nothing and the editor offers it no switch, so a flag it cannot show
+    /// is one the reader cannot clear.
+    ///
     /// # Errors
     ///
     /// Returns [`SaveError::Engine`] when the resulting set does not
@@ -89,6 +93,11 @@ impl Rulesets {
         reason = "the ruleset editor's Save posts to a route that writes through this"
     )]
     pub(crate) async fn save(&self, ruleset: Ruleset) -> Result<(), SaveError> {
+        let ruleset = Ruleset {
+            enabled: ruleset.enabled && !ruleset.template,
+            ..ruleset
+        };
+
         let engine = self.rebuilt_with(ruleset.clone())?;
 
         self.store.upsert(&ruleset).await.context(StoreSnafu)?;
@@ -305,6 +314,24 @@ mod tests {
         assert!(
             !rulesets.remove("archive").await.expect("nothing left"),
             "an id no ruleset carries reports the same absence"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_template_is_stored_disabled(pool: SqlitePool) {
+        let rulesets = loaded(&pool).await;
+        rulesets
+            .save(Ruleset {
+                enabled: true,
+                ..template("series", r"^(?<show>\w+)")
+            })
+            .await
+            .expect("save");
+
+        assert_eq!(
+            rulesets.engine().ruleset("series").map(|one| one.enabled),
+            Some(false),
+            "a template carries no switch"
         );
     }
 

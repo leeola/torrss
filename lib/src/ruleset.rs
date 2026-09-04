@@ -105,6 +105,9 @@ pub(crate) struct Ruleset {
     /// A new ruleset stores `true`, and the editor's switch flips the stored
     /// value through `Rulesets::set_enabled`.
     ///
+    /// A template stores `false`. It claims nothing, and the editor offers it
+    /// no switch.
+    ///
     /// A disabled ruleset filters nothing, so its releases stay out of the
     /// feed.
     pub(crate) enabled: bool,

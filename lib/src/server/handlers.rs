@@ -1551,10 +1551,11 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         // Each branch is one whole string, because the
                         // Tailwind scanner reads class names out of literals.
                         //
-                        // A template carries no state to report, because it
-                        // claims nothing and switching it decides nothing.
-                        if ruleset.is_some() && !is_template {
-                            <span :class=$(if enabled.get() {
+                        // It follows the chosen role rather than the saved
+                        // one, because a template carries no state to report:
+                        // it claims nothing and switching it decides nothing.
+                        if ruleset.is_some() {
+                            <span :hidden=$(role.get() == "template") :class=$(if enabled.get() {
                                 "rounded-full px-2 py-0.5 text-xs bg-emerald-500/15 text-emerald-300"
                             } else {
                                 "rounded-full px-2 py-0.5 text-xs bg-slate-700/40 text-slate-400"
@@ -1651,29 +1652,29 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             >
                                 $(if saving.get() { "Saving..." } else { "Save" })
                             </button>
-                            // A template carries no switch. It claims nothing,
-                            // so there is nothing for one to start or stop.
-                            if !is_template {
-                                <button
-                                    type="button"
-                                    :title=$(if enabled.get() {
-                                        "Stop this ruleset filtering feed results"
-                                    } else {
-                                        "Let this ruleset filter feed results"
-                                    })
-                                    :class=$(if enabled.get() {
-                                        "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                                    } else {
-                                        "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200"
-                                    })
-                                    @click=$(async |_e: Event| {
-                                        let state = switch_ruleset(switch_id.get()).await;
-                                        enabled.set(state);
-                                    })
-                                >
-                                    $(if enabled.get() { "Disable" } else { "Enable" })
-                                </button>
-                            }
+                            // The switch follows the chosen role rather than
+                            // the saved one. A template claims nothing, so
+                            // there is nothing for one to start or stop.
+                            <button
+                                type="button"
+                                :hidden=$(role.get() == "template")
+                                :title=$(if enabled.get() {
+                                    "Stop this ruleset filtering feed results"
+                                } else {
+                                    "Let this ruleset filter feed results"
+                                })
+                                :class=$(if enabled.get() {
+                                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                                } else {
+                                    "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                                })
+                                @click=$(async |_e: Event| {
+                                    let state = switch_ruleset(switch_id.get()).await;
+                                    enabled.set(state);
+                                })
+                            >
+                                $(if enabled.get() { "Disable" } else { "Enable" })
+                            </button>
                             // A submit button naming its own action, because
                             // the editor's form already wraps this and HTML
                             // forbids a form inside a form. It skips
@@ -2285,7 +2286,8 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
 ///
 /// The id and the enabled flag stay as they were. The draft carries neither,
 /// because renaming a ruleset never moves it and saving an edit is not a
-/// request to start or stop it.
+/// request to start or stop it. A draft saved as a template comes back
+/// disabled, through [`Rulesets::save`].
 ///
 /// A refusal arrives inside [`Ok`] rather than as an error. A procedure's
 /// [`Err`] reaches no expression in the browser, so a caller that reads one
