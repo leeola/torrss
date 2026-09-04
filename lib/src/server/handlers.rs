@@ -24,7 +24,7 @@ use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
     parser::form as parser_form,
-    parser::{Field, Parser},
+    parser::{Field, Parser, TitleTest},
     rules::Engine,
     ruleset::form::{EditorRows, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
@@ -1254,8 +1254,31 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         conditions: ruleset
             .map(|ruleset| ruleset.conditions.clone())
             .unwrap_or_default(),
+        // A stored test carries what an older draft asserted, which reaches
+        // further than the conditions do. Dropping the rest here keeps the
+        // first render and the first verdict agreed, and the next Save
+        // writes the narrowed set back.
         tests: ruleset
-            .map(|ruleset| ruleset.tests.clone())
+            .map(|ruleset| {
+                ruleset
+                    .tests
+                    .iter()
+                    .map(|test| TitleTest {
+                        title: test.title.clone(),
+                        expected: test
+                            .expected
+                            .iter()
+                            .filter(|(field, _)| {
+                                ruleset
+                                    .conditions
+                                    .iter()
+                                    .any(|condition| &condition.field == *field)
+                            })
+                            .map(|(field, value)| (field.clone(), value.clone()))
+                            .collect(),
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
     }
     .encode();
@@ -1515,9 +1538,11 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                     </button>
                 </div>
                 <p class="px-4 pb-3 text-xs text-slate-500">
-                    "An expected value is compared in its normalized form: a number without
-                    leading zeros, text lowercased with separators collapsed to spaces. An
-                    empty value asserts nothing."
+                    "A test carries one input per field a condition names, because those are
+                    the values this ruleset decides on. The parser's own tests cover what
+                    each field reads. An expected value is compared in its normalized form:
+                    a number without leading zeros, text lowercased with separators
+                    collapsed to spaces. An empty value asserts nothing."
                 </p>
 
                 test_rows(rows: $(rows.get()))
@@ -1583,9 +1608,10 @@ pub(super) fn compute_matches<'a>(
 }
 /// Re-renders the test rows from the draft the editor holds.
 ///
-/// The rows follow the form rather than the save, as the field rows do, so a
-/// test the reader just added carries an input for a field they added in the
-/// same breath.
+/// The inputs follow the draft's conditions, so a condition the reader just
+/// added has an input in the same breath. A ruleset judges nothing but its
+/// conditions, so a field none of them names belongs to the parser's own
+/// tests.
 ///
 /// Only a structural change re-renders these. A keystroke takes the focus
 /// out of the input under the cursor.
@@ -1598,10 +1624,11 @@ pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
     // A draft that names no parser reads no value, so a test has nothing to
     // expect and the row carries no input.
     let fields = parser_fields(&engine, posted.parser.as_deref());
+    let named = condition_fields(&fields, &posted.conditions);
 
     view! {
         for (index, test) in posted.tests.iter().enumerate() {
-            components::test_row(index: index, test: test, fields: &fields)
+            components::test_row(index: index, test: test, fields: &named)
         }
     }
 }
@@ -1668,6 +1695,28 @@ fn parser_fields<'a>(engine: &'a Engine, id: Option<&str>) -> Vec<&'a Field> {
     id.and_then(|id| engine.parser(id))
         .map(|parser| parser.fields.iter().collect())
         .unwrap_or_default()
+}
+
+/// The fields some condition names, each with its position among `fields`.
+///
+/// A ruleset judges nothing but its conditions, so a value it never compares
+/// is the parser's business rather than the ruleset's. The position rides
+/// along because the editor colors a field by where it sits among the
+/// parser's fields, and a narrowed list recolors them all without it.
+///
+/// A condition row naming no field names nothing, which is what the reader
+/// posts the moment they add one.
+fn condition_fields<'a>(fields: &[&'a Field], conditions: &[Condition]) -> Vec<(usize, &'a Field)> {
+    fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| {
+            conditions
+                .iter()
+                .any(|condition| condition.field == field.name)
+        })
+        .map(|(position, field)| (position, *field))
+        .collect()
 }
 
 /// Re-renders the Matches section against the draft the editor holds.

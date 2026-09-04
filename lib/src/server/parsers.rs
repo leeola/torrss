@@ -560,7 +560,7 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
     let _ = cx;
 
     let posted = ParserRows::parse(&rows);
-    let fields = posted.fields.iter().collect::<Vec<_>>();
+    let fields = posted.fields.iter().enumerate().collect::<Vec<_>>();
 
     view! {
         for (index, test) in posted.tests.iter().enumerate() {

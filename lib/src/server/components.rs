@@ -476,11 +476,15 @@ pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
 /// is what the reader types and an anchor that moves with every keystroke
 /// links to nothing.
 ///
-/// One input per field, so the reader names the values they mean to assert
-/// and leaves the rest alone. An empty input is not an assertion that the
-/// field reads nothing.
+/// One input per listed field, so the reader names the values they mean to
+/// assert and leaves the rest alone. An empty input is not an assertion that
+/// the field reads nothing.
+///
+/// Each field arrives with its position among the parser's fields rather
+/// than its place in the list, so a caller that lists a subset keeps every
+/// field the color it wears in the rows above.
 #[component]
-pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[&Field]) -> Result {
+pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, &Field)]) -> Result {
     view! {
         <div
             id=(format!("test-{index}"))
@@ -497,10 +501,10 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[&Field]) 
                 >
             </div>
 
-            for (position, field) in fields.iter().enumerate() {
+            for (position, field) in fields {
                 <div class="md:col-span-2">
                     <label class="flex items-center gap-2 text-xs text-slate-500">
-                        <span class=(class!("size-2 shrink-0 rounded-full", Tint::at(position).dot()))></span>
+                        <span class=(class!("size-2 shrink-0 rounded-full", Tint::at(*position).dot()))></span>
                         (&field.name)
                     </label>
                     <input
