@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use snafu::{OptionExt, Snafu, ensure};
 use url::form_urlencoded;
 
-use super::{Condition, Field, FieldKind, Op, Preset, RulesetTest};
+use super::{Condition, Op};
+use crate::parser::{Field, FieldKind, Preset, TitleTest};
 
 /// The role a posted ruleset names, which decides what its base means.
 ///
@@ -54,7 +55,7 @@ pub(crate) struct RulesetForm {
 
     pub(crate) conditions: Vec<Condition>,
 
-    pub(crate) tests: Vec<RulesetTest>,
+    pub(crate) tests: Vec<TitleTest>,
 }
 
 /// Why a posted ruleset is not one.
@@ -97,7 +98,7 @@ struct Row {
     tight: bool,
 }
 
-/// One test row as the form posted it, before it becomes a [`RulesetTest`].
+/// One test row as the form posted it, before it becomes a [`TitleTest`].
 ///
 /// Keyed `test.{index}.title` and `test.{index}.expect.{field}`, so a reader
 /// names as few fields as they mean to assert.
@@ -157,7 +158,7 @@ pub(crate) struct EditorRows {
     pub(crate) based_on: Option<String>,
     pub(crate) fields: Vec<Field>,
     pub(crate) conditions: Vec<Condition>,
-    pub(crate) tests: Vec<RulesetTest>,
+    pub(crate) tests: Vec<TitleTest>,
 }
 
 impl EditorRows {
@@ -180,7 +181,7 @@ impl EditorRows {
             tests: posted
                 .tests
                 .into_values()
-                .map(|row| RulesetTest {
+                .map(|row| TitleTest {
                     title: row.title.trim().to_owned(),
                     expected: row.expected,
                 })
@@ -281,7 +282,7 @@ impl RulesetForm {
                 .tests
                 .into_values()
                 .filter(|row| !row.title.trim().is_empty())
-                .map(|row| RulesetTest {
+                .map(|row| TitleTest {
                     title: row.title.trim().to_owned(),
                     expected: row
                         .expected
@@ -627,7 +628,7 @@ mod tests {
     use super::{
         Condition, EditorRows, FormError, Op, RulesetForm, encode_preset, slug, unique_slug,
     };
-    use crate::ruleset::{Field, FieldKind, PRESETS, RulesetTest};
+    use crate::parser::{Field, FieldKind, PRESETS, TitleTest};
 
     fn text(name: &str, pattern: &str, required: bool, identity: bool) -> Field {
         Field {
@@ -700,11 +701,11 @@ mod tests {
         assert_eq!(
             form.tests,
             vec![
-                RulesetTest {
+                TitleTest {
                     title: "The.Hollow.Meridian.S04E06".to_owned(),
                     expected: BTreeMap::from([("season".to_owned(), "4".to_owned())]),
                 },
-                RulesetTest {
+                TitleTest {
                     title: "Coastal.Drift.2024".to_owned(),
                     expected: BTreeMap::from([("show".to_owned(), "coastal drift".to_owned())]),
                 },
@@ -830,7 +831,7 @@ mod tests {
                 op: Op::AtLeast,
                 value: "2".to_owned(),
             }],
-            tests: vec![RulesetTest {
+            tests: vec![TitleTest {
                 title: "The.Hollow.Meridian.S04E06.1080p".to_owned(),
                 expected: BTreeMap::from([
                     ("show".to_owned(), "the hollow meridian".to_owned()),
@@ -910,7 +911,7 @@ mod tests {
                     },
                 ],
                 conditions: Vec::new(),
-                tests: vec![RulesetTest {
+                tests: vec![TitleTest {
                     title: String::new(),
                     expected: BTreeMap::new(),
                 }],

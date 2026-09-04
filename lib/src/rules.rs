@@ -13,7 +13,8 @@ use std::fmt::{self, Display};
 use regex::Regex;
 use snafu::{OptionExt, ResultExt, Snafu, ensure};
 
-use crate::ruleset::{Condition, FieldKind, Ruleset};
+use crate::parser::FieldKind;
+use crate::ruleset::{Condition, Ruleset};
 
 /// What one ruleset made of a release name.
 ///
@@ -574,8 +575,9 @@ fn claims(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::{Component, Engine, EngineError, Identity, compose};
+    use crate::parser::{Field, FieldKind};
     use crate::ruleset::fixture::{self, ENGINE};
-    use crate::ruleset::{Condition, Field, FieldKind, Op, Ruleset};
+    use crate::ruleset::{Condition, Op, Ruleset};
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";

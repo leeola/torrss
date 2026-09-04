@@ -23,10 +23,11 @@ use url::Url;
 use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
+    parser::{Field, PRESETS},
     rules::Engine,
     ruleset::form::{self, BASED_ROLE, EditorRows, RulesetForm, STANDALONE_ROLE, TEMPLATE_ROLE},
     ruleset::registry::{Rulesets, SaveError},
-    ruleset::{Condition, Diff, Field, FieldSource, PRESETS, ResolvedField, Ruleset},
+    ruleset::{Condition, Diff, FieldSource, ResolvedField, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format, held,

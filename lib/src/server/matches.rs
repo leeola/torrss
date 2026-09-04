@@ -23,8 +23,9 @@ use url::form_urlencoded;
 
 // `compose` is imported directly rather than through its module, because the
 // `rules` function below takes that name in this scope.
+use crate::parser::{Field, FieldKind, Segment};
 use crate::rules::{Component, compose};
-use crate::ruleset::{Condition, Diff, Field, FieldKind, Segment};
+use crate::ruleset::{Condition, Diff};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
@@ -452,11 +453,11 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
 #[cfg(test)]
 pub(super) mod tests {
     use super::{Edits, PatternError, diff, rules, values};
-    use crate::ruleset::{
-        Condition, Diff, Field, FieldKind,
+    use crate::parser::{
+        Field, FieldKind,
         FieldKind::{Season, Text},
-        Op,
     };
+    use crate::ruleset::{Condition, Diff, Op};
 
     fn field(
         name: &str,

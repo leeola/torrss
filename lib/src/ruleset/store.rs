@@ -16,7 +16,9 @@ use std::collections::BTreeMap;
 
 use sqlx::{Row, SqlitePool};
 
-use super::{Condition, Field, FieldKind, Op, Ruleset, RulesetTest};
+use super::{Condition, Op, Ruleset};
+use crate::parser::TitleTest;
+use crate::parser::store::field;
 
 /// Adds a ruleset, or replaces the one already stored under its id.
 ///
@@ -146,7 +148,7 @@ impl RulesetStore {
                 continue;
             };
 
-            ruleset.tests.push(RulesetTest {
+            ruleset.tests.push(TitleTest {
                 title: row.try_get("title")?,
                 expected: BTreeMap::new(),
             });
@@ -303,31 +305,14 @@ impl RulesetStore {
     }
 }
 
-/// Rebuilds one field from its row.
-///
-/// The kind is stored as the same text the editor's form posts, so one
-/// vocabulary serves the form and the table.
-fn field(row: &sqlx::sqlite::SqliteRow) -> Result<Field, sqlx::Error> {
-    let kind: String = row.try_get("kind")?;
-
-    Ok(Field {
-        name: row.try_get("name")?,
-        kind: FieldKind::from_label(&kind)
-            .ok_or_else(|| sqlx::Error::decode(format!("unknown field kind {kind}")))?,
-        pattern: row.try_get("pattern")?,
-        required: row.try_get("required")?,
-        tight: row.try_get("tight")?,
-        identity: row.try_get("identity")?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use sqlx::SqlitePool;
 
-    use super::{Condition, Field, FieldKind, Op, Ruleset, RulesetStore, RulesetTest};
+    use super::{Condition, Op, Ruleset, RulesetStore};
+    use crate::parser::{Field, FieldKind, TitleTest};
 
     fn field(name: &str, pattern: Option<&str>) -> Field {
         Field {
@@ -362,7 +347,7 @@ mod tests {
                 op: Op::Equals,
                 value: "4".to_owned(),
             }],
-            tests: vec![RulesetTest {
+            tests: vec![TitleTest {
                 title: "The.Hollow.Meridian.S04E06".to_owned(),
                 expected: BTreeMap::from([
                     ("show".to_owned(), "the hollow meridian".to_owned()),

@@ -15,10 +15,10 @@
 
 use std::sync::LazyLock;
 
-use super::{
+use super::Ruleset;
+use crate::parser::{
     Field, FieldKind,
     FieldKind::{Enum, Episode, Number, Season, Text},
-    Ruleset,
 };
 use crate::rules::Engine;
 

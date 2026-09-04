@@ -7,11 +7,9 @@ use super::format;
 use super::listing::ParsedValue;
 use super::matches::Match;
 use crate::feed::store::FeedCheck;
+use crate::parser::{Field, FieldKind, Segment, Tint, TitleTest};
 use crate::rules::Engine;
-use crate::ruleset::{
-    Condition, Field, FieldKind, FieldSource, Op, ResolvedField, Ruleset, RulesetTest, Segment,
-    Tint,
-};
+use crate::ruleset::{Condition, FieldSource, Op, ResolvedField, Ruleset};
 use crate::store::StoredItem;
 use crate::torrent::{Torrent, TorrentState};
 use url::form_urlencoded;
@@ -530,7 +528,7 @@ pub(crate) async fn field_row(
 /// and leaves the rest alone. An empty input is not an assertion that the
 /// field reads nothing.
 #[component]
-pub(crate) async fn test_row(index: usize, test: &RulesetTest, fields: &[&Field]) -> Result {
+pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[&Field]) -> Result {
     view! {
         <div
             id=(format!("test-{index}"))

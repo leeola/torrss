@@ -7,7 +7,7 @@
 //! The check is pure. It takes the rules and the test and touches nothing
 //! else, so the editor runs every test on every keystroke.
 
-use crate::ruleset::RulesetTest;
+use crate::parser::TitleTest;
 use crate::server::matches::{self, Rules};
 
 /// What a draft made of one saved test.
@@ -46,7 +46,7 @@ pub(super) struct Mismatch {
 ///
 /// A field the test does not name is not checked, so a test pins down the one
 /// value the reader cares about and stays silent about the rest.
-pub(super) fn verdict(rules: &Rules, test: &RulesetTest) -> Verdict {
+pub(super) fn verdict(rules: &Rules, test: &TitleTest) -> Verdict {
     let Some(values) = matches::values(rules, &test.title) else {
         return Verdict::Unclaimed;
     };
@@ -80,12 +80,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{Mismatch, Verdict, verdict};
-    use crate::ruleset::RulesetTest;
+    use crate::parser::TitleTest;
     use crate::server::matches::tests::{TITLE, declared, resolved, saved};
 
     /// A test over [`TITLE`] expecting `field` to read `expected`.
-    fn expecting(field: &str, expected: &str) -> RulesetTest {
-        RulesetTest {
+    fn expecting(field: &str, expected: &str) -> TitleTest {
+        TitleTest {
             title: TITLE.to_owned(),
             expected: BTreeMap::from([(field.to_owned(), expected.to_owned())]),
         }
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn a_title_the_rules_refuse_is_unclaimed() {
         let declared = declared();
-        let test = RulesetTest {
+        let test = TitleTest {
             title: "just some words".to_owned(),
             expected: BTreeMap::from([("season".to_owned(), "4".to_owned())]),
         };
