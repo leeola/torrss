@@ -1,12 +1,13 @@
 //! The rulesets a reader writes, kept between restarts.
 //!
-//! A ruleset is the one thing in this application the reader authors. Every
-//! other table records what a feed or a client reported. This one holds what
-//! the reader decided, so it is the table a restart must not lose.
+//! A ruleset is one of the two things in this application the reader authors,
+//! the parser being the other. Every other table records what a feed or a
+//! client reported. This one holds what the reader decided, so it is a table
+//! a restart must not lose.
 //!
 //! Keyed by a slug the application fixes when the ruleset is created.
-//! `library.identity` and `grab_rulesets.ruleset` both carry that slug, so a
-//! rename changes the name a page shows and orphans nothing.
+//! `grab_rulesets.ruleset` carries that slug, so a rename changes the name a
+//! page shows and orphans nothing.
 
 // FIXME: Nothing outside the tests holds a RulesetStore, so every item here
 // is unused. The shared ruleset registry is the caller this waits on.
@@ -18,7 +19,6 @@ use sqlx::{Row, SqlitePool};
 
 use super::{Condition, Op, Ruleset};
 use crate::parser::TitleTest;
-use crate::parser::store::field;
 
 /// Adds a ruleset, or replaces the one already stored under its id.
 ///
@@ -26,12 +26,11 @@ use crate::parser::store::field;
 /// runtime decision about a ruleset, not part of the rules they edit, so
 /// saving an edit never turns a running ruleset off.
 const UPSERT: &str = "
-    INSERT INTO rulesets (id, name, based_on, template, enabled)
-    VALUES (?1, ?2, ?3, ?4, ?5)
+    INSERT INTO rulesets (id, name, parser, enabled)
+    VALUES (?1, ?2, ?3, ?4)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
-        based_on = excluded.based_on,
-        template = excluded.template
+        parser = excluded.parser
 ";
 
 /// Reads every ruleset by name, which is the order the admin index lists them.
@@ -39,18 +38,7 @@ const UPSERT: &str = "
 /// The name orders them rather than the id. The id is a slug the reader
 /// never sees, and ordering by it leaves a renamed ruleset where its old
 /// name sorted.
-const SELECT_RULESETS: &str =
-    "SELECT id, name, based_on, template, enabled FROM rulesets ORDER BY name";
-
-/// Reads every field of every ruleset, grouped by ruleset and in order.
-///
-/// The fold below walks this once. A query per ruleset costs a round trip
-/// for each instead.
-const SELECT_FIELDS: &str = "
-    SELECT ruleset, name, kind, pattern, required, identity, tight
-    FROM ruleset_fields
-    ORDER BY ruleset, position
-";
+const SELECT_RULESETS: &str = "SELECT id, name, parser, enabled FROM rulesets ORDER BY name";
 
 /// Reads every condition of every ruleset, grouped by ruleset and in order.
 const SELECT_CONDITIONS: &str = "
@@ -86,43 +74,28 @@ impl RulesetStore {
         Self { pool }
     }
 
-    /// Returns every stored ruleset with its fields, conditions, and saved
-    /// tests, ordered by name.
+    /// Returns every stored ruleset with its conditions and saved tests,
+    /// ordered by name.
     ///
     /// # Errors
     ///
-    /// Returns a decode failure when a row names a field kind or a condition
-    /// operator this build does not know. Every stored value was one when it
-    /// was written, so the row is corrupt rather than merely unexpected.
+    /// Returns a decode failure when a row names a condition operator this
+    /// build does not know. Every stored value was one when it was written,
+    /// so the row is corrupt rather than merely unexpected.
     pub(crate) async fn list(&self) -> Result<Vec<Ruleset>, sqlx::Error> {
-        let mut rulesets =
-            sqlx::query_as::<_, (String, String, Option<String>, bool, bool)>(SELECT_RULESETS)
-                .fetch_all(&self.pool)
-                .await?
-                .into_iter()
-                .map(|(id, name, based_on, template, enabled)| Ruleset {
-                    id,
-                    name,
-                    enabled,
-                    template,
-                    based_on,
-                    fields: Vec::new(),
-                    conditions: Vec::new(),
-                    tests: Vec::new(),
-                })
-                .collect::<Vec<_>>();
-
-        for row in sqlx::query(SELECT_FIELDS).fetch_all(&self.pool).await? {
-            let owner: String = row.try_get("ruleset")?;
-
-            // A field outlives its ruleset row only if the foreign key falls,
-            // so a miss here reports nothing.
-            let Some(ruleset) = rulesets.iter_mut().find(|ruleset| ruleset.id == owner) else {
-                continue;
-            };
-
-            ruleset.fields.push(field(&row)?);
-        }
+        let mut rulesets = sqlx::query_as::<_, (String, String, String, bool)>(SELECT_RULESETS)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|(id, name, parser, enabled)| Ruleset {
+                id,
+                name,
+                enabled,
+                parser,
+                conditions: Vec::new(),
+                tests: Vec::new(),
+            })
+            .collect::<Vec<_>>();
 
         for row in sqlx::query(SELECT_CONDITIONS).fetch_all(&self.pool).await? {
             let owner: String = row.try_get("ruleset")?;
@@ -179,8 +152,8 @@ impl RulesetStore {
         Ok(rulesets)
     }
 
-    /// Writes `ruleset` with its fields, conditions, and saved tests,
-    /// replacing whatever was stored.
+    /// Writes `ruleset` with its conditions and saved tests, replacing
+    /// whatever was stored.
     ///
     /// Every list is deleted and reinserted rather than updated in place,
     /// because a save drops a row as readily as it changes one. The whole
@@ -195,34 +168,10 @@ impl RulesetStore {
         sqlx::query(UPSERT)
             .bind(&ruleset.id)
             .bind(&ruleset.name)
-            .bind(ruleset.based_on.as_deref())
-            .bind(ruleset.template)
+            .bind(&ruleset.parser)
             .bind(ruleset.enabled)
             .execute(&mut *tx)
             .await?;
-
-        sqlx::query("DELETE FROM ruleset_fields WHERE ruleset = ?1")
-            .bind(&ruleset.id)
-            .execute(&mut *tx)
-            .await?;
-
-        for (position, field) in ruleset.fields.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO ruleset_fields
-                    (ruleset, position, name, kind, pattern, required, identity, tight)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            )
-            .bind(&ruleset.id)
-            .bind(position as i64)
-            .bind(&field.name)
-            .bind(field.kind.label())
-            .bind(field.pattern.as_deref())
-            .bind(field.required)
-            .bind(field.identity)
-            .bind(field.tight)
-            .execute(&mut *tx)
-            .await?;
-        }
 
         sqlx::query("DELETE FROM ruleset_conditions WHERE ruleset = ?1")
             .bind(&ruleset.id)
@@ -276,14 +225,8 @@ impl RulesetStore {
         tx.commit().await
     }
 
-    /// Removes the ruleset `id` and its fields, and reports whether one was
-    /// there.
-    ///
-    /// # Errors
-    ///
-    /// Returns a database error while another ruleset is based on this one.
-    /// A ruleset whose template is gone resolves no field, so the delete
-    /// fails instead.
+    /// Removes the ruleset `id` with its conditions and tests, and reports
+    /// whether one was there.
     pub(crate) async fn remove(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM rulesets WHERE id = ?1")
             .bind(id)
@@ -304,7 +247,6 @@ impl RulesetStore {
         Ok(result.rows_affected() == 1)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -312,35 +254,42 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::{Condition, Op, Ruleset, RulesetStore};
-    use crate::parser::{Field, FieldKind, TitleTest};
+    use crate::parser::store::ParserStore;
+    use crate::parser::{Field, FieldKind, Parser, TitleTest};
 
-    fn field(name: &str, pattern: Option<&str>) -> Field {
-        Field {
-            name: name.to_owned(),
-            kind: FieldKind::Text,
-            pattern: pattern.map(ToOwned::to_owned),
-            required: true,
-            tight: false,
-            identity: false,
+    /// The parser every ruleset below reads with.
+    ///
+    /// It is written first in each test, because the `parser` column
+    /// references it.
+    fn parser() -> Parser {
+        Parser {
+            id: "series".to_owned(),
+            name: "Series".to_owned(),
+            fields: vec![Field {
+                name: "season".to_owned(),
+                kind: FieldKind::Season,
+                pattern: None,
+                required: true,
+                tight: true,
+                identity: true,
+            }],
+            tests: Vec::new(),
         }
     }
 
-    fn ruleset(id: &str, template: bool, based_on: Option<&str>, fields: Vec<Field>) -> Ruleset {
+    fn ruleset(id: &str) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            template,
-            based_on: based_on.map(ToOwned::to_owned),
-            fields,
+            parser: "series".to_owned(),
             conditions: Vec::new(),
             tests: Vec::new(),
         }
     }
 
-    /// A template with two fields, whose order the position column keeps,
-    /// one condition on a field, and one saved test naming both of them.
-    fn template() -> Ruleset {
+    /// One condition and one saved test, so both lists cross the table.
+    fn narrowed() -> Ruleset {
         Ruleset {
             conditions: vec![Condition {
                 field: "season".to_owned(),
@@ -354,13 +303,18 @@ mod tests {
                     ("season".to_owned(), "4".to_owned()),
                 ]),
             }],
-            ..ruleset(
-                "series",
-                true,
-                None,
-                vec![field("show", Some(r"^(?<show>\w+)")), field("season", None)],
-            )
+            ..ruleset("hollow")
         }
+    }
+
+    /// A store over `pool` with the parser already written.
+    async fn stored(pool: &SqlitePool) -> RulesetStore {
+        ParserStore::new(pool.clone())
+            .upsert(&parser())
+            .await
+            .expect("the parser the rulesets read with");
+
+        RulesetStore::new(pool.clone())
     }
 
     #[sqlx::test]
@@ -373,76 +327,49 @@ mod tests {
 
     #[sqlx::test]
     async fn upsert_then_list_round_trips_each_ruleset(pool: SqlitePool) {
-        let store = RulesetStore::new(pool);
-        store.upsert(&template()).await.expect("the base");
-
-        // One field overrides the helper's flag, so both values cross the
-        // table under the comparison below.
-        let tight_show = || Field {
-            tight: true,
-            ..field("show", Some("^Ashfall"))
-        };
-
-        store
-            .upsert(&ruleset(
-                "archive",
-                false,
-                Some("series"),
-                vec![tight_show(), field("year", Some(r"\.\d{4}"))],
-            ))
-            .await
-            .expect("the ruleset on it");
+        let store = stored(&pool).await;
+        store.upsert(&narrowed()).await.expect("the narrowed one");
+        store.upsert(&ruleset("archive")).await.expect("the other");
 
         assert_eq!(
             store.list().await.expect("list"),
-            vec![
-                ruleset(
-                    "archive",
-                    false,
-                    Some("series"),
-                    vec![tight_show(), field("year", Some(r"\.\d{4}"))]
-                ),
-                template(),
-            ],
-            "ordered by name, each with its fields in position order"
+            vec![ruleset("archive"), narrowed()],
+            "ordered by name, each with its conditions and tests"
         );
     }
 
     #[sqlx::test]
-    async fn a_second_upsert_replaces_the_fields_and_keeps_enabled(pool: SqlitePool) {
-        let store = RulesetStore::new(pool);
-        store.upsert(&template()).await.expect("the template");
-        store.set_enabled("series", true).await.expect("enable");
+    async fn a_second_upsert_replaces_the_lists_and_keeps_enabled(pool: SqlitePool) {
+        let store = stored(&pool).await;
+        store.upsert(&narrowed()).await.expect("the first");
+        store.set_enabled("hollow", true).await.expect("enable");
 
-        let mut edited = ruleset("series", true, None, vec![field("title", Some("^."))]);
+        let mut edited = ruleset("hollow");
         store.upsert(&edited).await.expect("the edit");
         edited.enabled = true;
 
         assert_eq!(
             store.list().await.expect("list"),
             vec![edited],
-            "a dropped field and a dropped test both go, and the switch is not part of the edit"
+            "a dropped condition and a dropped test both go, and the switch is not part of \
+             the edit"
         );
     }
 
     #[sqlx::test]
-    async fn remove_reports_the_row_and_cascades_the_fields(pool: SqlitePool) {
-        let store = RulesetStore::new(pool.clone());
-        store.upsert(&template()).await.expect("the base");
+    async fn remove_reports_the_row_and_cascades_the_tests_and_conditions(pool: SqlitePool) {
+        let store = stored(&pool).await;
+        store.upsert(&narrowed()).await.expect("the first");
 
         assert!(
-            store.remove("series").await.expect("remove"),
+            store.remove("hollow").await.expect("remove"),
             "a stored row"
         );
         assert!(
-            !store.remove("series").await.expect("remove again"),
+            !store.remove("hollow").await.expect("remove again"),
             "nothing left to remove"
         );
-        assert_eq!(
-            store.list().await.expect("list"),
-            Vec::new(),
-            "the fields go with the ruleset that owned them"
-        );
+        assert_eq!(store.list().await.expect("list"), Vec::new());
 
         // The values hang off the tests, which hang off the ruleset, so this
         // is the far end of the chain and the one a single delete has to
@@ -455,30 +382,23 @@ mod tests {
             0,
             "and the expectations go with the tests that named them"
         );
-    }
-
-    #[sqlx::test]
-    async fn removing_a_template_a_ruleset_is_based_on_fails(pool: SqlitePool) {
-        let store = RulesetStore::new(pool);
-        store.upsert(&template()).await.expect("the base");
-        store
-            .upsert(&ruleset("archive", false, Some("series"), Vec::new()))
-            .await
-            .expect("the ruleset on it");
-
-        assert!(
-            store.remove("series").await.is_err(),
-            "a ruleset whose template is gone parses no title"
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM ruleset_conditions")
+                .fetch_one(&pool)
+                .await
+                .expect("count"),
+            0,
+            "and so do the conditions"
         );
     }
 
     #[sqlx::test]
     async fn set_enabled_flips_and_reports(pool: SqlitePool) {
-        let store = RulesetStore::new(pool);
-        store.upsert(&template()).await.expect("the base");
+        let store = stored(&pool).await;
+        store.upsert(&narrowed()).await.expect("the first");
 
         assert!(
-            store.set_enabled("series", true).await.expect("enable"),
+            store.set_enabled("hollow", true).await.expect("enable"),
             "a stored row"
         );
         assert!(

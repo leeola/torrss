@@ -24,7 +24,7 @@ pub(super) struct Held {
 
     /// What the claimant made of the name.
     ///
-    /// Its ruleset is the one that claimed the name, rather than the template
+    /// Its ruleset is the one that claimed the name, rather than the parser
     /// behind it, so the page names the rule the reader wrote.
     ///
     /// It carries the whole parse rather than rendered values, because

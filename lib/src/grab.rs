@@ -377,7 +377,7 @@ mod tests {
                     rulesets: vec!["series-hollow-meridian".to_owned()],
                 }
             )]),
-            "the template claims nothing, so only the show ruleset is recorded"
+            "a parser claims nothing, so only the show ruleset is recorded"
         );
     }
 

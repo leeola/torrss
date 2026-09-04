@@ -37,10 +37,10 @@ pub(crate) struct Parsed {
 
 /// What makes two releases the same thing.
 ///
-/// The ruleset here is the template when the claimant has one, rather than
-/// the ruleset that claimed the name. Every ruleset built on one template
-/// therefore shares one namespace of releases, so the same episode claimed
-/// by two rulesets on one template is one release.
+/// The parser named here is the one the claiming ruleset reads with, rather
+/// than the ruleset itself. Every ruleset on one parser therefore shares one
+/// namespace of releases, so the same episode claimed by two of them is one
+/// release.
 ///
 /// A trailing empty part makes the identity a span rather than one release. A
 /// season pack captures a show and a season and no episode, so its key ends
@@ -48,9 +48,9 @@ pub(crate) struct Parsed {
 /// name. See [`Self::spans`] for the spans one release falls inside.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Identity {
-    pub(crate) ruleset: String,
+    pub(crate) parser: String,
 
-    /// The normalized value of each identity field, in the ruleset's order.
+    /// The normalized value of each identity field, in the parser.s order.
     pub(crate) key: Vec<String>,
 }
 
@@ -76,7 +76,7 @@ impl Identity {
                 }
 
                 Self {
-                    ruleset: self.ruleset.clone(),
+                    parser: self.parser.clone(),
                     key,
                 }
                 .to_string()
@@ -88,7 +88,7 @@ impl Identity {
 impl Display for Identity {
     /// Renders the form the library table stores.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.ruleset)?;
+        write!(f, "{}", self.parser)?;
 
         for part in &self.key {
             write!(f, "|{part}")?;
@@ -98,10 +98,8 @@ impl Display for Identity {
     }
 }
 
-/// Every ruleset that claims titles, compiled in declaration order.
-///
-/// A template is not among them. It describes the fields the rulesets on it
-/// resolve against, and claims nothing itself.
+/// Every parser and ruleset the process reads titles with, compiled in
+/// declaration order.
 pub(crate) struct Engine {
     rulesets: Vec<Compiled>,
 
@@ -111,11 +109,15 @@ pub(crate) struct Engine {
     /// a fixture never reaches for the shipped set.
     source: Vec<Ruleset>,
 
-    /// The parsers the set was built with, each already compiled once.
-    ///
-    /// Nothing parses through one yet. They are kept so the pages that list
-    /// and edit a parser read the same snapshot every other page reads.
+    /// The parsers the set was built with, in declaration order.
     parsers: Vec<Parser>,
+
+    /// The same parsers compiled, positionally aligned with `parsers`.
+    ///
+    /// A ruleset holds an index into this rather than a regex of its own, so
+    /// every ruleset on one parser reads through the one regex compiled for
+    /// it.
+    compiled_parsers: Vec<CompiledParser>,
 }
 
 /// Why a set of parsers and rulesets does not compile into an engine.
@@ -133,16 +135,8 @@ pub(crate) enum EngineError {
         source: regex::Error,
     },
 
-    #[snafu(display("ruleset {ruleset} is based on {template}, which does not exist"))]
-    UnknownTemplate { ruleset: String, template: String },
-
-    #[snafu(display("ruleset {ruleset} is based on {template}, which is not a template"))]
-    NotATemplate { ruleset: String, template: String },
-
-    #[snafu(display(
-        "template {ruleset} is based on another template, and a template stands alone"
-    ))]
-    NestedTemplate { ruleset: String },
+    #[snafu(display("ruleset {ruleset} reads with parser {parser}, which does not exist"))]
+    UnknownParser { ruleset: String, parser: String },
 
     #[snafu(display("{owner} leaves field {field} without a pattern"))]
     BlankField { owner: String, field: String },
@@ -222,21 +216,19 @@ pub(crate) fn compose(components: &[Component<'_>]) -> String {
 struct Compiled {
     id: String,
 
-    /// The template this ruleset is based on, which names the identity, or
-    /// the ruleset's own id when it is based on nothing.
-    root: String,
+    /// Where the parser this ruleset reads with sits in the engine's
+    /// compiled list.
+    ///
+    /// An index rather than a copy, because every ruleset on one parser
+    /// reads through the single regex compiled for it.
+    parser: usize,
 
-    parser: CompiledParser,
-
-    /// Every comparison the ruleset makes on a value the regex read, each
-    /// already checked against the fields.
+    /// Every comparison the ruleset makes on a value the parser read, each
+    /// already checked against that parser's fields.
     conditions: Vec<Condition>,
 }
 
 /// One list of fields composed into the regex that reads them.
-///
-/// A parser is exactly this, and a ruleset carries one built from the fields
-/// it resolved against its template.
 struct CompiledParser {
     /// Every field composed into one regex, which each value comes out of by
     /// its field's name.
@@ -252,49 +244,41 @@ struct CompiledField {
 }
 
 impl Engine {
-    /// Compiles every parser, then the rulesets that are not templates, in
-    /// declaration order.
+    /// Compiles every parser, then every ruleset, in declaration order.
     ///
-    /// A parser claims nothing, so its compiled regex is not kept. It
-    /// compiles here because the reader edits it, and the editor reports on
-    /// a set only while every parser in it stands.
-    ///
-    /// A template claims nothing either, so it never reaches the compiled
-    /// list. Its patterns still compile, because the reader edits them and a
-    /// bad regex belongs to the template that carries it rather than to the
-    /// first ruleset that inherits it.
+    /// A ruleset holds no regex of its own. It names a parser and reads
+    /// through the one compiled for it, so two rulesets on one parser share
+    /// that regex and the namespace of releases behind it.
     ///
     /// # Errors
     ///
     /// Returns the first parser that leaves a field blank or carries a
     /// pattern the regex engine rejects.
     ///
-    /// Returns the first ruleset that names a template no other ruleset
-    /// declares, that is based on a ruleset that is not a template, that is
-    /// a template based on another, or that carries a pattern the regex
-    /// engine rejects.
+    /// Returns the first ruleset that names a parser no declaration
+    /// carries, or that writes a condition its parser's fields do not
+    /// answer.
     pub(crate) fn new(parsers: Vec<Parser>, rulesets: Vec<Ruleset>) -> Result<Self, EngineError> {
-        for parser in &parsers {
-            compile_fields(
-                &format!("parser {}", parser.id),
-                &parser.fields.iter().collect::<Vec<_>>(),
-            )?;
-        }
+        let compiled_parsers = parsers
+            .iter()
+            .map(|parser| {
+                compile_fields(
+                    &format!("parser {}", parser.id),
+                    &parser.fields.iter().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let mut compiled = Vec::new();
-
-        for ruleset in &rulesets {
-            if ruleset.template {
-                check_template(ruleset)?;
-            } else {
-                compiled.push(Compiled::new(ruleset, &rulesets)?);
-            }
-        }
+        let compiled = rulesets
+            .iter()
+            .map(|ruleset| Compiled::new(ruleset, &parsers, &compiled_parsers))
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
             rulesets: compiled,
             source: rulesets,
             parsers,
+            compiled_parsers,
         })
     }
 
@@ -318,32 +302,24 @@ impl Engine {
         self.source.iter().find(|ruleset| ruleset.id == id)
     }
 
-    /// The template `ruleset` is built on, or [`None`] when it has none.
-    pub(crate) fn template_of(&self, ruleset: &Ruleset) -> Option<&Ruleset> {
-        self.ruleset(ruleset.based_on.as_deref()?)
+    /// The parser `ruleset` reads titles with, or [`None`] when the engine
+    /// was built without it.
+    ///
+    /// [`Engine::new`] refuses a ruleset whose parser is absent, so an engine
+    /// that compiled always answers this. A caller holding a ruleset from
+    /// somewhere else may not.
+    pub(crate) fn parser_of(&self, ruleset: &Ruleset) -> Option<&Parser> {
+        self.parser(&ruleset.parser)
     }
 
-    /// Every ruleset based on nothing, template or not, which is where the
-    /// index starts.
-    pub(crate) fn roots(&self) -> impl Iterator<Item = &Ruleset> {
-        self.source
-            .iter()
-            .filter(|ruleset| ruleset.based_on.is_none())
-    }
-
-    /// Every template, which is what a ruleset is allowed to be based on.
-    pub(crate) fn templates(&self) -> impl Iterator<Item = &Ruleset> {
-        self.source.iter().filter(|ruleset| ruleset.template)
-    }
-
-    /// Every ruleset built on `template`.
-    pub(crate) fn derived<'a>(
+    /// Every ruleset that reads with `parser`, in declaration order.
+    pub(crate) fn rulesets_on<'a>(
         &'a self,
-        template: &'a Ruleset,
+        parser: &'a Parser,
     ) -> impl Iterator<Item = &'a Ruleset> {
         self.source
             .iter()
-            .filter(move |one| one.based_on.as_deref() == Some(template.id.as_str()))
+            .filter(move |one| one.parser == parser.id)
     }
 
     /// Lists every ruleset that claims `title`, in declaration order.
@@ -351,12 +327,14 @@ impl Engine {
     /// A ruleset claims a title when its regex reads it and every condition
     /// holds.
     ///
-    /// A template claims nothing, so one never appears here even when the
-    /// ruleset built on it does.
+    /// A parser claims nothing, so one never appears here even when a
+    /// ruleset reading with it does.
     pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
         self.rulesets
             .iter()
-            .filter(|ruleset| claims(ruleset, title).is_some())
+            .filter(|ruleset| {
+                claims(ruleset, &self.compiled_parsers[ruleset.parser], title).is_some()
+            })
             .map(|ruleset| ruleset.id.clone())
             .collect()
     }
@@ -367,11 +345,12 @@ impl Engine {
     /// overlap, and declaration order is what settles it.
     pub(crate) fn parse(&self, title: &str) -> Option<Parsed> {
         self.rulesets.iter().find_map(|ruleset| {
-            let values = claims(ruleset, title)?;
+            let parser = &self.compiled_parsers[ruleset.parser];
+            let values = claims(ruleset, parser, title)?;
 
             Some(Parsed {
                 ruleset: ruleset.id.clone(),
-                identity: ruleset.identity(&values),
+                identity: ruleset.identity(&self.parsers[ruleset.parser], &parser.fields, &values),
                 values,
             })
         })
@@ -379,40 +358,35 @@ impl Engine {
 }
 
 impl Compiled {
-    /// Resolves `ruleset` against its template and compiles its fields.
+    /// Finds the parser `ruleset` reads with and checks its conditions
+    /// against that parser's fields.
     ///
-    /// One lookup reaches the template, because a template stands alone.
-    /// There is no chain to walk, and therefore none to loop.
-    fn new(ruleset: &Ruleset, rulesets: &[Ruleset]) -> Result<Self, EngineError> {
-        let template = match &ruleset.based_on {
-            Some(id) => {
-                let found = rulesets
-                    .iter()
-                    .find(|candidate| &candidate.id == id)
-                    .context(UnknownTemplateSnafu {
-                        ruleset: ruleset.id.clone(),
-                        template: id.clone(),
-                    })?;
-
-                ensure!(
-                    found.template,
-                    NotATemplateSnafu {
-                        ruleset: ruleset.id.clone(),
-                        template: id.clone(),
-                    }
-                );
-
-                Some(found)
-            }
-            None => None,
-        };
-
-        let resolved = ruleset.resolved_fields(template);
+    /// `parsers` is the engine's compiled list in declaration order, and the
+    /// result indexes into it. Every ruleset on one parser therefore shares
+    /// the single regex compiled for it, however many of them there are.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::UnknownParser`] when no parser carries the
+    /// named id, and the condition refusals when one names a field the
+    /// parser does not read or ranks a field that does not rank.
+    fn new(
+        ruleset: &Ruleset,
+        parsers: &[Parser],
+        compiled: &[CompiledParser],
+    ) -> Result<Self, EngineError> {
+        let index = parsers
+            .iter()
+            .position(|parser| parser.id == ruleset.parser)
+            .context(UnknownParserSnafu {
+                ruleset: ruleset.id.clone(),
+                parser: ruleset.parser.clone(),
+            })?;
 
         for condition in &ruleset.conditions {
-            let field = resolved
+            let field = compiled[index]
+                .fields
                 .iter()
-                .map(|resolved| resolved.field)
                 .find(|field| field.name == condition.field)
                 .context(UnknownFieldSnafu {
                     ruleset: ruleset.id.clone(),
@@ -434,14 +408,7 @@ impl Compiled {
 
         Ok(Self {
             id: ruleset.id.clone(),
-            root: template.map_or_else(|| ruleset.id.clone(), |found| found.id.clone()),
-            parser: compile_fields(
-                &format!("ruleset {}", ruleset.id),
-                &resolved
-                    .iter()
-                    .map(|resolved| resolved.field)
-                    .collect::<Vec<_>>(),
-            )?,
+            parser: index,
             conditions: ruleset.conditions.clone(),
         })
     }
@@ -453,12 +420,15 @@ impl Compiled {
     /// two releases only agree position by position, and a trailing gap
     /// reads as a span over everything inside it rather than as a shorter
     /// key that matches nothing.
-    fn identity(&self, values: &[(String, String)]) -> Identity {
+    fn identity(
+        &self,
+        parser: &Parser,
+        fields: &[CompiledField],
+        values: &[(String, String)],
+    ) -> Identity {
         Identity {
-            ruleset: self.root.to_owned(),
-            key: self
-                .parser
-                .fields
+            parser: parser.id.clone(),
+            key: fields
                 .iter()
                 .filter(|field| field.identity)
                 .map(|field| {
@@ -534,44 +504,6 @@ fn compile_fields(owner: &str, fields: &[&Field]) -> Result<CompiledParser, Engi
     })
 }
 
-/// Checks a template without compiling it into the claiming set.
-///
-/// A template claims nothing, so nothing here is kept. The patterns still
-/// compile, because the reader edits them here and a bad regex belongs to
-/// the template that carries it.
-///
-/// A blank field has no pattern to compile. It is what the template exists
-/// to declare, so it passes here and is refused only where a ruleset
-/// inherits it without writing one.
-fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
-    ensure!(
-        ruleset.based_on.is_none(),
-        NestedTemplateSnafu {
-            ruleset: ruleset.id.clone(),
-        }
-    );
-
-    for field in &ruleset.fields {
-        let Some(matcher) = field.matcher() else {
-            continue;
-        };
-
-        let component = Component {
-            name: &field.name,
-            pattern: matcher,
-            required: field.required,
-            tight: field.tight,
-        };
-
-        Regex::new(&compose(std::slice::from_ref(&component))).context(PatternSnafu {
-            owner: format!("ruleset {}", ruleset.id),
-            field: field.name.clone(),
-        })?;
-    }
-
-    Ok(())
-}
-
 /// Runs the composed regex over `title`, or reports that the ruleset does not
 /// claim it.
 ///
@@ -579,12 +511,11 @@ fn check_template(ruleset: &Ruleset) -> Result<(), EngineError> {
 /// the regex fails without it and the ruleset claims nothing. An optional one
 /// is a skippable group that contributes no value when it skips, which is
 /// what lets one ruleset claim a feed title and a folder-named torrent.
-fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
-    let caps = ruleset.parser.regex.captures(title)?;
+fn captures(parser: &CompiledParser, title: &str) -> Option<Vec<(String, String)>> {
+    let caps = parser.regex.captures(title)?;
 
     Some(
-        ruleset
-            .parser
+        parser
             .fields
             .iter()
             .filter_map(|field| {
@@ -606,14 +537,17 @@ fn captures(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
 ///
 /// A condition on a field the title did not carry fails, which is what makes
 /// an absent condition the way a ruleset asks for a pack alone.
-fn claims(ruleset: &Compiled, title: &str) -> Option<Vec<(String, String)>> {
-    let values = captures(ruleset, title)?;
+fn claims(
+    ruleset: &Compiled,
+    parser: &CompiledParser,
+    title: &str,
+) -> Option<Vec<(String, String)>> {
+    let values = captures(parser, title)?;
 
     for condition in &ruleset.conditions {
         // `Compiled::new` refused a condition on a name no field carries, so
         // a miss here is a field that read nothing.
-        let kind = ruleset
-            .parser
+        let kind = parser
             .fields
             .iter()
             .find(|field| field.name == condition.field)?
@@ -641,8 +575,8 @@ mod tests {
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
-    /// The resolution the show ruleset requires is absent, so only the
-    /// template describes this one and nothing claims it.
+    /// The resolution the show ruleset requires is absent. The parser reads
+    /// the name and no ruleset admits it.
     const HOLLOW_720: &str =
         "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
     /// The same episode from another group. The show ruleset claims it,
@@ -668,21 +602,21 @@ mod tests {
     }
 
     #[test]
-    fn a_ruleset_on_a_template_claims_its_show() {
+    fn a_ruleset_claims_what_its_conditions_admit() {
         let parsed = ENGINE.parse(HOLLOW_1080).expect("claimed");
 
         assert_eq!(
             parsed.ruleset, "series-hollow-meridian",
-            "the ruleset built on the template is what claims the name"
+            "the ruleset whose conditions the title meets is what claims it"
         );
     }
 
     #[test]
-    fn claimants_never_name_a_template() {
+    fn claimants_name_rulesets_and_never_a_parser() {
         assert_eq!(
             ENGINE.claimants(HOLLOW_1080),
             vec!["series-hollow-meridian"],
-            "the template claims nothing, so only the ruleset appears"
+            "a parser claims nothing, so only the ruleset appears"
         );
     }
 
@@ -692,20 +626,20 @@ mod tests {
     }
 
     #[test]
-    fn a_title_only_the_template_describes_is_unclaimed() {
+    fn a_title_the_parser_reads_and_no_ruleset_wants_is_unclaimed() {
         assert_eq!(
             ENGINE.parse(HOLLOW_720),
             None,
-            "the ruleset requires 1080p, and the template it is based on claims nothing"
+            "the parser reads the 720p name, and no ruleset admits that resolution"
         );
     }
 
     #[test]
-    fn identity_names_the_template() {
+    fn identity_names_the_parser() {
         assert_eq!(
-            identity(HOLLOW_1080).ruleset,
+            identity(HOLLOW_1080).parser,
             "series-episodes",
-            "the identity names the template, not the ruleset that claimed it"
+            "the identity names the parser, not the ruleset that claimed it"
         );
     }
 
@@ -714,7 +648,7 @@ mod tests {
         assert_eq!(
             identity(HOLLOW_OTHER_GROUP),
             Identity {
-                ruleset: "series-episodes".to_owned(),
+                parser: "series-episodes".to_owned(),
                 key: vec![
                     "the hollow meridian".to_owned(),
                     "4".to_owned(),
@@ -746,7 +680,7 @@ mod tests {
         assert_eq!(
             parsed.identity,
             Identity {
-                ruleset: "series-episodes".to_owned(),
+                parser: "series-episodes".to_owned(),
                 key: vec![
                     "the hollow meridian".to_owned(),
                     "1".to_owned(),
@@ -767,7 +701,7 @@ mod tests {
                 "series-episodes|the hollow meridian||",
                 "series-episodes|||",
             ],
-            "the episode, then its season, then its show, then the ruleset"
+            "the episode, then its season, then its show, then the parser"
         );
     }
 
@@ -803,7 +737,7 @@ mod tests {
         assert_eq!(
             identity(FILM),
             Identity {
-                ruleset: "feature-films".to_owned(),
+                parser: "feature-films".to_owned(),
                 key: vec!["coastal drift".to_owned(), "2024".to_owned()],
             }
         );
@@ -824,37 +758,17 @@ mod tests {
         );
     }
 
-    /// Names a ruleset built on `based_on` that declares no field of its
-    /// own, which is all the template resolution reads.
-    fn based_on(id: &str, based_on: Option<&str>, template: bool) -> Ruleset {
+    /// Names a ruleset on `parser` with the conditions given, which is all
+    /// the compile step reads.
+    fn on_parser(id: &str, parser: &str, conditions: Vec<Condition>) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            template,
-            based_on: based_on.map(ToOwned::to_owned),
-            fields: Vec::new(),
-            conditions: Vec::new(),
+            parser: parser.to_owned(),
+            conditions,
             tests: Vec::new(),
         }
-    }
-
-    #[test]
-    fn a_template_based_on_a_template_is_an_error() {
-        let Err(error) = Engine::new(
-            Vec::new(),
-            vec![
-                based_on("first", None, true),
-                based_on("second", Some("first"), true),
-            ],
-        ) else {
-            panic!("a nested template never compiles");
-        };
-
-        assert!(
-            matches!(error, EngineError::NestedTemplate { ref ruleset } if ruleset == "second"),
-            "a template stands alone: {error}"
-        );
     }
 
     /// Names a field with the pattern `pattern`, or a blank when it is
@@ -871,81 +785,17 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_template_field_left_unreplaced_is_an_error() {
-        let template = Ruleset {
-            fields: vec![show_field(None)],
-            ..based_on("series", None, true)
-        };
-
-        let Err(error) = Engine::new(
-            Vec::new(),
-            vec![template.clone(), based_on("bare", Some("series"), false)],
-        ) else {
-            panic!("an unreplaced blank never compiles");
-        };
-
-        assert!(
-            matches!(
-                error,
-                EngineError::BlankField { ref owner, ref field }
-                    if owner == "ruleset bare" && field == "show"
-            ),
-            "the ruleset owes the template a pattern: {error}"
-        );
-
-        let engine = Engine::new(
-            Vec::new(),
-            vec![
-                template,
-                Ruleset {
-                    fields: vec![show_field(Some("^(?<show>Ashfall)"))],
-                    ..based_on("ashfall", Some("series"), false)
-                },
-            ],
-        )
-        .expect("a ruleset that replaces the blank compiles");
-
-        assert_eq!(
-            engine.claimants("Ashfall.S01E01"),
-            vec!["ashfall"],
-            "and claims what the pattern it wrote describes"
-        );
-    }
-
-    #[test]
-    fn a_ruleset_based_on_a_non_template_is_an_error() {
-        let Err(error) = Engine::new(
-            Vec::new(),
-            vec![
-                based_on("first", None, false),
-                based_on("second", Some("first"), false),
-            ],
-        ) else {
-            panic!("a ruleset based on a ruleset never compiles");
-        };
-
-        assert!(
-            matches!(
-                error,
-                EngineError::NotATemplate { ref ruleset, ref template }
-                    if ruleset == "second" && template == "first"
-            ),
-            "only a template serves as one: {error}"
-        );
-    }
-
-    #[test]
-    fn a_template_no_ruleset_declares_is_an_error() {
-        let Err(error) = Engine::new(Vec::new(), vec![based_on("derived", Some("absent"), false)])
+    fn a_ruleset_on_an_absent_parser_is_an_error() {
+        let Err(error) = Engine::new(Vec::new(), vec![on_parser("derived", "absent", Vec::new())])
         else {
-            panic!("an unknown template never compiles");
+            panic!("a ruleset with nothing to read titles with never compiles");
         };
 
         assert!(
             matches!(
                 error,
-                EngineError::UnknownTemplate { ref ruleset, ref template }
-                    if ruleset == "derived" && template == "absent"
+                EngineError::UnknownParser { ref ruleset, ref parser }
+                    if ruleset == "derived" && parser == "absent"
             ),
             "the message names both ends: {error}"
         );
@@ -992,38 +842,24 @@ mod tests {
 
     #[test]
     fn two_fields_that_name_one_group_do_not_compose() {
-        let clashing = Ruleset {
-            id: "clash".to_owned(),
-            name: "Clash".to_owned(),
-            enabled: true,
-            template: false,
-            based_on: None,
-            fields: vec![
+        let clashing = parser(
+            "clash",
+            vec![
                 Field {
                     name: "a".to_owned(),
-                    kind: FieldKind::Text,
-                    pattern: Some(r"(?<a>\w)".to_owned()),
-                    required: true,
-                    tight: true,
-                    identity: true,
+                    ..show_field(Some(r"(?<a>\w)"))
                 },
                 Field {
                     name: "b".to_owned(),
-                    kind: FieldKind::Text,
-                    pattern: Some(r"(?<a>\w)".to_owned()),
-                    required: true,
-                    tight: true,
-                    identity: false,
+                    ..show_field(Some(r"(?<a>\w)"))
                 },
             ],
-            conditions: Vec::new(),
-            tests: Vec::new(),
-        };
+        );
 
         assert!(
             matches!(
-                Engine::new(Vec::new(), vec![clashing]),
-                Err(EngineError::Composed { ref owner, .. }) if owner == "ruleset clash"
+                Engine::new(vec![clashing], Vec::new()),
+                Err(EngineError::Composed { ref owner, .. }) if owner == "parser clash"
             ),
             "each field compiles alone, and the group name they share fails the whole"
         );
@@ -1039,49 +875,50 @@ mod tests {
         }
     }
 
-    /// The fixture's episode template, which the rulesets below narrow.
-    fn episodes() -> Ruleset {
-        fixture::rulesets()
+    /// The fixture's episode parser, which the rulesets below narrow.
+    fn episodes() -> Parser {
+        fixture::parsers()
             .into_iter()
             .find(|one| one.id == "series-episodes")
-            .expect("the fixture declares the episode template")
+            .expect("the fixture declares the episode parser")
     }
 
     #[test]
-    fn a_condition_narrows_what_the_regex_reads() {
+    fn a_condition_narrows_what_the_parser_reads() {
         let engine = Engine::new(
-            Vec::new(),
-            vec![
-                episodes(),
-                Ruleset {
-                    conditions: vec![condition("resolution", Op::Equals, "1080p")],
-                    ..based_on("high-definition", Some("series-episodes"), false)
-                },
-            ],
+            vec![episodes()],
+            vec![on_parser(
+                "high-definition",
+                "series-episodes",
+                vec![condition("resolution", Op::Equals, "1080p")],
+            )],
         )
-        .expect("a condition on a field the template reads");
+        .expect("a condition on a field the parser reads");
 
         assert_eq!(
             engine.claimants(HOLLOW_1080),
             vec!["high-definition"],
-            "the regex reads the resolution and the condition wants this one"
+            "the parser reads the resolution and the condition wants this one"
         );
         assert_eq!(
             engine.claimants(HOLLOW_720),
             Vec::<&str>::new(),
-            "the same regex reads the other resolution, and the condition refuses it"
+            "the same parser reads the other resolution, and the condition refuses it"
         );
     }
 
     #[test]
     fn a_condition_on_an_unread_field_is_an_error() {
         let Err(error) = Engine::new(
-            Vec::new(),
-            vec![Ruleset {
-                fields: vec![show_field(Some("^(?<show>Ashfall)"))],
-                conditions: vec![condition("resolution", Op::Equals, "1080p")],
-                ..based_on("ashfall", None, false)
-            }],
+            vec![parser(
+                "ashfall",
+                vec![show_field(Some("^(?<show>Ashfall)"))],
+            )],
+            vec![on_parser(
+                "wanted",
+                "ashfall",
+                vec![condition("resolution", Op::Equals, "1080p")],
+            )],
         ) else {
             panic!("a condition on a value no field produces never compiles");
         };
@@ -1090,21 +927,24 @@ mod tests {
             matches!(
                 error,
                 EngineError::UnknownField { ref ruleset, ref field }
-                    if ruleset == "ashfall" && field == "resolution"
+                    if ruleset == "wanted" && field == "resolution"
             ),
-            "the message names the field the ruleset does not read: {error}"
+            "the message names the field the parser does not read: {error}"
         );
     }
 
     #[test]
     fn an_ordering_on_a_text_field_is_an_error() {
         let Err(error) = Engine::new(
-            Vec::new(),
-            vec![Ruleset {
-                fields: vec![show_field(Some("^(?<show>Ashfall)"))],
-                conditions: vec![condition("show", Op::AtLeast, "10")],
-                ..based_on("ashfall", None, false)
-            }],
+            vec![parser(
+                "ashfall",
+                vec![show_field(Some("^(?<show>Ashfall)"))],
+            )],
+            vec![on_parser(
+                "wanted",
+                "ashfall",
+                vec![condition("show", Op::AtLeast, "10")],
+            )],
         ) else {
             panic!("text has no place on a number line");
         };
@@ -1113,7 +953,7 @@ mod tests {
             matches!(
                 error,
                 EngineError::UnorderedField { ref ruleset, ref field }
-                    if ruleset == "ashfall" && field == "show"
+                    if ruleset == "wanted" && field == "show"
             ),
             "the message names the field that does not rank: {error}"
         );
@@ -1152,7 +992,7 @@ mod tests {
     fn a_parser_with_a_blank_field_is_an_error() {
         let Err(error) = Engine::new(vec![parser("series", vec![show_field(None)])], Vec::new())
         else {
-            panic!("a parser has no template to fill a blank in");
+            panic!("a field with no pattern reads no value");
         };
 
         assert!(

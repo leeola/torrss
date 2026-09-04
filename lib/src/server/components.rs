@@ -9,7 +9,7 @@ use super::matches::{Match, PatternError};
 use crate::feed::store::FeedCheck;
 use crate::parser::{Field, FieldKind, Parser, Segment, Tint, TitleTest};
 use crate::rules::Engine;
-use crate::ruleset::{Condition, Diff, FieldSource, Op, ResolvedField, Ruleset};
+use crate::ruleset::{Condition, Diff, Op, Ruleset};
 use crate::store::StoredItem;
 use crate::torrent::{Torrent, TorrentState};
 use url::form_urlencoded;
@@ -162,7 +162,7 @@ pub(crate) async fn match_row(matched: &Match<'_>, editor: &str) -> Result {
 pub(crate) struct ItemDetails {
     /// Every ruleset that claims the title, in declaration order.
     ///
-    /// A template claims nothing, so it never appears. Two rulesets that both
+    /// A parser claims nothing, so it never appears. Two rulesets that both
     /// claim one release do, and the first declared is the one that parsed
     /// it, so listing all of them shows the reader the overlap they wrote.
     pub rulesets: Vec<Claimant>,
@@ -330,37 +330,17 @@ fn passed(engine: &Engine, rulesets: &[String]) -> String {
         .join(", ")
 }
 
-/// One extraction rule inside the ruleset editor.
+/// One extraction rule inside the parser editor.
 ///
-/// The row is anchored by its part rather than its field name, because that
-/// is what a highlighted run in a filename knows about itself. This holds
-/// only while each part has at most one field. A second field on the same
-/// part makes the anchor ambiguous, and the anchor must move to the name.
-///
-/// An inherited row dims and locks its inputs. The value shown is the
-/// template's, and editing it here would suggest a change this ruleset does
-/// not hold. The trailing column is the way in: it replaces the template's
-/// value with one this ruleset owns.
-///
-/// `movable` gives the row its arrows. A row moves only where this ruleset
-/// owns the order, which a ruleset built on a template does not.
+/// The row is anchored by its index, which is both the form key it posts
+/// under and the position that tints it. A parser holds every one of its
+/// fields itself, so the two never part company.
 #[component]
-pub(crate) async fn field_row(
-    index: usize,
-    position: usize,
-    movable: bool,
-    resolved: ResolvedField<'_>,
-) -> Result {
-    let field = resolved.field;
-    let locked = resolved.is_inherited();
-
+pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
     view! {
         <div
-            id=(format!("field-{position}"))
-            class=(class!(
-                "grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center",
-                "opacity-45" if locked,
-            ))
+            id=(format!("field-{index}"))
+            class="grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center"
             // The replace button copies these into a new own row, so an
             // inherited field becomes one this ruleset holds.
             data-name=(&field.name)
@@ -373,12 +353,11 @@ pub(crate) async fn field_row(
             <div class="md:col-span-2">
                 <label class="block text-xs text-slate-500">"Name"</label>
                 <div class="mt-1 flex items-center gap-2">
-                    <span class=(class!("size-2 shrink-0 rounded-full", Tint::at(position).dot()))></span>
+                    <span class=(class!("size-2 shrink-0 rounded-full", Tint::at(index).dot()))></span>
                     <input
                         type="text"
                         name=(format!("field.{index}.name"))
                         value=(&field.name)
-                        disabled=(locked)
                         class="w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
                 </div>
@@ -388,7 +367,6 @@ pub(crate) async fn field_row(
                 <label class="block text-xs text-slate-500">"Type"</label>
                 <select
                     name=(format!("field.{index}.kind"))
-                    disabled=(locked)
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                 >
                     for kind in FieldKind::ALL {
@@ -401,33 +379,17 @@ pub(crate) async fn field_row(
 
             <div class="md:col-span-3">
                 <label class="block text-xs text-slate-500">"Pattern"</label>
-                // The input locks only where the kind supplies the pattern and
-                // the field takes it. A blank has nothing to take, and an
-                // override is the reader's own text, so both stay editable.
+                // The input locks only where the kind supplies the pattern.
+                // Anything else is the reader.s own text.
                 <input
                     type="text"
                     name=(format!("field.{index}.pattern"))
                     value=(field.matcher().unwrap_or_default())
-                    disabled=(locked || (field.kind.pattern().is_some() && field.pattern.is_none()))
+                    disabled=(field.kind.pattern().is_some() && field.pattern.is_none())
                     title=((field.kind.pattern().is_some() && field.pattern.is_none())
                         .then_some("The kind supplies this pattern"))
-                    placeholder=(field.matcher().is_none().then_some(
-                        "blank. The ruleset based on this template fills it in."
-                    ))
                     class="mt-1 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-xs text-slate-300 focus:border-slate-600 focus:outline-none"
                 >
-                match resolved.source {
-                    FieldSource::Overridden { template } => <p
-                        class="mt-1 truncate font-mono text-[11px] text-slate-600"
-                        title=(template.matcher().unwrap_or_default())
-                    >
-                        match template.matcher() {
-                            Some(matcher) => { "replaces " (matcher) },
-                            None => "fills in a blank",
-                        }
-                    </p>,
-                    _ => "",
-                }
             </div>
 
             <div class="md:col-span-1 md:justify-self-center">
@@ -436,7 +398,6 @@ pub(crate) async fn field_row(
                     type="checkbox"
                     name=(format!("field.{index}.required"))
                     checked=(field.required)
-                    disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
                 >
             </div>
@@ -452,7 +413,6 @@ pub(crate) async fn field_row(
                     type="checkbox"
                     name=(format!("field.{index}.identity"))
                     checked=(field.identity)
-                    disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
                 >
             </div>
@@ -468,51 +428,40 @@ pub(crate) async fn field_row(
                     type="checkbox"
                     name=(format!("field.{index}.tight"))
                     checked=(field.tight)
-                    disabled=(locked)
                     class="mt-2 size-4 rounded border-slate-700 bg-slate-950"
                 >
             </div>
 
             <div class="md:col-span-2 md:justify-self-end">
-                <label class="block text-xs text-slate-500">"Source"</label>
+                <label class="block text-xs text-slate-500">"Order"</label>
                 <div class="mt-1 flex items-center gap-1">
-                    if movable {
-                        <button
-                            type="button"
-                            name="row-action"
-                            value=(format!("move-up:{index}"))
-                            title="Move up"
-                            class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
-                        >
-                            "\u{2191}"
-                        </button>
-                        <button
-                            type="button"
-                            name="row-action"
-                            value=(format!("move-down:{index}"))
-                            title="Move down"
-                            class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
-                        >
-                            "\u{2193}"
-                        </button>
-                    }
+                    <button
+                        type="button"
+                        name="row-action"
+                        value=(format!("move-up:{index}"))
+                        title="Move up"
+                        class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+                    >
+                        "\u{2191}"
+                    </button>
+                    <button
+                        type="button"
+                        name="row-action"
+                        value=(format!("move-down:{index}"))
+                        title="Move down"
+                        class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+                    >
+                        "\u{2193}"
+                    </button>
                     <button
                         type="button"
                         // A `type="button"` never joins `FormData`, so the name
                         // stays out of the form encoding the shard parses.
                         name="row-action"
-                        value=(if locked {
-                            format!("replace:{}", field.name)
-                        } else {
-                            format!("remove:{index}")
-                        })
-                        class=(class!(
-                            "inline-block rounded-md border px-2 py-1 text-xs transition-colors",
-                            "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200" if locked
-                                else "border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/20",
-                        ))
+                        value=(format!("remove:{index}"))
+                        class="inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
                     >
-                        if locked { "replace" } else { "remove" }
+                        "remove"
                     </button>
                 </div>
             </div>
@@ -683,59 +632,37 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
 
 /// One ruleset on the admin index.
 ///
-/// A `nested` card is indented under the template it is based on.
-///
 /// The whole card is one link, so the badge here reports the state rather than
 /// changing it. An anchor inside an anchor is not something a browser resolves
 /// the way a reader expects, and the switch belongs beside the ruleset's other
 /// actions in the editor.
+///
+/// `parser` is the one this ruleset reads with, which an engine that compiled
+/// always answers. [`None`] renders no badge rather than an error, because a
+/// missing one is a set the process refused to run.
 #[component]
-pub(crate) async fn ruleset_card(
-    ruleset: &Ruleset,
-    template: Option<&Ruleset>,
-    nested: bool,
-    enabled: bool,
-    is_template: bool,
-) -> Result {
+pub(crate) async fn ruleset_card(ruleset: &Ruleset, parser: Option<&Parser>) -> Result {
     view! {
-        <li
-            id=(format!("ruleset-{}", ruleset.id))
-            class=(class!("scroll-mt-24", "md:pl-8" if nested))
-        >
+        <li id=(format!("ruleset-{}", ruleset.id)) class="scroll-mt-24">
             <a
                 href=(format!("/admin/rulesets/{}", ruleset.id))
-                class=(class!(
-                    "block rounded-lg border bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700",
-                    "border-slate-800/70 border-l-2 border-l-slate-700" if nested
-                        else "border-slate-800",
-                ))
+                class="block rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700"
             >
                 <div class="flex flex-wrap items-center gap-3">
                     <h2 class="text-sm font-semibold text-slate-100">(&ruleset.name)</h2>
-                    // A template shows what it is rather than whether it runs,
-                    // because it claims nothing and carries no switch.
-                    if is_template {
-                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
-                            "template"
-                        </span>
-                    } else {
-                        status_badge(enabled: enabled)
-                    }
-                    match template {
-                        Some(template) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
-                            "based on " (&template.name)
+                    status_badge(enabled: ruleset.enabled)
+                    match parser {
+                        Some(parser) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                            "reads with " (&parser.name)
                         </span>,
                         None => "",
                     }
                 </div>
 
                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    match template {
-                        Some(template) => <span>
-                            (ruleset.fields.len()) " replaced of " (format::count(template.fields.len(), "field", "fields"))
-                        </span>,
-                        None => <span>(format::count(ruleset.fields.len(), "field", "fields"))</span>,
-                    }
+                    <span>
+                        (format::count(ruleset.conditions.len(), "condition", "conditions"))
+                    </span>
                 </div>
             </a>
         </li>

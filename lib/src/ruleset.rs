@@ -1,9 +1,11 @@
-//! What a ruleset is made of.
+//! Which of the titles a parser reads are wanted.
 //!
-//! A ruleset decides which of the titles a set of fields reads it wants. The
-//! fields themselves belong to [`crate::parser`], which reads a filename
-//! apart and judges nothing. A [`Condition`] is where the judgment lives:
-//! one comparison on a value the fields already read.
+//! A [`crate::parser::Parser`] reads a filename apart and judges nothing. A
+//! ruleset names one and decides which of the names it reads it claims,
+//! through [`Condition`]: one comparison on a value the parser already read.
+//!
+//! The identity names the parser rather than the ruleset, so two rulesets on
+//! one parser share one namespace of releases.
 //!
 //! [`Diff`] belongs here too. The editor runs a ruleset against filenames as
 //! the reader edits, and a diff state is what each row reports about the
@@ -18,9 +20,9 @@ pub(crate) mod form;
 pub(crate) mod registry;
 pub(crate) mod store;
 
-use crate::parser::{Field, FieldKind, TitleTest};
+use crate::parser::{FieldKind, TitleTest};
 
-/// A set of field rules that together parse one family of filenames.
+/// One set of conditions over the values a parser reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Ruleset {
     /// Stable key that names the ruleset in a URL.
@@ -33,36 +35,24 @@ pub(crate) struct Ruleset {
     /// A new ruleset stores `true`, and the editor's switch flips the stored
     /// value through `Rulesets::set_enabled`.
     ///
-    /// A template stores `false`. It claims nothing, and the editor offers it
-    /// no switch.
-    ///
     /// A disabled ruleset filters nothing, so its releases stay out of the
     /// feed.
     pub(crate) enabled: bool,
 
-    /// Whether this ruleset only serves as a foundation for others.
+    /// [`crate::parser::Parser::id`] of the parser this ruleset reads titles
+    /// with.
     ///
-    /// A template claims no title and filters no feed. It exists so several
-    /// rulesets share one set of fields and replace only what differs.
-    pub(crate) template: bool,
+    /// The identity names the parser too, so every ruleset reading through
+    /// one shares a single namespace of releases. Two rulesets that claim
+    /// different halves of what a parser reads therefore never file the same
+    /// episode twice.
+    pub(crate) parser: String,
 
-    /// [`Ruleset::id`] of the template this ruleset is built on, or [`None`]
-    /// for a ruleset that declares every field itself.
-    pub(crate) based_on: Option<String>,
-
-    /// The fields this ruleset declares itself.
+    /// Each comparison this ruleset makes on a value the parser read.
     ///
-    /// A ruleset on a template holds only the fields it replaces, so an edit
-    /// to the template reaches every ruleset that did not replace that
-    /// field. Use [`Ruleset::resolved_fields`] to get the full list the
-    /// editor shows.
-    pub(crate) fields: Vec<Field>,
-
-    /// Each comparison this ruleset makes on a value its regex read.
-    ///
-    /// The regex decides which titles have the shape this ruleset describes,
+    /// The parser decides which titles have the shape this ruleset works on,
     /// and these decide which of those it wants. A ruleset with none claims
-    /// every title its regex reads.
+    /// every title its parser reads.
     pub(crate) conditions: Vec<Condition>,
 
     /// What the reader expects this ruleset to read from named titles.
@@ -71,84 +61,6 @@ pub(crate) struct Ruleset {
     /// them against the draft as the reader types, so a rule change that
     /// breaks a title the reader cared about says so at once.
     pub(crate) tests: Vec<TitleTest>,
-}
-
-impl Ruleset {
-    /// Every field the editor shows, each tagged with where it came from.
-    ///
-    /// A ruleset with no template returns its own fields untouched. One
-    /// built on a template returns the template's fields in the template's
-    /// order, so the two editors read the same way down the page.
-    ///
-    /// `template` is the ruleset this one is built on, which the caller
-    /// resolves through [`crate::rules::Engine`]. Passing it in is what
-    /// keeps a ruleset from reaching for a global list to find its own.
-    pub(crate) fn resolved_fields<'a>(
-        &'a self,
-        template: Option<&'a Ruleset>,
-    ) -> Vec<ResolvedField<'a>> {
-        let Some(template) = template else {
-            return self
-                .fields
-                .iter()
-                .map(|field| ResolvedField {
-                    field,
-                    source: FieldSource::Own,
-                })
-                .collect();
-        };
-
-        template
-            .fields
-            .iter()
-            .map(
-                |inherited| match self.fields.iter().find(|own| own.name == inherited.name) {
-                    Some(field) => ResolvedField {
-                        field,
-                        source: FieldSource::Overridden {
-                            template: inherited,
-                        },
-                    },
-                    None => ResolvedField {
-                        field: inherited,
-                        source: FieldSource::Inherited,
-                    },
-                },
-            )
-            .collect()
-    }
-}
-
-/// A field as the editor shows it, once the template is applied.
-#[derive(Clone, Copy)]
-pub(crate) struct ResolvedField<'a> {
-    /// The value in effect, whether inherited or replaced.
-    pub(crate) field: &'a Field,
-
-    pub(crate) source: FieldSource<'a>,
-}
-
-impl ResolvedField<'_> {
-    /// Whether the editor greys the row and locks its inputs.
-    pub(crate) fn is_inherited(&self) -> bool {
-        matches!(self.source, FieldSource::Inherited)
-    }
-}
-
-/// Where a resolved field came from.
-#[derive(Clone, Copy)]
-pub(crate) enum FieldSource<'a> {
-    /// Declared by a ruleset with no template.
-    Own,
-
-    /// Carried from the template.
-    Inherited,
-
-    /// Replaces the template's field.
-    Overridden {
-        /// The template's field, shown beside the override it replaced.
-        template: &'a Field,
-    },
 }
 
 /// How a title's match changed under the edit in progress.

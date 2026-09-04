@@ -311,7 +311,7 @@ fn identify(torrent: &Torrent, engine: &Engine) -> Option<Owned> {
 
     Some(Owned {
         identity: parsed.identity.to_string(),
-        ruleset: parsed.identity.ruleset,
+        parser: parsed.identity.parser,
         torrent_id: torrent.id.clone(),
         name: torrent.name.clone(),
     })

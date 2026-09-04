@@ -1,9 +1,10 @@
 //! The pages that list and write a parser.
 //!
-//! A parser is the ruleset editor's first half: the fields that read a
-//! filename apart, with nothing that decides whether anyone wants the
-//! release. So this page is that editor with the role, the base, the badge,
-//! and the switch cut away, and it re-renders through the same row shards.
+//! A parser is the half of the job that reads a filename apart. It decides
+//! nothing about whether anyone wants the release, so this editor carries
+//! the field rows and the tests and no switch. The ruleset editor beside it
+//! carries the conditions, and the two share the test rows and the Matches
+//! section.
 
 use std::sync::Arc;
 
@@ -25,11 +26,11 @@ use topcoat::{
 use tracing::error;
 
 use crate::feed::registry::FeedRegistry;
-use crate::parser::form::{self as parser_form, ParserForm};
+use crate::parser::form::{self as parser_form, ParserForm, ParserRows};
 use crate::parser::{PRESETS, Parser};
 use crate::ruleset::Diff;
 use crate::ruleset::registry::{Rulesets, SaveError};
-use crate::server::handlers::{compute_matches, draft_fields, field_rows, test_results, test_rows};
+use crate::server::handlers::{compute_matches, test_results, test_rows};
 use crate::server::matches::{Edits, Rules};
 use crate::server::{components, matches};
 use crate::services::Services;
@@ -380,7 +381,7 @@ async fn parser_matches(
         }
     };
 
-    let after = draft_fields(None, &posted.fields);
+    let after = posted.fields.iter().collect::<Vec<_>>();
 
     let services = app_context::<Services>(cx);
     let items = store::items(&services.db, None).await?;
@@ -515,5 +516,28 @@ fn write_failed(error: SaveError) -> Error {
     match error {
         SaveError::Engine { .. } | SaveError::InUse { .. } => bad_request(error.to_string()).into(),
         SaveError::Store { .. } => internal_server_error(error).into(),
+    }
+}
+
+/// Re-renders the field rows from the draft the editor holds.
+///
+/// The rows follow the form rather than the save, so a row the reader just
+/// added appears without a round trip through the database.
+///
+/// Only a structural change re-renders these. A keystroke moves the matches
+/// alone, because re-rendering a row under the cursor takes the focus with
+/// it.
+#[shard]
+async fn field_rows(cx: &Cx, rows: String) -> Result {
+    // Every row comes out of the posted body, so nothing here reads the
+    // stored set.
+    let _ = cx;
+
+    let posted = ParserRows::parse(&rows);
+
+    view! {
+        for (index, field) in posted.fields.iter().enumerate() {
+            components::field_row(index: index, field: field)
+        }
     }
 }

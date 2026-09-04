@@ -54,7 +54,7 @@ struct FieldEdit {
 pub(super) struct Rule {
     name: String,
 
-    /// Where the field sits among the ruleset's resolved fields.
+    /// Where the field sits among the parser.s fields.
     ///
     /// The position is what tints the run this rule claims, and it anchors
     /// the field's row in the editor.
@@ -223,9 +223,7 @@ pub(super) fn rules(
         let Some(pattern) = pattern else {
             errors.push(PatternError {
                 field: field.name.to_owned(),
-                message:
-                    "no pattern. A template leaves one blank for the ruleset based on it to fill."
-                        .to_owned(),
+                message: "no pattern. A field with none reads no value.".to_owned(),
             });
 
             continue;
@@ -606,9 +604,7 @@ pub(super) mod tests {
             rules(&fields, &[], &Edits::default()).1,
             [PatternError {
                 field: "bare".to_owned(),
-                message:
-                    "no pattern. A template leaves one blank for the ruleset based on it to fill."
-                        .to_owned(),
+                message: "no pattern. A field with none reads no value.".to_owned(),
             }],
             "a text kind supplies no pattern of its own"
         );

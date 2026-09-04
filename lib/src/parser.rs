@@ -43,12 +43,12 @@ pub(crate) struct Parser {
 
 /// The color one field wears wherever the reader meets it.
 ///
-/// A field takes its color from its position among a ruleset's resolved
+/// A field takes its color from its position among a parser.s
 /// fields, so the same field reads the same in Matches, on the home page, and
-/// in the editor. A color by position never collides inside one ruleset, which
+/// in the editor. A color by position never collides inside one parser, which
 /// a color hashed from the name does.
 ///
-/// The twelve colors repeat past the twelfth field. A ruleset that long has
+/// The twelve colors repeat past the twelfth field. A parser that long has
 /// already lost the reader's eye, and a repeat reads better than running out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Tint(usize);
@@ -101,7 +101,7 @@ impl Tint {
 
 /// A run of characters in a filename, tagged with the field that claimed it.
 ///
-/// The field is its position among the ruleset's resolved fields, which is
+/// The field is its position among the parser.s fields, which is
 /// also the anchor of that field's row in the editor.
 ///
 /// [`None`] marks separators and anything no rule matched. The `text` values
@@ -122,17 +122,16 @@ pub(crate) struct Field {
     /// The regex this field reads its value with, or `None` to take the
     /// pattern its kind supplies.
     ///
-    /// It is one component of the ruleset's composed regex, so it names its
+    /// It is one component of the parser.s composed regex, so it names its
     /// own run and its leading separator and nothing else. The components
     /// around it supply the context, so it guards against nothing itself.
     ///
     /// A pattern declared on a premade kind wins over the built-in one. That
-    /// is how a ruleset replaces a season with a single constant while
+    /// is how a parser replaces a season with a single constant while
     /// keeping the kind's normalization.
     ///
-    /// `None` on a kind that supplies none is a blank. Only a template
-    /// declares one, naming the part and the flags and leaving the regex for
-    /// the ruleset built on it to write.
+    /// `None` on a kind that supplies none is a blank, which no parser
+    /// compiles with.
     pub(crate) pattern: Option<String>,
 
     pub(crate) required: bool,
@@ -143,7 +142,7 @@ pub(crate) struct Field {
     /// after it is what stops it, so nothing may come between the two. A
     /// field that is not tight lets the next field's run sit anywhere after
     /// its own, which is how a resolution reads past an episode name the
-    /// ruleset does not claim.
+    /// parser does not claim.
     pub(crate) tight: bool,
 
     /// Whether this field is part of the key that decides whether two
@@ -158,9 +157,8 @@ impl Field {
     /// Returns the regex that reads this field's value, or [`None`] when the
     /// field is a blank.
     ///
-    /// A blank is what a template leaves for the ruleset based on it to fill.
-    /// It reads no value of its own, so a ruleset that inherits one without
-    /// replacing it never compiles.
+    /// A blank field reads no value, so a parser that carries one never
+    /// compiles.
     pub(crate) fn matcher(&self) -> Option<&str> {
         self.pattern.as_deref().or_else(|| self.kind.pattern())
     }
@@ -431,7 +429,7 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use super::{Field, FieldKind, PRESETS};
+    use super::{Field, FieldKind, PRESETS, Parser};
     use crate::rules::{Component, Engine, compose};
     use crate::ruleset::Ruleset;
 
@@ -477,20 +475,24 @@ mod tests {
         }
     }
 
-    /// Reads `title` through a standalone ruleset over `fields`.
+    /// Reads `title` through one parser over `fields`, claimed by a ruleset
+    /// that writes no condition.
     ///
     /// Each value comes back normalized by its field's kind, which is the
     /// form the identity stores.
     fn read_fields(fields: &[Field], title: &str) -> Vec<(String, String)> {
         let engine = Engine::new(
-            Vec::new(),
-            vec![Ruleset {
+            vec![Parser {
                 id: "scene".to_owned(),
                 name: "Scene".to_owned(),
-                enabled: true,
-                template: false,
-                based_on: None,
                 fields: fields.to_vec(),
+                tests: Vec::new(),
+            }],
+            vec![Ruleset {
+                id: "wanted".to_owned(),
+                name: "Wanted".to_owned(),
+                enabled: true,
+                parser: "scene".to_owned(),
                 conditions: Vec::new(),
                 tests: Vec::new(),
             }],

@@ -50,7 +50,7 @@ pub(crate) enum SaveError {
     #[snafu(display("the ruleset does not compile: {source}"))]
     Engine { source: EngineError },
 
-    #[snafu(display("ruleset {id} is the template of another ruleset"))]
+    #[snafu(display("{id} is what another ruleset reads with"))]
     InUse { id: String },
 }
 
@@ -87,10 +87,6 @@ impl Rulesets {
 
     /// Writes `ruleset`, replacing the stored one of the same id.
     ///
-    /// A template is written disabled whatever the caller passed. It claims
-    /// nothing and the editor offers it no switch, so a flag it cannot show
-    /// is one the reader cannot clear.
-    ///
     /// # Errors
     ///
     /// Returns [`SaveError::Engine`] when the resulting set does not
@@ -101,11 +97,6 @@ impl Rulesets {
         reason = "the ruleset editor's Save posts to a route that writes through this"
     )]
     pub(crate) async fn save(&self, ruleset: Ruleset) -> Result<(), SaveError> {
-        let ruleset = Ruleset {
-            enabled: ruleset.enabled && !ruleset.template,
-            ..ruleset
-        };
-
         let engine = self.rebuilt_with(ruleset.clone())?;
 
         self.store.upsert(&ruleset).await.context(StoreSnafu)?;
@@ -115,29 +106,11 @@ impl Rulesets {
     }
 
     /// Removes the ruleset `id`, and reports whether one was there.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SaveError::InUse`] while another ruleset is based on this
-    /// one. A ruleset whose template is gone resolves no field, so the
-    /// reader removes those first.
     #[allow(
         dead_code,
         reason = "the ruleset editor's Delete posts to a route that writes through this"
     )]
     pub(crate) async fn remove(&self, id: &str) -> Result<bool, SaveError> {
-        {
-            let engine = self.read();
-
-            let Some(ruleset) = engine.ruleset(id) else {
-                return Ok(false);
-            };
-
-            if engine.derived(ruleset).next().is_some() {
-                return InUseSnafu { id }.fail();
-            }
-        }
-
         if !self.store.remove(id).await.context(StoreSnafu)? {
             return Ok(false);
         }
@@ -165,8 +138,24 @@ impl Rulesets {
 
     /// Removes the parser `id`, and reports whether one was there.
     ///
-    /// Nothing parses through a parser yet, so no ruleset holds one back.
+    /// # Errors
+    ///
+    /// Returns [`SaveError::InUse`] while a ruleset reads with it. A ruleset
+    /// whose parser is gone reads no title, so the reader removes those
+    /// first.
     pub(crate) async fn remove_parser(&self, id: &str) -> Result<bool, SaveError> {
+        {
+            let engine = self.read();
+
+            let Some(parser) = engine.parser(id) else {
+                return Ok(false);
+            };
+
+            if engine.rulesets_on(parser).next().is_some() {
+                return InUseSnafu { id }.fail();
+            }
+        }
+
         if !self.parsers.remove(id).await.context(StoreSnafu)? {
             return Ok(false);
         }
@@ -195,9 +184,9 @@ impl Rulesets {
 
     /// Compiles the running set with `ruleset` replaced or appended.
     ///
-    /// The whole set compiles rather than the one ruleset alone, because a
-    /// ruleset carries its template's fields by reference and an edit to a
-    /// template changes what every ruleset on it parses.
+    /// The whole set compiles rather than the one ruleset alone, because the
+    /// engine is built from a set and every parser beside it has to keep
+    /// compiling too.
     fn rebuilt_with(&self, ruleset: Ruleset) -> Result<Arc<Engine>, SaveError> {
         let engine = self.read();
 
@@ -272,36 +261,18 @@ impl Rulesets {
 mod tests {
     use sqlx::SqlitePool;
 
-    use super::{LoadError, Rulesets, SaveError};
+    use super::{Rulesets, SaveError};
     use crate::parser::store::ParserStore;
     use crate::parser::{Field, FieldKind, Parser};
     use crate::ruleset::Ruleset;
     use crate::ruleset::store::RulesetStore;
 
-    /// The same shape as [`ruleset`], marked as a template so a ruleset is
-    /// allowed to be based on it.
-    fn template(id: &str, pattern: &str) -> Ruleset {
-        Ruleset {
-            template: true,
-            ..ruleset(id, None, pattern)
-        }
-    }
-
-    fn ruleset(id: &str, based_on: Option<&str>, pattern: &str) -> Ruleset {
+    fn ruleset(id: &str, parser: &str) -> Ruleset {
         Ruleset {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
-            template: false,
-            based_on: based_on.map(ToOwned::to_owned),
-            fields: vec![Field {
-                name: "show".to_owned(),
-                kind: FieldKind::Text,
-                pattern: Some(pattern.to_owned()),
-                required: true,
-                tight: true,
-                identity: true,
-            }],
+            parser: parser.to_owned(),
             conditions: Vec::new(),
             tests: Vec::new(),
         }
@@ -316,6 +287,17 @@ mod tests {
         .expect("the stored set compiles")
     }
 
+    /// A registry over `pool` with `series` already saved as a parser.
+    async fn with_parser(pool: &SqlitePool) -> Rulesets {
+        let rulesets = loaded(pool).await;
+        rulesets
+            .save_parser(parser("series", r"^(?<show>\w+)"))
+            .await
+            .expect("the parser the rulesets read with");
+
+        rulesets
+    }
+
     #[sqlx::test]
     async fn an_empty_database_loads_an_engine_with_no_rulesets(pool: SqlitePool) {
         assert_eq!(loaded(&pool).await.engine().rulesets().count(), 0);
@@ -323,15 +305,15 @@ mod tests {
 
     #[sqlx::test]
     async fn a_saved_ruleset_reaches_the_engine_and_the_table(pool: SqlitePool) {
-        let rulesets = loaded(&pool).await;
+        let rulesets = with_parser(&pool).await;
         rulesets
-            .save(ruleset("series", None, r"^(?<show>\w+)"))
+            .save(ruleset("hollow", "series"))
             .await
             .expect("save");
 
         assert_eq!(
-            rulesets.engine().ruleset("series"),
-            Some(&ruleset("series", None, r"^(?<show>\w+)")),
+            rulesets.engine().ruleset("hollow"),
+            Some(&ruleset("hollow", "series")),
             "the running engine sees the save"
         );
         assert_eq!(
@@ -342,13 +324,13 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn a_ruleset_that_does_not_compile_is_never_written(pool: SqlitePool) {
+    async fn a_ruleset_on_an_absent_parser_is_never_written(pool: SqlitePool) {
         let rulesets = loaded(&pool).await;
-        let outcome = rulesets.save(ruleset("series", None, "(")).await;
+        let outcome = rulesets.save(ruleset("hollow", "absent")).await;
 
         assert!(
             matches!(outcome, Err(SaveError::Engine { .. })),
-            "a broken pattern is reported rather than stored"
+            "a parser no declaration carries is reported rather than stored"
         );
         assert_eq!(
             loaded(&pool).await.engine().rulesets().count(),
@@ -358,70 +340,48 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn removing_a_template_a_ruleset_is_based_on_is_refused(pool: SqlitePool) {
-        let rulesets = loaded(&pool).await;
+    async fn removing_a_parser_a_ruleset_reads_with_is_refused(pool: SqlitePool) {
+        let rulesets = with_parser(&pool).await;
         rulesets
-            .save(template("series", r"^(?<show>\w+)"))
-            .await
-            .expect("the template");
-        rulesets
-            .save(ruleset("archive", Some("series"), "^Ashfall"))
+            .save(ruleset("hollow", "series"))
             .await
             .expect("the ruleset on it");
 
         assert!(
             matches!(
-                rulesets.remove("series").await,
+                rulesets.remove_parser("series").await,
                 Err(SaveError::InUse { .. })
             ),
-            "a ruleset whose template is gone resolves no field"
+            "a ruleset whose parser is gone reads no title"
         );
         assert!(
-            rulesets.remove("archive").await.expect("it goes"),
+            rulesets.remove("hollow").await.expect("it goes"),
             "the ruleset itself removes"
         );
         assert!(
-            !rulesets.remove("archive").await.expect("nothing left"),
-            "an id no ruleset carries reports the same absence"
-        );
-    }
-
-    #[sqlx::test]
-    async fn a_template_is_stored_disabled(pool: SqlitePool) {
-        let rulesets = loaded(&pool).await;
-        rulesets
-            .save(Ruleset {
-                enabled: true,
-                ..template("series", r"^(?<show>\w+)")
-            })
-            .await
-            .expect("save");
-
-        assert_eq!(
-            rulesets.engine().ruleset("series").map(|one| one.enabled),
-            Some(false),
-            "a template carries no switch"
+            rulesets.remove_parser("series").await.expect("now free"),
+            "and the parser follows once nothing reads with it"
         );
     }
 
     #[sqlx::test]
     async fn set_enabled_shows_in_the_next_engine(pool: SqlitePool) {
-        let rulesets = loaded(&pool).await;
+        let rulesets = with_parser(&pool).await;
         rulesets
-            .save(ruleset("series", None, r"^(?<show>\w+)"))
+            .save(ruleset("hollow", "series"))
             .await
             .expect("save");
 
         assert!(
-            !rulesets.engine().ruleset("series").expect("stored").enabled,
+            !rulesets.engine().ruleset("hollow").expect("stored").enabled,
             "a saved ruleset starts switched off"
         );
         assert!(
-            rulesets.set_enabled("series", true).await.expect("enable"),
+            rulesets.set_enabled("hollow", true).await.expect("enable"),
             "a stored row"
         );
         assert!(
-            rulesets.engine().ruleset("series").expect("stored").enabled,
+            rulesets.engine().ruleset("hollow").expect("stored").enabled,
             "the flip reaches the running engine"
         );
         assert!(
@@ -430,33 +390,7 @@ mod tests {
         );
     }
 
-    /// The `based_on` foreign key refuses a template no row carries, but not
-    /// one that names a ruleset which is no template.
-    ///
-    /// That is the shape a stored set takes that the key permits and the
-    /// engine still refuses, so the load is where it surfaces.
-    #[sqlx::test]
-    async fn a_stored_ruleset_based_on_a_non_template_fails_the_load(pool: SqlitePool) {
-        let store = RulesetStore::new(pool.clone());
-        store
-            .upsert(&ruleset("first", None, "^First"))
-            .await
-            .expect("the first");
-        store
-            .upsert(&ruleset("second", Some("first"), "^Second"))
-            .await
-            .expect("a ruleset based on a ruleset");
-
-        assert!(
-            matches!(
-                Rulesets::load(store, ParserStore::new(pool.clone())).await,
-                Err(LoadError::Engine { .. })
-            ),
-            "only a template serves as one"
-        );
-    }
-
-    /// The same shape as [`ruleset`], as a parser.
+    /// A parser over one show field, which is all the compile step reads.
     fn parser(id: &str, pattern: &str) -> Parser {
         Parser {
             id: id.to_owned(),

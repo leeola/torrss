@@ -62,8 +62,8 @@ pub(super) struct ParsedValue {
     pub(super) name: String,
     pub(super) value: String,
 
-    /// Where the capturing field sits among the ruleset's resolved fields,
-    /// which is what tints the value.
+    /// Where the capturing field sits among the parser's fields, which is
+    /// what tints the value.
     pub(super) position: usize,
 
     /// Whether this value takes part in the key that decides whether two
@@ -73,24 +73,23 @@ pub(super) struct ParsedValue {
 
 /// Resolves what a parse captured back to the fields that captured it.
 ///
-/// The order is the ruleset's own field order, which is the order the parts
+/// The order is the parser's own field order, which is the order the parts
 /// appear in a well-formed name. A captured name with no matching field is
 /// dropped: the engine compiles from this same list, so none is expected.
 pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue> {
-    let Some(ruleset) = engine.ruleset(&parsed.ruleset) else {
+    let Some(parser) = engine
+        .ruleset(&parsed.ruleset)
+        .and_then(|ruleset| engine.parser_of(ruleset))
+    else {
         return Vec::new();
     };
-
-    let fields = ruleset.resolved_fields(engine.template_of(ruleset));
 
     parsed
         .values
         .iter()
         .filter_map(|(name, raw)| {
-            let position = fields
-                .iter()
-                .position(|resolved| resolved.field.name == *name)?;
-            let field = fields[position].field;
+            let position = parser.fields.iter().position(|field| field.name == *name)?;
+            let field = &parser.fields[position];
 
             Some(ParsedValue {
                 name: field.name.clone(),
@@ -104,9 +103,8 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 
 /// Decides where `title` stands.
 ///
-/// Interest follows the claimant alone. A template claims nothing, so it
-/// never appears among the claimants and the enabled set never names one:
-/// switching a template on or off decides nothing by itself.
+/// Interest follows the claimant alone. A parser claims nothing, so it never
+/// appears among the claimants and the enabled set never names one.
 ///
 /// A release counts as owned when the library holds it or any span around it.
 /// A stored season pack therefore owns each episode of that season, while a
@@ -242,11 +240,11 @@ mod tests {
     }
 
     #[test]
-    fn title_only_the_template_describes_is_unmatched() {
+    fn a_title_no_ruleset_wants_is_unmatched() {
         assert_eq!(
             standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_720),
             Standing::Unmatched,
-            "the ruleset requires 1080p, and the template it is based on claims nothing"
+            "the parser reads the 720p name, and no ruleset admits that resolution"
         );
     }
 

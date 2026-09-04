@@ -1,28 +1,30 @@
-//! The rulesets the tests parse titles with.
+//! The parsers and rulesets the tests parse titles with.
 //!
 //! The application ships none, so a test that needs a claimed title
 //! supplies its own configuration. [`ENGINE`] here is what a test asserts
 //! against, and a running process reads its own set from the store.
 //!
-//! Five rulesets, every name invented:
+//! Three parsers, every name invented:
 //!
-//! - `series-episodes`, a template that claims nothing and holds the fields
-//!   an episode name breaks into.
-//! - `series-hollow-meridian`, a ruleset on it for one show at 1080p.
-//! - `series-ashfall-county`, a second, told apart by publisher.
+//! - `series-episodes`, the fields an episode name breaks into.
 //! - `feature-films`, a title followed by a production year.
 //! - `archive-talks`, a publisher-prefixed session number.
+//!
+//! Four rulesets on them: one for each film and talk parser claiming
+//! everything it reads, and two on `series-episodes` narrowed by conditions
+//! to one show each.
 
 use std::sync::LazyLock;
 
-use super::Ruleset;
+use super::{Condition, Op, Ruleset};
 use crate::parser::{
     Field, FieldKind,
     FieldKind::{Enum, Episode, Number, Season, Text},
+    Parser,
 };
 use crate::rules::Engine;
 
-/// Builds one field, so a ruleset below reads as a list of rules rather
+/// Builds one field, so a parser below reads as a list of rules rather
 /// than a page of struct literals.
 fn field(
     name: &str,
@@ -42,25 +44,43 @@ fn field(
     }
 }
 
-/// The fixture rulesets, compiled once.
+/// Names one condition, so a ruleset below reads as a list of comparisons.
+fn equals(field: &str, value: &str) -> Condition {
+    Condition {
+        field: field.to_owned(),
+        op: Op::Equals,
+        value: value.to_owned(),
+    }
+}
+
+/// Builds one ruleset on `parser`, claiming what its conditions admit.
+fn on(id: &str, name: &str, parser: &str, conditions: Vec<Condition>) -> Ruleset {
+    Ruleset {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        enabled: false,
+        parser: parser.to_owned(),
+        conditions,
+        tests: Vec::new(),
+    }
+}
+
+/// The fixture parsers and rulesets, compiled once.
 ///
 /// # Panics
 ///
 /// Panics when a pattern fails to compile, which makes a bad fixture
 /// pattern a failure of the test run rather than a silent miss.
 pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
-    Engine::new(Vec::new(), rulesets()).expect("every fixture pattern is a valid regex")
+    Engine::new(parsers(), rulesets()).expect("every fixture pattern is a valid regex")
 });
 
-/// The five rulesets the tests parse against.
-pub(crate) fn rulesets() -> Vec<Ruleset> {
+/// The three parsers the tests read titles with.
+pub(crate) fn parsers() -> Vec<Parser> {
     vec![
-        Ruleset {
+        Parser {
             id: "series-episodes".to_owned(),
             name: "Series Episodes".to_owned(),
-            enabled: false,
-            template: true,
-            based_on: None,
             fields: vec![
                 field("show", Text, Some(r"^(?<show>[\w.]+?)"), true, true, true),
                 field("season", Season, None, true, true, true),
@@ -114,15 +134,11 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
-            conditions: Vec::new(),
             tests: Vec::new(),
         },
-        Ruleset {
+        Parser {
             id: "feature-films".to_owned(),
             name: "Feature Films".to_owned(),
-            enabled: false,
-            template: false,
-            based_on: None,
             fields: vec![
                 field("title", Text, Some(r"^(?<title>[\w.]+?)"), true, true, true),
                 field(
@@ -185,15 +201,11 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
-            conditions: Vec::new(),
             tests: Vec::new(),
         },
-        Ruleset {
+        Parser {
             id: "archive-talks".to_owned(),
             name: "Archive Talks".to_owned(),
-            enabled: false,
-            template: false,
-            based_on: None,
             fields: vec![
                 field(
                     "publisher",
@@ -237,62 +249,47 @@ pub(crate) fn rulesets() -> Vec<Ruleset> {
                     false,
                 ),
             ],
-            conditions: Vec::new(),
             tests: Vec::new(),
         },
-        Ruleset {
-            id: "series-hollow-meridian".to_owned(),
-            name: "The Hollow Meridian".to_owned(),
-            enabled: false,
-            template: false,
-            based_on: Some("series-episodes".to_owned()),
-            fields: vec![
-                field(
-                    "show",
-                    Text,
-                    Some(r"^(?<show>The\.Hollow\.Meridian)"),
-                    true,
-                    false,
-                    true,
-                ),
-                field(
-                    "resolution",
-                    Enum,
-                    Some(r"\.(?<resolution>1080p)"),
-                    true,
-                    false,
-                    false,
-                ),
+    ]
+}
+
+/// The four rulesets the tests claim titles with.
+///
+/// The film and talk rulesets write no condition, so each claims every name
+/// its parser reads. The two episode rulesets share one parser and name one
+/// show each, which is what two rulesets on one parser are for.
+pub(crate) fn rulesets() -> Vec<Ruleset> {
+    vec![
+        on(
+            "feature-films",
+            "Feature Films",
+            "feature-films",
+            Vec::new(),
+        ),
+        on(
+            "archive-talks",
+            "Archive Talks",
+            "archive-talks",
+            Vec::new(),
+        ),
+        on(
+            "series-hollow-meridian",
+            "The Hollow Meridian",
+            "series-episodes",
+            vec![
+                equals("show", "The Hollow Meridian"),
+                equals("resolution", "1080p"),
             ],
-            conditions: Vec::new(),
-            tests: Vec::new(),
-        },
-        Ruleset {
-            id: "series-ashfall-county".to_owned(),
-            name: "Ashfall County".to_owned(),
-            enabled: false,
-            template: false,
-            based_on: Some("series-episodes".to_owned()),
-            fields: vec![
-                field(
-                    "show",
-                    Text,
-                    Some(r"^(?<show>Ashfall\.County)"),
-                    true,
-                    false,
-                    true,
-                ),
-                field(
-                    "publisher",
-                    Text,
-                    Some(r"-(?<publisher>PublicWave)"),
-                    true,
-                    false,
-                    false,
-                ),
+        ),
+        on(
+            "series-ashfall-county",
+            "Ashfall County",
+            "series-episodes",
+            vec![
+                equals("show", "Ashfall County"),
+                equals("publisher", "PublicWave"),
             ],
-            conditions: Vec::new(),
-            tests: Vec::new(),
-        },
+        ),
     ]
 }

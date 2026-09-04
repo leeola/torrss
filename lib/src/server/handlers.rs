@@ -24,11 +24,11 @@ use crate::{
     feed::registry::{self, FeedRegistry},
     grab,
     parser::form as parser_form,
-    parser::{Field, PRESETS},
+    parser::{Field, Parser},
     rules::Engine,
-    ruleset::form::{BASED_ROLE, EditorRows, RulesetForm, STANDALONE_ROLE, TEMPLATE_ROLE},
+    ruleset::form::{EditorRows, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
-    ruleset::{Condition, Diff, FieldSource, ResolvedField, Ruleset},
+    ruleset::{Condition, Diff, Ruleset},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format, held,
@@ -45,36 +45,6 @@ use crate::{
 
 path_param!(ruleset_id);
 path_param!(feed_id);
-/// The three roles the editor offers, each with the label and the note its
-/// radio carries.
-///
-/// A ruleset is exactly one of these, so the group has no illegal state and
-/// nothing has to police one control from another's handler.
-const ROLES: [(&str, &str, &str); 3] = [
-    (
-        TEMPLATE_ROLE,
-        "Is a template",
-        "It claims nothing. Rulesets based on it carry its fields and fill in the ones it leaves blank.",
-    ),
-    (
-        STANDALONE_ROLE,
-        "Stands alone",
-        "It declares every field here.",
-    ),
-    (
-        BASED_ROLE,
-        "Is based on a template",
-        "It carries the template's fields and replaces the ones it names.",
-    ),
-];
-
-/// The note the based role carries while the engine holds no template.
-///
-/// It replaces that role's own note, because a reader who finds the choice
-/// closed learns why and how to open it from the page rather than from the
-/// rules behind it.
-const NO_TEMPLATE_NOTE: &str =
-    "No template exists yet. Save one under the first choice, and this one opens.";
 
 /// The selection the feed page keeps while the listing re-renders.
 ///
@@ -610,9 +580,8 @@ async fn ruleset_index(cx: &Cx) -> Result {
             <div>
                 <h1 class="text-2xl font-semibold tracking-tight">"Rulesets"</h1>
                 <p class="mt-1 text-sm text-slate-400">
-                    "A ruleset decides which filenames it claims and which parts it pulls out of
-                    them. A disabled ruleset filters nothing, so its releases stay out of the feed.
-                    A template claims nothing. It is what other rulesets are based on."
+                    "A ruleset picks a parser and decides which of the names it reads are wanted.
+                    A disabled ruleset filters nothing, so its releases stay out of the feed."
                 </p>
             </div>
             <a
@@ -623,30 +592,17 @@ async fn ruleset_index(cx: &Cx) -> Result {
             </a>
         </div>
 
-        if engine.roots().next().is_none() {
+        if engine.rulesets().next().is_none() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No ruleset is declared."
             </p>
         } else {
             <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
-                for root in engine.roots() {
+                for ruleset in engine.rulesets() {
                     components::ruleset_card(
-                        ruleset: root,
-                        template: engine.template_of(root),
-                        nested: false,
-                        enabled: root.enabled,
-                        is_template: root.template,
+                        ruleset: ruleset,
+                        parser: engine.parser_of(ruleset),
                     )
-
-                    for derived in engine.derived(root) {
-                        components::ruleset_card(
-                            ruleset: derived,
-                            template: Some(root),
-                            nested: true,
-                            enabled: derived.enabled,
-                            is_template: derived.template,
-                        )
-                    }
                 }
             </ul>
         }
@@ -1270,13 +1226,8 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 /// has nothing to switch on.
 #[component]
 async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
-    let template = ruleset.and_then(|ruleset| engine.template_of(ruleset));
-
     let name = ruleset
         .map(|ruleset| ruleset.name.clone())
-        .unwrap_or_default();
-    let based_on = ruleset
-        .and_then(|ruleset| ruleset.based_on.clone())
         .unwrap_or_default();
 
     let ruleset_id = ruleset
@@ -1285,38 +1236,21 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
     let stored_id = ruleset_id.clone();
     let enabled_now = ruleset.is_some_and(|ruleset| ruleset.enabled);
-    let is_template = ruleset.is_some_and(|ruleset| ruleset.template);
 
-    // Only a template is offered, because only a template serves as one. A
-    // template is based on nothing, so the one chain a choice here closes is
-    // onto itself.
-    let templates: Vec<&Ruleset> = engine
-        .templates()
-        .filter(|one| one.id != ruleset_id)
-        .collect();
+    let parsers: Vec<&Parser> = engine.parsers().collect();
 
-    // One closure decides the radio's `disabled`, the label's color, and the
-    // note together, so the three never disagree about whether the choice is
-    // open.
-    let unavailable = |value: &str| value == BASED_ROLE && templates.is_empty();
+    // A new ruleset starts on the first parser the index lists, because the
+    // select shows that one and a draft has to agree with what it shows.
+    let named_parser = ruleset
+        .map(|ruleset| ruleset.parser.clone())
+        .or_else(|| parsers.first().map(|parser| parser.id.clone()))
+        .unwrap_or_default();
 
-    let initial_role = if is_template {
-        TEMPLATE_ROLE
-    } else if based_on.is_empty() {
-        STANDALONE_ROLE
-    } else {
-        BASED_ROLE
-    };
-
-    // What the browser posts on the first keystroke: the ruleset's own rows,
-    // because a disabled inherited input sends nothing.
+    // What the browser posts on the first keystroke, so the draft starts
+    // where the render left off.
     let initial_draft = RulesetForm {
         name: name.clone(),
-        template: is_template,
-        based_on: ruleset.and_then(|ruleset| ruleset.based_on.clone()),
-        fields: ruleset
-            .map(|ruleset| ruleset.fields.clone())
-            .unwrap_or_default(),
+        parser: named_parser.clone(),
         conditions: ruleset
             .map(|ruleset| ruleset.conditions.clone())
             .unwrap_or_default(),
@@ -1330,9 +1264,6 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
     view! {
         signal draft = initial_draft;
         signal rows = initial_rows;
-        // The select renders under the based role alone, and the parser reads
-        // a base under that role alone, so this one signal decides both.
-        signal role = initial_role.to_owned();
         signal diff = String::new();
         signal enabled = enabled_now;
         // The id the switch and the save name. A handler outlives the render
@@ -1366,26 +1297,15 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
             if ruleset.is_none() {
                 action="/admin/rulesets"
             }
-            // FormData skips a disabled input, so an inherited row stays out
-            // of the draft and the template's field keeps applying. A `raw!`
-            // result enters the signal as the JavaScript value it is, and the
-            // shard dehydrates every argument before it fetches, so a plain
-            // string has to be hydrated on the way in.
-            //
-            // A role or a base decides which fields the draft resolves
-            // against, so either re-renders the rows. A keystroke moves the
+            // The parser decides which fields the condition and test rows
+            // list, so picking one re-renders them. A keystroke moves the
             // draft alone, because re-rendering a row under the cursor takes
-            // the focus with it. The two guards are written apart because the
-            // expression grammar lists no `||`.
+            // the focus with it. A `raw!` result enters the signal as the
+            // JavaScript value it is, and the shard dehydrates every argument
+            // before it fetches, so a plain string has to be hydrated on the
+            // way in.
             @input=$(|e: Event| {
-                if e.target.name == "role" {
-                    role.set(e.target.value);
-                    rows.set(raw!(
-                        "cx.hydrate(window.torrssRows.serialize())",
-                        String::new()
-                    ));
-                }
-                if e.target.name == "based_on" {
+                if e.target.name == "parser" {
                     rows.set(raw!(
                         "cx.hydrate(window.torrssRows.serialize())",
                         String::new()
@@ -1427,12 +1347,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         // signal and both have to agree without a reload.
                         // Each branch is one whole string, because the
                         // Tailwind scanner reads class names out of literals.
-                        //
-                        // It follows the chosen role rather than the saved
-                        // one, because a template carries no state to report:
-                        // it claims nothing and switching it decides nothing.
                         if ruleset.is_some() {
-                            <span :hidden=$(role.get() == "template") :class=$(if enabled.get() {
+                            <span :class=$(if enabled.get() {
                                 "rounded-full px-2 py-0.5 text-xs bg-emerald-500/15 text-emerald-300"
                             } else {
                                 "rounded-full px-2 py-0.5 text-xs bg-slate-700/40 text-slate-400"
@@ -1441,63 +1357,25 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             </span>
                         }
                     </div>
-
-                    // One group, so the reader names the role and no
-                    // combination of controls is illegal. The radios carry no
-                    // handler of their own: the form's delegated one below
-                    // catches them, where the signals live.
-                    //
-                    // A choice with no template to offer stays disabled and
-                    // its note says so, because a radio that looks live and
-                    // does nothing reads as a broken page.
-                    <fieldset class="mt-3">
-                        <legend class="text-xs text-slate-500">"This ruleset"</legend>
-                        for (value, label, note) in ROLES {
-                            // Each branch is one whole literal, because the
-                            // Tailwind scanner reads class names out of them.
-                            <label class=(if unavailable(value) {
-                                "mt-2 flex cursor-not-allowed items-start gap-2 text-sm text-slate-600"
-                            } else {
-                                "mt-2 flex items-start gap-2 text-sm text-slate-300"
-                            })>
-                                <input
-                                    type="radio"
-                                    name="role"
-                                    value=(value)
-                                    checked=(initial_role == value)
-                                    disabled=(unavailable(value))
-                                    class="mt-0.5 size-4 rounded-full border-slate-700 bg-slate-950"
-                                >
-                                <span>
-                                    (label)
-                                    <span class="block text-xs text-slate-500">
-                                        (if unavailable(value) { NO_TEMPLATE_NOTE } else { note })
-                                    </span>
-                                </span>
-                            </label>
+                    // The select carries no handler of its own: the form's
+                    // delegated one above catches it, where the signals live.
+                    // Every ruleset reads with a parser, so the choice is
+                    // always shown and never empty while one exists.
+                    <label for="parser" class="mt-3 block text-xs text-slate-500">
+                        "Reads with"
+                    </label>
+                    <select
+                        id="parser"
+                        name="parser"
+                        required=(true)
+                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                    >
+                        for parser in &parsers {
+                            <option value=(&parser.id) selected=(parser.id == named_parser)>
+                                (&parser.name) " (" (format::count(parser.fields.len(), "field", "fields")) ")"
+                            </option>
                         }
-                    </fieldset>
-
-                    // Hidden rather than disabled, because a hidden select
-                    // still posts and the parser ignores a base under any
-                    // other role. The literal is required: a `const` names
-                    // nothing the browser expression can reach.
-                    <div :hidden=$(role.get() != "based")>
-                        <label for="based_on" class="mt-3 block text-xs text-slate-500">
-                            "Based on"
-                        </label>
-                        <select
-                            id="based_on"
-                            name="based_on"
-                            class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-                        >
-                            for template in &templates {
-                                <option value=(&template.id) selected=(template.id == based_on)>
-                                    (&template.name) " (" (template.fields.len()) " fields)"
-                                </option>
-                            }
-                        </select>
-                    </div>
+                    </select>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
@@ -1507,7 +1385,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         // own editor is what the write is for.
                         None => <button
                             type="submit"
-                            class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
+                            disabled=(parsers.is_empty())
+                            class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                         >
                             "Create"
                         </button>,
@@ -1541,12 +1420,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             >
                                 $(if saving.get() { "Saving..." } else { "Save" })
                             </button>
-                            // The switch follows the chosen role rather than
-                            // the saved one. A template claims nothing, so
-                            // there is nothing for one to start or stop.
                             <button
                                 type="button"
-                                :hidden=$(role.get() == "template")
                                 :title=$(if enabled.get() {
                                     "Stop this ruleset filtering feed results"
                                 } else {
@@ -1589,56 +1464,14 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                 $(save_error.get())
             </p>
 
-            match template {
-                Some(template) => <p class="mt-3 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
-                    "Based on "
-                    <a
-                        href=(format!("/admin/rulesets/{}", template.id))
-                        class="text-slate-200 underline decoration-slate-700 underline-offset-2 hover:text-white"
-                    >(&template.name)</a>
-                    ". A greyed field carries the template's value. Replace one to give this ruleset its own."
-                </p>,
-                None => "",
+            // A ruleset reads with a parser and there is none to pick, so the
+            // page says where to make one rather than offering an empty
+            // select and a Create that always fails.
+            if parsers.is_empty() {
+                <p class="mt-2 text-xs text-rose-300">
+                    "No parser exists yet. Create one under Parsers first."
+                </p>
             }
-
-            <div
-                id="field-rows"
-                class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40"
-            >
-                <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                    <h2 class="text-sm font-semibold text-slate-100">"Fields"</h2>
-                    <p class="text-xs text-slate-500">
-                        "A greyed field comes from the template. Replace one to give this ruleset its own."
-                    </p>
-
-                    <div class="flex flex-wrap items-center gap-2">
-                        // No `name`, so `FormData` skips it and the draft
-                        // never records which preset a row started from. An
-                        // option carries the whole row as a form encoding,
-                        // which the `add` action copies pair by pair.
-                        <select
-                            id="field-preset"
-                            class="rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-                        >
-                            <option value="">"blank"</option>
-                            for preset in PRESETS {
-                                <option value=(parser_form::encode_preset(preset))>(preset.name)</option>
-                            }
-                        </select>
-
-                        <button
-                            type="button"
-                            class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
-                            name="row-action"
-                            value="add"
-                        >
-                            "Add field"
-                        </button>
-                    </div>
-                </div>
-
-                field_rows(rows: $(rows.get()))
-            </div>
 
             <div
                 id="conditions"
@@ -1747,117 +1580,6 @@ pub(super) fn compute_matches<'a>(
 
     (matched, errors)
 }
-
-/// Re-renders the field rows from the draft the editor holds.
-///
-/// The rows follow the form rather than the save, so a row the reader added
-/// and a template they just picked both appear without a round trip through
-/// the database.
-///
-/// Only a structural change re-renders these. A keystroke moves the matches
-/// alone, because re-rendering a row under the cursor takes the focus with
-/// it.
-///
-/// A ruleset built on a template lists the template's order, as
-/// [`Ruleset::resolved_fields`] defines it, so its rows carry no arrows.
-#[shard]
-pub(super) async fn field_rows(cx: &Cx, rows: String) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
-
-    let posted = EditorRows::parse(&rows);
-
-    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
-
-    let rows = draft_rows(template, &posted.fields);
-
-    view! {
-        for (position, (index, resolved)) in rows.iter().enumerate() {
-            components::field_row(
-                index: *index,
-                position: position,
-                movable: template.is_none(),
-                resolved: *resolved,
-            )
-        }
-    }
-}
-
-/// The rows the editor lists for a draft, each with the form index it posts
-/// under.
-///
-/// The order mirrors [`Ruleset::resolved_fields`], so a row's position names
-/// the same field in the editor, in Matches, and on the home page. That is
-/// what the tint and the row anchor both key on.
-///
-/// An inherited row submits nothing, so its index is unused. An own row keeps
-/// its index among the posted rows, which is what a remove or a replace names.
-fn draft_rows<'a>(
-    template: Option<&'a Ruleset>,
-    own: &'a [Field],
-) -> Vec<(usize, ResolvedField<'a>)> {
-    let Some(template) = template else {
-        return own
-            .iter()
-            .enumerate()
-            .map(|(index, field)| {
-                (
-                    index,
-                    ResolvedField {
-                        field,
-                        source: FieldSource::Own,
-                    },
-                )
-            })
-            .collect();
-    };
-
-    let mut rows: Vec<_> = template
-        .fields
-        .iter()
-        .map(|inherited| {
-            match own
-                .iter()
-                .enumerate()
-                .find(|(_, field)| field.name == inherited.name)
-            {
-                Some((index, field)) => (
-                    index,
-                    ResolvedField {
-                        field,
-                        source: FieldSource::Overridden {
-                            template: inherited,
-                        },
-                    },
-                ),
-                None => (
-                    0,
-                    ResolvedField {
-                        field: inherited,
-                        source: FieldSource::Inherited,
-                    },
-                ),
-            }
-        })
-        .collect();
-
-    rows.extend(
-        own.iter()
-            .enumerate()
-            .filter(|(_, field)| !template.fields.iter().any(|one| one.name == field.name))
-            .map(|(index, field)| {
-                (
-                    index,
-                    ResolvedField {
-                        field,
-                        source: FieldSource::Own,
-                    },
-                )
-            }),
-    );
-
-    rows
-}
-
 /// Re-renders the test rows from the draft the editor holds.
 ///
 /// The rows follow the form rather than the save, as the field rows do, so a
@@ -1872,14 +1594,9 @@ pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
 
     let posted = EditorRows::parse(&rows);
 
-    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
-
-    // A row the reader just added has no name to expect a value under, so it
-    // carries no input until they name it.
-    let fields = draft_fields(template, &posted.fields)
-        .into_iter()
-        .filter(|field| !field.name.is_empty())
-        .collect::<Vec<_>>();
+    // A draft that names no parser reads no value, so a test has nothing to
+    // expect and the row carries no input.
+    let fields = parser_fields(&engine, posted.parser.as_deref());
 
     view! {
         for (index, test) in posted.tests.iter().enumerate() {
@@ -1899,14 +1616,9 @@ async fn condition_rows(cx: &Cx, rows: String) -> Result {
 
     let posted = EditorRows::parse(&rows);
 
-    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
-
-    // A row the reader just added carries no name to compare against, so the
-    // select offers nothing until they name it.
-    let fields = draft_fields(template, &posted.fields)
-        .into_iter()
-        .filter(|field| !field.name.is_empty())
-        .collect::<Vec<_>>();
+    // A draft that names no parser reads no value, so the select offers
+    // nothing to compare against.
+    let fields = parser_fields(&engine, posted.parser.as_deref());
 
     view! {
         for (index, condition) in posted.conditions.iter().enumerate() {
@@ -1931,8 +1643,7 @@ pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
         return view! {};
     };
 
-    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
-    let fields = draft_fields(template, &posted.fields);
+    let fields = parser_fields(&engine, Some(&posted.parser));
     let rules = matches::rules(&fields, &posted.conditions, &Edits::default()).0;
 
     let judged = posted
@@ -2002,25 +1713,16 @@ pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
     }
 }
 
-/// The fields a draft describes, resolved against the template it names.
+/// The fields the parser named by `id` reads, or none when it names no
+/// parser this engine carries.
 ///
-/// A ruleset posts only the rows it replaces, so the template supplies the
-/// rest. Matching by name rather than by position is what lets the reader
-/// reorder or drop a row without the override landing on a different field.
-pub(super) fn draft_fields<'a>(template: Option<&'a Ruleset>, own: &'a [Field]) -> Vec<&'a Field> {
-    let Some(template) = template else {
-        return own.iter().collect();
-    };
-
-    template
-        .fields
-        .iter()
-        .map(|inherited| {
-            own.iter()
-                .find(|field| field.name == inherited.name)
-                .unwrap_or(inherited)
-        })
-        .collect()
+/// The editor renders a draft the reader is still writing, so a parser they
+/// have not picked yet is ordinary rather than an error. It reads nothing,
+/// which is what an empty list says.
+fn parser_fields<'a>(engine: &'a Engine, id: Option<&str>) -> Vec<&'a Field> {
+    id.and_then(|id| engine.parser(id))
+        .map(|parser| parser.fields.iter().collect())
+        .unwrap_or_default()
 }
 
 /// Re-renders the Matches section against the draft the editor holds.
@@ -2056,8 +1758,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
         }
     };
 
-    let template = posted.based_on.as_deref().and_then(|id| engine.ruleset(id));
-    let after = draft_fields(template, &posted.fields);
+    let after = parser_fields(&engine, Some(&posted.parser));
 
     let services = app_context::<Services>(cx);
 
@@ -2065,8 +1766,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
     // A ruleset with nothing saved has no rules to lose, so the whole draft
     // reads as gained.
     let before = saved.map_or_else(Rules::default, |saved| {
-        let fields = saved.resolved_fields(engine.template_of(saved));
-        let fields = fields.iter().map(|field| field.field).collect::<Vec<_>>();
+        let fields = parser_fields(&engine, Some(&saved.parser));
 
         matches::rules(&fields, &saved.conditions, &Edits::default()).0
     });
@@ -2123,9 +1823,7 @@ fn write_failed(error: SaveError) -> Error {
 /// A ruleset is stored enabled, so it filters the feed from its first save.
 /// A reader who wrote a working rule meant it to run, and a ruleset that
 /// claims nothing until they find the switch reads as a rule that failed.
-///
-/// A template is stored disabled. It claims nothing and carries no switch, so
-/// the flag decides nothing about it.
+
 #[route(POST "/admin/rulesets")]
 async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     let rulesets = app_context::<Arc<Rulesets>>(cx);
@@ -2142,10 +1840,8 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
         .save(Ruleset {
             id: id.clone(),
             name: posted.name,
-            enabled: !posted.template,
-            template: posted.template,
-            based_on: posted.based_on,
-            fields: posted.fields,
+            enabled: true,
+            parser: posted.parser,
             conditions: posted.conditions,
             tests: posted.tests,
         })
@@ -2159,8 +1855,7 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
 ///
 /// The id and the enabled flag stay as they were. The draft carries neither,
 /// because renaming a ruleset never moves it and saving an edit is not a
-/// request to start or stop it. A draft saved as a template comes back
-/// disabled, through [`Rulesets::save`].
+/// request to start or stop it.
 ///
 /// A refusal arrives inside [`Ok`] rather than as an error. A procedure's
 /// [`Err`] reaches no expression in the browser, so a caller that reads one
@@ -2185,9 +1880,7 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
             id,
             name: posted.name,
             enabled,
-            template: posted.template,
-            based_on: posted.based_on,
-            fields: posted.fields,
+            parser: posted.parser,
             conditions: posted.conditions,
             tests: posted.tests,
         })

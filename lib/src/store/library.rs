@@ -21,9 +21,9 @@ pub(crate) struct Owned {
     /// The rendered [`Identity`](crate::rules::Identity), which is the key.
     pub(crate) identity: String,
 
-    /// The root ruleset the identity came from, kept so a reader sees which
-    /// rules claimed the torrent without parsing the key apart.
-    pub(crate) ruleset: String,
+    /// The parser the identity came from, kept so a reader sees which rules
+    /// claimed the torrent without parsing the key apart.
+    pub(crate) parser: String,
 
     pub(crate) torrent_id: TorrentId,
 
@@ -51,11 +51,11 @@ pub(crate) async fn replace(
     for entry in owned {
         sqlx::query(
             "INSERT OR REPLACE INTO library
-                (identity, ruleset, torrent_id, name, scanned_at)
+                (identity, parser, torrent_id, name, scanned_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
         )
         .bind(&entry.identity)
-        .bind(&entry.ruleset)
+        .bind(&entry.parser)
         .bind(&entry.torrent_id.0)
         .bind(&entry.name)
         .bind(scanned_at)
@@ -97,7 +97,7 @@ mod tests {
     fn owned(identity: &str, torrent: &str, name: &str) -> Owned {
         Owned {
             identity: identity.to_owned(),
-            ruleset: "series-episodes".to_owned(),
+            parser: "series-episodes".to_owned(),
             torrent_id: TorrentId(torrent.to_owned()),
             name: name.to_owned(),
         }

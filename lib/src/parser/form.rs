@@ -12,7 +12,7 @@
 //! body, so [`crate::ruleset::form`] reads them through the row types and
 //! resolvers here and adds only what a ruleset carries on top. Both editors
 //! re-render their rows through that one reader, so a parser body reaches it
-//! as a form that names no template.
+//! as a form that carries no condition.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,6 +31,33 @@ pub(crate) struct ParserForm {
     pub(crate) name: String,
     pub(crate) fields: Vec<Field>,
     pub(crate) tests: Vec<TitleTest>,
+}
+
+/// The rows a parser editor holds, kept exactly as the form posted them.
+///
+/// A row the reader just added has a blank name and names no kind yet.
+/// [`ParserForm::parse`] drops it, because a stored parser carries no
+/// nameless field. The row shard reads this instead, so the row the reader
+/// asked for appears.
+///
+/// A blank parser name is no error here either. The new page has none until
+/// the reader types one, and the rows list before that.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ParserRows {
+    pub(crate) fields: Vec<Field>,
+    pub(crate) tests: Vec<TitleTest>,
+}
+
+impl ParserRows {
+    /// Reads every row a form-encoded body carries, refusing none of them.
+    pub(crate) fn parse(body: &str) -> Self {
+        let posted = read(body);
+
+        Self {
+            fields: posted.rows.into_values().map(draft_field).collect(),
+            tests: posted.tests.into_values().map(draft_test).collect(),
+        }
+    }
 }
 
 /// A posted parser body sorted into its parts, before anything judges it.
@@ -52,7 +79,7 @@ impl ParserForm {
     ///
     /// Returns the first row that names a type this build does not know, or
     /// that leaves a pattern empty where the type supplies none. A parser has
-    /// no template to fill a blank in, so every field writes its own regex.
+    /// nothing to fill a blank in, so every field writes its own regex.
     ///
     /// Returns a refusal when two rows name one field. The name keys the
     /// value the parser reads and the test columns, so two rows named alike
@@ -85,7 +112,7 @@ impl ParserForm {
             .rows
             .into_values()
             .filter(|row| !row.name.trim().is_empty())
-            .map(|row| field(row, false))
+            .map(field)
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut seen = BTreeSet::new();
@@ -181,6 +208,17 @@ pub(crate) fn encode_test(
     }
 }
 
+/// Resolves one posted test row into a saved test, refusing nothing.
+///
+/// A row the reader just added carries a blank title, which the editor lists
+/// and a save drops.
+pub(crate) fn draft_test(row: TestRow) -> TitleTest {
+    TitleTest {
+        title: row.title.trim().to_owned(),
+        expected: row.expected,
+    }
+}
+
 /// Sorts a form-encoded body into its parts, judging none of them.
 fn read(body: &str) -> Posted {
     let mut posted = Posted::default();
@@ -226,6 +264,9 @@ pub(crate) enum FormError {
 
     #[snafu(display("the condition on {field} needs a value"))]
     MissingValue { field: String },
+
+    #[snafu(display("the ruleset needs a parser"))]
+    MissingParser,
 }
 
 /// One field row as the form posted it, before it becomes a [`Field`].
@@ -413,18 +454,17 @@ pub(crate) fn draft_field(row: Row) -> Field {
 /// The pattern is dropped when the kind supplies one, so a premade kind keeps
 /// its built-in regex rather than storing a copy the editor rendered.
 ///
-/// Under `blank_allowed` an empty pattern is kept as a blank rather than
-/// refused. Only a ruleset template posts one: it names the field and the
-/// flags, and the ruleset built on it writes the regex. A parser has nothing
-/// to fill a blank in, so every one of its fields writes its own.
-pub(crate) fn field(row: Row, blank_allowed: bool) -> Result<Field, FormError> {
+/// A field with no pattern reads no value, so an empty one is refused here
+/// rather than compiled into a regex that matches everything.
+pub(crate) fn field(row: Row) -> Result<Field, FormError> {
     let kind = FieldKind::from_label(&row.kind).context(UnknownKindSnafu { kind: &row.kind })?;
 
     let pattern = own_pattern(kind, row.pattern);
 
-    if pattern.is_none() && kind.pattern().is_none() {
-        ensure!(blank_allowed, MissingPatternSnafu { field: &row.name });
-    }
+    ensure!(
+        pattern.is_some() || kind.pattern().is_some(),
+        MissingPatternSnafu { field: &row.name }
+    );
 
     Ok(Field {
         name: row.name.trim().to_owned(),
@@ -544,6 +584,14 @@ mod tests {
                 field: "show".to_owned()
             }),
             "a parser has nothing to fill a blank in, so every field writes its own regex"
+        );
+
+        assert_eq!(
+            ParserForm::parse("name=Series&field.0.name=show&field.0.kind=colour"),
+            Err(FormError::UnknownKind {
+                kind: "colour".to_owned()
+            }),
+            "a field still does not compile from a type this build does not know"
         );
     }
 
