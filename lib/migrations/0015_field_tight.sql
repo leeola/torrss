@@ -1,0 +1,13 @@
+-- Records whether the next field's run starts where this one ends.
+--
+-- A lazy run such as a show name has no end of its own, so the component
+-- after it is what stops it. A field that is not tight lets the next field's
+-- run sit anywhere after its own, which is how a resolution reads past an
+-- episode name the ruleset does not claim.
+--
+-- The default is 1 because every field stored before this column existed
+-- composed with nothing between it and the next. Each of them stays tight
+-- until the reader unticks it, so no stored ruleset changes what it claims.
+-- The store binds the flag on every insert, so the default serves the
+-- migration alone.
+ALTER TABLE ruleset_fields ADD COLUMN tight INTEGER NOT NULL DEFAULT 1;

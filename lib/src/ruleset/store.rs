@@ -45,7 +45,7 @@ const SELECT_RULESETS: &str =
 /// The fold below walks this once. A query per ruleset costs a round trip
 /// for each instead.
 const SELECT_FIELDS: &str = "
-    SELECT ruleset, name, kind, pattern, required, identity
+    SELECT ruleset, name, kind, pattern, required, identity, tight
     FROM ruleset_fields
     ORDER BY ruleset, position
 ";
@@ -182,8 +182,8 @@ impl RulesetStore {
         for (position, field) in ruleset.fields.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO ruleset_fields
-                    (ruleset, position, name, kind, pattern, required, identity)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (ruleset, position, name, kind, pattern, required, identity, tight)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )
             .bind(&ruleset.id)
             .bind(position as i64)
@@ -192,6 +192,7 @@ impl RulesetStore {
             .bind(field.pattern.as_deref())
             .bind(field.required)
             .bind(field.identity)
+            .bind(field.tight)
             .execute(&mut *tx)
             .await?;
         }
@@ -271,7 +272,7 @@ fn field(row: &sqlx::sqlite::SqliteRow) -> Result<Field, sqlx::Error> {
             .ok_or_else(|| sqlx::Error::decode(format!("unknown field kind {kind}")))?,
         pattern: row.try_get("pattern")?,
         required: row.try_get("required")?,
-        tight: true,
+        tight: row.try_get("tight")?,
         identity: row.try_get("identity")?,
     })
 }
@@ -290,7 +291,7 @@ mod tests {
             kind: FieldKind::Text,
             pattern: pattern.map(ToOwned::to_owned),
             required: true,
-            tight: true,
+            tight: false,
             identity: false,
         }
     }
@@ -339,12 +340,20 @@ mod tests {
     async fn upsert_then_list_round_trips_each_ruleset(pool: SqlitePool) {
         let store = RulesetStore::new(pool);
         store.upsert(&template()).await.expect("the base");
+
+        // One field overrides the helper's flag, so both values cross the
+        // table under the comparison below.
+        let tight_show = || Field {
+            tight: true,
+            ..field("show", Some("^Ashfall"))
+        };
+
         store
             .upsert(&ruleset(
                 "archive",
                 false,
                 Some("series"),
-                vec![field("show", Some("^Ashfall"))],
+                vec![tight_show(), field("year", Some(r"\.\d{4}"))],
             ))
             .await
             .expect("the ruleset on it");
@@ -356,7 +365,7 @@ mod tests {
                     "archive",
                     false,
                     Some("series"),
-                    vec![field("show", Some("^Ashfall"))]
+                    vec![tight_show(), field("year", Some(r"\.\d{4}"))]
                 ),
                 template(),
             ],
