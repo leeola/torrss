@@ -6,6 +6,7 @@ use topcoat::{
 use super::format;
 use super::listing::ParsedValue;
 use super::matches::{Match, PatternError};
+use super::verdict::Verdict;
 use crate::feed::store::FeedCheck;
 use crate::parser::{Field, FieldKind, Parser, Segment, Tint, TitleTest};
 use crate::rules::Engine;
@@ -524,6 +525,76 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[&Field]) 
                 </button>
             </div>
         </div>
+    }
+}
+
+/// Every saved test's verdict against the draft, with the count that pass
+/// first.
+///
+/// Both editors render this. A parser draft carries its own fields and a
+/// ruleset draft names a stored parser, and a verdict reads the same either
+/// way. It names the title the reader wrote, whether the rules claim it, and
+/// every field the two disagree about.
+#[component]
+pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
+    let passing = judged
+        .iter()
+        .filter(|(_, verdict)| *verdict == Verdict::Pass)
+        .count();
+
+    view! {
+        if !judged.is_empty() {
+            <div class="border-t border-slate-800 px-4 py-3">
+                <p class="text-xs text-slate-400">
+                    (passing) " of " (judged.len()) " pass"
+                </p>
+
+                <ul class="mt-2 space-y-2">
+                    for (test, verdict) in judged {
+                        <li>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-mono text-xs text-slate-300">
+                                    (&test.title)
+                                </span>
+                                <span class=(class!(
+                                    "rounded-full px-2 py-0.5 text-xs",
+                                    match verdict {
+                                        Verdict::Pass => "bg-emerald-500/15 text-emerald-300",
+                                        _ => "bg-rose-500/15 text-rose-300",
+                                    },
+                                ))>
+                                    match verdict {
+                                        Verdict::Pass => "pass",
+                                        Verdict::Unclaimed => "not claimed",
+                                        Verdict::Failed(_) => "failed",
+                                    }
+                                </span>
+                            </div>
+
+                            if let Verdict::Failed(mismatches) = verdict {
+                                for mismatch in mismatches {
+                                    <p class="mt-1 text-xs text-slate-500">
+                                        (&mismatch.field) ": expected "
+                                        <span class="font-mono text-slate-400">
+                                            (&mismatch.expected)
+                                        </span>
+                                        match &mismatch.actual {
+                                            Some(actual) => {
+                                                ", read "
+                                                <span class="font-mono text-slate-400">
+                                                    (actual)
+                                                </span>
+                                            },
+                                            None => ", read nothing",
+                                        }
+                                    </p>
+                                }
+                            }
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
     }
 }
 

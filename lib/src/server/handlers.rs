@@ -35,7 +35,7 @@ use crate::{
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
         query::IdList,
-        verdict::{self, Verdict},
+        verdict,
     },
     services::Services,
     store::grabs::{self, Grab},
@@ -1653,64 +1653,8 @@ pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
         .map(|test| (test, verdict::verdict(&rules, test)))
         .collect::<Vec<_>>();
 
-    let passing = judged
-        .iter()
-        .filter(|(_, verdict)| *verdict == Verdict::Pass)
-        .count();
-
     view! {
-        if !judged.is_empty() {
-            <div class="border-t border-slate-800 px-4 py-3">
-                <p class="text-xs text-slate-400">
-                    (passing) " of " (judged.len()) " pass"
-                </p>
-
-                <ul class="mt-2 space-y-2">
-                    for (test, verdict) in &judged {
-                        <li>
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="font-mono text-xs text-slate-300">
-                                    (&test.title)
-                                </span>
-                                <span class=(class!(
-                                    "rounded-full px-2 py-0.5 text-xs",
-                                    match verdict {
-                                        Verdict::Pass => "bg-emerald-500/15 text-emerald-300",
-                                        _ => "bg-rose-500/15 text-rose-300",
-                                    },
-                                ))>
-                                    match verdict {
-                                        Verdict::Pass => "pass",
-                                        Verdict::Unclaimed => "not claimed",
-                                        Verdict::Failed(_) => "failed",
-                                    }
-                                </span>
-                            </div>
-
-                            if let Verdict::Failed(mismatches) = verdict {
-                                for mismatch in mismatches {
-                                    <p class="mt-1 text-xs text-slate-500">
-                                        (&mismatch.field) ": expected "
-                                        <span class="font-mono text-slate-400">
-                                            (&mismatch.expected)
-                                        </span>
-                                        match &mismatch.actual {
-                                            Some(actual) => {
-                                                ", read "
-                                                <span class="font-mono text-slate-400">
-                                                    (actual)
-                                                </span>
-                                            },
-                                            None => ", read nothing",
-                                        }
-                                    </p>
-                                }
-                            }
-                        </li>
-                    }
-                </ul>
-            </div>
-        }
+        components::test_verdicts(judged: &judged)
     }
 }
 
