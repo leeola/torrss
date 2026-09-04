@@ -209,6 +209,14 @@ const ROLES: [(&str, &str, &str); 3] = [
     ),
 ];
 
+/// The note the based role carries while the engine holds no template.
+///
+/// It replaces that role's own note, because a reader who finds the choice
+/// closed learns why and how to open it from the page rather than from the
+/// rules behind it.
+const NO_TEMPLATE_NOTE: &str =
+    "No template exists yet. Save one under the first choice, and this one opens.";
+
 /// The selection the feed page keeps while the listing re-renders.
 ///
 /// The set is the one source of truth in the browser, so an id checked under
@@ -1427,6 +1435,11 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         .filter(|one| one.id != ruleset_id)
         .collect();
 
+    // One closure decides the radio's `disabled`, the label's color, and the
+    // note together, so the three never disagree about whether the choice is
+    // open.
+    let unavailable = |value: &str| value == BASED_ROLE && templates.is_empty();
+
     let initial_role = if is_template {
         TEMPLATE_ROLE
     } else if based_on.is_empty() {
@@ -1569,21 +1582,33 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                     // combination of controls is illegal. The radios carry no
                     // handler of their own: the form's delegated one below
                     // catches them, where the signals live.
+                    //
+                    // A choice with no template to offer stays disabled and
+                    // its note says so, because a radio that looks live and
+                    // does nothing reads as a broken page.
                     <fieldset class="mt-3">
                         <legend class="text-xs text-slate-500">"This ruleset"</legend>
                         for (value, label, note) in ROLES {
-                            <label class="mt-2 flex items-start gap-2 text-sm text-slate-300">
+                            // Each branch is one whole literal, because the
+                            // Tailwind scanner reads class names out of them.
+                            <label class=(if unavailable(value) {
+                                "mt-2 flex cursor-not-allowed items-start gap-2 text-sm text-slate-600"
+                            } else {
+                                "mt-2 flex items-start gap-2 text-sm text-slate-300"
+                            })>
                                 <input
                                     type="radio"
                                     name="role"
                                     value=(value)
                                     checked=(initial_role == value)
-                                    disabled=(value == BASED_ROLE && templates.is_empty())
+                                    disabled=(unavailable(value))
                                     class="mt-0.5 size-4 rounded-full border-slate-700 bg-slate-950"
                                 >
                                 <span>
                                     (label)
-                                    <span class="block text-xs text-slate-500">(note)</span>
+                                    <span class="block text-xs text-slate-500">
+                                        (if unavailable(value) { NO_TEMPLATE_NOTE } else { note })
+                                    </span>
                                 </span>
                             </label>
                         }
