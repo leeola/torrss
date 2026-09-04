@@ -316,6 +316,11 @@ pub(crate) struct Preset {
 /// reads the later one. An optional component after it skips rather than
 /// reads, so a resolution after an episode name has to be required to be
 /// read.
+///
+/// The publisher is the one preset that reaches past its own separator. A
+/// scene group tag ends the name, and a source such as `WEB-DL` carries a
+/// hyphen of its own, so the component reads the last hyphen token rather
+/// than the first hyphen the gap in front of it reaches.
 pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "show",
@@ -400,7 +405,7 @@ pub(crate) const PRESETS: &[Preset] = &[
     Preset {
         name: "publisher",
         kind: FieldKind::Text,
-        pattern: Some(r"-(?<publisher>[A-Za-z0-9]+)"),
+        pattern: Some(r".*-(?<publisher>[A-Za-z0-9]+)"),
         required: false,
         identity: false,
         tight: false,
@@ -638,6 +643,36 @@ mod tests {
             ]
             .map(|(name, value)| (name.to_owned(), value.to_owned())),
             "each preset reads its own run when the rows follow the tracker's order"
+        );
+    }
+
+    #[test]
+    fn publisher_reads_the_last_hyphen_token() {
+        let fields = [
+            "show",
+            "season",
+            "episodeNumber",
+            "resolution",
+            "publisher",
+            "extension",
+        ]
+        .map(preset_field);
+
+        assert_eq!(
+            read_fields(
+                &fields,
+                "Silo.S03E02.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-playWEB.mkv"
+            ),
+            [
+                ("show", "silo"),
+                ("season", "3"),
+                ("episodeNumber", "2"),
+                ("resolution", "2160p"),
+                ("publisher", "playweb"),
+                ("extension", "mkv"),
+            ]
+            .map(|(name, value)| (name.to_owned(), value.to_owned())),
+            "the tag after the last hyphen is the group, and the hyphen inside WEB-DL is not"
         );
     }
 
