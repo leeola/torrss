@@ -25,53 +25,91 @@ pub(crate) fn parsers() -> Vec<Parser> {
         ..tag
     });
 
-    // The show is lazy, so it stops at the first season token. The year is
-    // optional and takes no part in the identity, so Show.2019.S02E05 and
-    // Show.S02E05 read one show rather than two. A double episode reads its
-    // first number, because the pair is one file.
-    //
-    // The episode name is a lazy run with nothing of its own to end it, so
-    // the required resolution is what stops it. That is why a title naming no
-    // resolution falls through to series-loose. It also means a tag written
-    // between the episode and the resolution, such as REPACK, reads as the
-    // episode name, which no import conditions on.
-    vec![Parser {
-        id: "series".to_owned(),
-        name: "Series".to_owned(),
-        fields: vec![
-            field("show", Text, Some(r"^(?<show>.+?)"), true, true, true),
-            field(
-                "year",
-                Number,
-                Some(r"[. _](?<year>(?:19|20)\d{2})"),
-                false,
-                false,
-                true,
-            ),
-            field("season", Season, None, true, true, true),
-            field(
-                "episodeNumber",
-                Episode,
-                Some(r"(?i)E(?<episodeNumber>\d{1,3})(?:-?E\d{1,3})?"),
-                false,
-                true,
-                true,
-            ),
-            field(
-                "episodeName",
-                Text,
-                Some(r"[. _](?<episodeName>.+?)"),
-                false,
-                false,
-                true,
-            ),
-        ]
-        .into_iter()
-        .chain(series_tags)
-        .collect(),
-        tests: Vec::new(),
-        built_in: true,
-    }]
+    vec![
+        // The show is lazy, so it stops at the first season token. The year
+        // is optional and takes no part in the identity, so Show.2019.S02E05
+        // and Show.S02E05 read one show rather than two. A double episode
+        // reads its first number, because the pair is one file.
+        //
+        // The episode name is a lazy run with nothing of its own to end it,
+        // so the required resolution is what stops it. That is why a title
+        // naming no resolution falls through to series-loose. It also means a
+        // tag written between the episode and the resolution, such as REPACK,
+        // reads as the episode name, which no import conditions on.
+        Parser {
+            id: "series".to_owned(),
+            name: "Series".to_owned(),
+            fields: vec![
+                field("show", Text, Some(r"^(?<show>.+?)"), true, true, true),
+                field(
+                    "year",
+                    Number,
+                    Some(r"[. _](?<year>(?:19|20)\d{2})"),
+                    false,
+                    false,
+                    true,
+                ),
+                field("season", Season, None, true, true, true),
+                field(
+                    "episodeNumber",
+                    Episode,
+                    Some(r"(?i)E(?<episodeNumber>\d{1,3})(?:-?E\d{1,3})?"),
+                    false,
+                    true,
+                    true,
+                ),
+                field(
+                    "episodeName",
+                    Text,
+                    Some(r"[. _](?<episodeName>.+?)"),
+                    false,
+                    false,
+                    true,
+                ),
+            ]
+            .into_iter()
+            .chain(series_tags)
+            .collect(),
+            tests: Vec::new(),
+            built_in: true,
+        },
+        // This one claims no episode name. The episode is not tight, so the
+        // gap after it skips whatever name the title carries, and nothing
+        // here has to end a run. That is what series requires its resolution
+        // for, so a title naming none reads here instead.
+        //
+        // The identity fields match series, so an episode files into
+        // show+season+episodeNumber whichever of the two read it.
+        Parser {
+            id: "series-loose".to_owned(),
+            name: "Series without resolution".to_owned(),
+            fields: vec![
+                field("show", Text, Some(r"^(?<show>.+?)"), true, true, true),
+                field(
+                    "year",
+                    Number,
+                    Some(r"[. _](?<year>(?:19|20)\d{2})"),
+                    false,
+                    false,
+                    true,
+                ),
+                field("season", Season, None, true, true, true),
+                field(
+                    "episodeNumber",
+                    Episode,
+                    Some(r"(?i)E(?<episodeNumber>\d{1,3})(?:-?E\d{1,3})?"),
+                    false,
+                    true,
+                    false,
+                ),
+            ]
+            .into_iter()
+            .chain(tags())
+            .collect(),
+            tests: Vec::new(),
+            built_in: true,
+        },
+    ]
 }
 
 /// Builds one field, so a parser above reads as a list of rules rather than
@@ -165,6 +203,7 @@ mod tests {
 
     use super::parsers;
     use crate::rules::Engine;
+    use crate::ruleset::Ruleset;
 
     /// The shipped set compiled, which is what proves every pattern above is
     /// a valid regex.
@@ -291,6 +330,34 @@ mod tests {
                 ],
             )),
         ),
+        (
+            "Ashfall.County.S03E04.HDTV.XviD-PublicWave.avi",
+            Some((
+                "series-loose",
+                &[
+                    ("show", "ashfall county"),
+                    ("season", "3"),
+                    ("episodeNumber", "4"),
+                    ("source", "hdtv"),
+                    ("codec", "xvid"),
+                    ("publisher", "publicwave"),
+                    ("extension", "avi"),
+                ],
+            )),
+        ),
+        (
+            "Ashfall.County.S03E04.The.Tide.Line.HDTV-PublicWave",
+            Some((
+                "series-loose",
+                &[
+                    ("show", "ashfall county"),
+                    ("season", "3"),
+                    ("episodeNumber", "4"),
+                    ("source", "hdtv"),
+                    ("publisher", "publicwave"),
+                ],
+            )),
+        ),
         ("just some words with no structure at all", None),
     ];
 
@@ -318,6 +385,44 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(read, expected);
+    }
+
+    #[test]
+    fn a_title_without_a_resolution_shares_the_identity_of_one_with() {
+        let engine = Engine::new(
+            parsers(),
+            vec![
+                claiming("episodes", "series"),
+                claiming("loose", "series-loose"),
+            ],
+        )
+        .expect("every shipped pattern is a valid regex");
+
+        let identity = |title: &str| {
+            engine
+                .parse(title)
+                .unwrap_or_else(|| panic!("{title} is claimed"))
+                .identity
+        };
+
+        assert_eq!(
+            identity("Ashfall.County.S03E04.1080p.WEB"),
+            identity("Ashfall.County.S03E04.HDTV"),
+            "one tracker names the resolution and another does not, and it is one episode"
+        );
+    }
+
+    /// A ruleset on `parser` that writes no condition, so it claims every
+    /// title the parser reads.
+    fn claiming(id: &str, parser: &str) -> Ruleset {
+        Ruleset {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            enabled: true,
+            parser: parser.to_owned(),
+            conditions: Vec::new(),
+            tests: Vec::new(),
+        }
     }
 
     #[test]
