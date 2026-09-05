@@ -109,6 +109,37 @@ pub(crate) fn parsers() -> Vec<Parser> {
             tests: Vec::new(),
             built_in: true,
         },
+        // The season keeps the Season kind, so it normalizes as a number and
+        // this episode files with the S02E05 spelling of the same one. The x
+        // guards the digits, so a codec such as x265 never reads as a season.
+        Parser {
+            id: "series-x".to_owned(),
+            name: "Series numbered 2x05".to_owned(),
+            fields: vec![
+                field("show", Text, Some(r"^(?<show>.+?)"), true, true, true),
+                field(
+                    "season",
+                    Season,
+                    Some(r"[. _](?<season>\d{1,2})[xX]"),
+                    true,
+                    true,
+                    true,
+                ),
+                field(
+                    "episodeNumber",
+                    Episode,
+                    Some(r"(?<episodeNumber>\d{2,3})"),
+                    true,
+                    true,
+                    false,
+                ),
+            ]
+            .into_iter()
+            .chain(tags())
+            .collect(),
+            tests: Vec::new(),
+            built_in: true,
+        },
     ]
 }
 
@@ -358,6 +389,33 @@ mod tests {
                 ],
             )),
         ),
+        (
+            "Ridge.Runner.2x05.720p.HDTV-OpenReel.mkv",
+            Some((
+                "series-x",
+                &[
+                    ("show", "ridge runner"),
+                    ("season", "2"),
+                    ("episodeNumber", "5"),
+                    ("resolution", "720p"),
+                    ("source", "hdtv"),
+                    ("publisher", "openreel"),
+                    ("extension", "mkv"),
+                ],
+            )),
+        ),
+        (
+            "Ridge Runner 12x105 1080p",
+            Some((
+                "series-x",
+                &[
+                    ("show", "ridge runner"),
+                    ("season", "12"),
+                    ("episodeNumber", "105"),
+                    ("resolution", "1080p"),
+                ],
+            )),
+        ),
         ("just some words with no structure at all", None),
     ];
 
@@ -423,6 +481,15 @@ mod tests {
             conditions: Vec::new(),
             tests: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_codec_is_never_a_season() {
+        assert_ne!(
+            reads("Coastal.Drift.2024.1080p.x265-OpenReel").map(|(parser, _)| parser),
+            Some("series-x".to_owned()),
+            "the x of x265 follows no digits, so the 2x05 numbering never claims it"
+        );
     }
 
     #[test]
