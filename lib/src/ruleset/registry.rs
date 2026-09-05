@@ -378,6 +378,21 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn a_ruleset_on_a_shipped_parser_is_written(pool: SqlitePool) {
+        loaded(&pool)
+            .await
+            .save(ruleset("hollow", "series"))
+            .await
+            .expect("a shipped parser needs no row");
+
+        assert_eq!(
+            loaded(&pool).await.engine().ruleset("hollow"),
+            Some(&ruleset("hollow", "series")),
+            "a process that starts after it reads the row"
+        );
+    }
+
+    #[sqlx::test]
     async fn removing_a_parser_a_ruleset_reads_with_is_refused(pool: SqlitePool) {
         let rulesets = with_parser(&pool).await;
         rulesets

@@ -259,8 +259,8 @@ mod tests {
 
     /// The parser every ruleset below reads with.
     ///
-    /// It is written first in each test, because the `parser` column
-    /// references it.
+    /// Most tests write it first, which mirrors a reader who wrote a parser
+    /// of their own before the ruleset that reads with it.
     fn parser() -> Parser {
         Parser {
             id: "series".to_owned(),
@@ -323,6 +323,22 @@ mod tests {
         assert_eq!(
             RulesetStore::new(pool).list().await.expect("list"),
             Vec::new()
+        );
+    }
+
+    #[sqlx::test]
+    async fn upsert_stores_a_parser_no_row_stands_behind(pool: SqlitePool) {
+        let store = RulesetStore::new(pool.clone());
+
+        store
+            .upsert(&ruleset("hollow"))
+            .await
+            .expect("no parsers row is needed");
+
+        assert_eq!(
+            store.list().await.expect("list"),
+            vec![ruleset("hollow")],
+            "a parser the binary carries has no row, and a ruleset on one still stores"
         );
     }
 
