@@ -585,12 +585,20 @@ async fn ruleset_index(cx: &Cx) -> Result {
                     A disabled ruleset filters nothing, so its releases stay out of the feed."
                 </p>
             </div>
-            <a
-                href="/admin/rulesets/new"
-                class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
-            >
-                "New ruleset"
-            </a>
+            <div class="flex flex-wrap items-center gap-2">
+                <a
+                    href="/admin/rulesets/import"
+                    class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                >
+                    "Import from client"
+                </a>
+                <a
+                    href="/admin/rulesets/new"
+                    class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
+                >
+                    "New ruleset"
+                </a>
+            </div>
         </div>
 
         if engine.rulesets().next().is_none() {
