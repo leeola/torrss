@@ -30,7 +30,7 @@ use crate::parser::form::{
 /// The id is absent because the form never carries one. A create derives it
 /// from the name through [`crate::parser::form::unique_slug`], and a save
 /// already knows it from the route.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RulesetForm {
     pub(crate) name: String,
 

@@ -17,9 +17,10 @@ use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
+use super::form::RulesetForm;
 use super::{Condition, Op};
-use crate::parser::FieldKind;
-use crate::rules::Engine;
+use crate::parser::{Field, FieldKind, Parser, TitleTest};
+use crate::rules::{Engine, Reading};
 use crate::torrent::{Torrent, TorrentId};
 
 /// Fields a suggested condition never names.
@@ -187,16 +188,7 @@ pub(crate) fn plan(
         };
 
         let key = subject.kind.normalize(show);
-
-        let read = reading
-            .values
-            .iter()
-            .filter_map(|(field, raw)| {
-                let kind = parser.fields.iter().find(|one| &one.name == field)?.kind;
-
-                Some((field.clone(), (raw.clone(), kind.normalize(raw))))
-            })
-            .collect::<BTreeMap<_, _>>();
+        let read = reading_of(parser, &reading);
 
         let group = groups.entry((reading.parser.clone(), key)).or_default();
         let included = !excluded.contains(&torrent.id);
@@ -228,28 +220,7 @@ pub(crate) fn plan(
             let parser = engine.parser(&parser_id)?;
             let subject = parser.subject()?;
             let show = titled(&key);
-
-            let mut conditions = vec![Condition {
-                field: subject.name.clone(),
-                op: Op::Equals,
-                value: show.clone(),
-            }];
-
-            conditions.extend(
-                parser
-                    .fields
-                    .iter()
-                    .filter(|field| {
-                        !field.identity && !SKIPPED_FIELDS.contains(&field.name.as_str())
-                    })
-                    .filter_map(|field| {
-                        Some(Condition {
-                            field: field.name.clone(),
-                            op: Op::Equals,
-                            value: group.agreed(&field.name)?,
-                        })
-                    }),
-            );
+            let conditions = conditions(parser, subject, &show, &group);
 
             Some(Suggestion {
                 collision: collision(engine, &parser_id, &subject.name, &key),
@@ -285,6 +256,115 @@ pub(crate) fn plan(
     }
 
     suggestions
+}
+
+/// What one reading captured, each field's raw value beside its normalized
+/// form.
+///
+/// A capture no field of `parser` carries is dropped, which the composed
+/// regex never produces.
+fn reading_of(parser: &Parser, reading: &Reading) -> BTreeMap<String, (String, String)> {
+    reading
+        .values
+        .iter()
+        .filter_map(|(field, raw)| {
+            let kind = parser.fields.iter().find(|one| &one.name == field)?.kind;
+
+            Some((field.clone(), (raw.clone(), kind.normalize(raw))))
+        })
+        .collect()
+}
+
+/// What a suggested ruleset compares.
+///
+/// The subject leads, and every field the group agrees on follows it in the
+/// parser's own order.
+///
+/// An identity field beyond the subject names one release rather than the
+/// set the reader wants, so only the rest take part.
+fn conditions(parser: &Parser, subject: &Field, show: &str, group: &Group) -> Vec<Condition> {
+    let mut conditions = vec![Condition {
+        field: subject.name.clone(),
+        op: Op::Equals,
+        value: show.to_owned(),
+    }];
+
+    conditions.extend(
+        parser
+            .fields
+            .iter()
+            .filter(|field| !field.identity && !SKIPPED_FIELDS.contains(&field.name.as_str()))
+            .filter_map(|field| {
+                Some(Condition {
+                    field: field.name.clone(),
+                    op: Op::Equals,
+                    value: group.agreed(&field.name)?,
+                })
+            }),
+    );
+
+    conditions
+}
+
+/// Reads `title` into the form a ruleset editor starts from.
+///
+/// A feed title is a group of one, so every field it read agrees and each
+/// becomes a condition. The reader removes the ones they do not want, which
+/// is quicker than typing the ones they do.
+///
+/// Any parser serves here, unlike an import, because a reader who wants a
+/// film says so from its title. A title no parser reads keeps its place as
+/// the draft's one test, so the reader writes the fields against something.
+pub(crate) fn seed(engine: &Engine, title: &str) -> RulesetForm {
+    let read = engine.read(title).and_then(|reading| {
+        let parser = engine.parser(&reading.parser)?;
+        let subject = parser.subject()?;
+
+        Some((parser, subject, reading_of(parser, &reading)))
+    });
+
+    let Some((parser, subject, read)) = read else {
+        return RulesetForm {
+            name: String::new(),
+            parser: String::new(),
+            conditions: Vec::new(),
+            tests: vec![TitleTest {
+                title: title.to_owned(),
+                expected: BTreeMap::new(),
+            }],
+        };
+    };
+
+    let show = read
+        .get(&subject.name)
+        .map_or_else(String::new, |(raw, _)| raw.clone());
+
+    let group = Group {
+        newest_values: read.clone(),
+        readings: vec![read.clone()],
+        ..Group::default()
+    };
+
+    let conditions = conditions(parser, subject, &show, &group);
+
+    let expected = conditions
+        .iter()
+        .filter_map(|condition| {
+            let (_, normalized) = read.get(&condition.field)?;
+
+            Some((condition.field.clone(), normalized.clone()))
+        })
+        .collect();
+
+    RulesetForm {
+        name: String::new(),
+        parser: parser.id.clone(),
+        conditions,
+        tests: vec![TitleTest {
+            title: title.to_owned(),
+            expected,
+        }],
+    }
 }
 
 /// Finds the ruleset that already names `key` under the field `subject`.
@@ -340,12 +420,12 @@ fn titled(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     use chrono::{TimeZone, Utc};
 
-    use super::{Collision, Suggestion, plan};
-    use crate::parser::{Field, Parser};
+    use super::{Collision, Suggestion, plan, seed};
+    use crate::parser::{Field, Parser, TitleTest};
     use crate::rules::Engine;
     use crate::ruleset::fixture::{self, ENGINE};
     use crate::ruleset::{Condition, Op, Ruleset};
@@ -570,6 +650,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(&*torrents[0].name, false), (&*torrents[1].name, true),],
             "an excluded torrent stays listed, in the order the client gave"
+        );
+    }
+
+    #[test]
+    fn a_seed_reads_the_title_into_conditions_and_a_test() {
+        const TITLE: &str =
+            "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
+
+        let seeded = seed(&ENGINE, TITLE);
+
+        assert_eq!(seeded.parser, "series-episodes");
+        assert_eq!(
+            seeded.conditions,
+            [
+                equals("show", "The.Hollow.Meridian"),
+                equals("resolution", "720p"),
+                equals("source", "Broadcast"),
+                equals("audio", "AAC.Stereo"),
+                equals("codec", "H.264"),
+                equals("publisher", "OtherGroup"),
+            ],
+            "one title agrees with itself, so every field it read becomes a condition"
+        );
+        assert_eq!(
+            seeded.tests,
+            [TitleTest {
+                title: TITLE.to_owned(),
+                expected: BTreeMap::from([
+                    ("show".to_owned(), "the hollow meridian".to_owned()),
+                    ("resolution".to_owned(), "720p".to_owned()),
+                    ("source".to_owned(), "broadcast".to_owned()),
+                    ("audio".to_owned(), "aac stereo".to_owned()),
+                    ("codec".to_owned(), "h 264".to_owned()),
+                    ("publisher".to_owned(), "othergroup".to_owned()),
+                ]),
+            }],
+            "the test expects what the title read, in the normalized form a verdict compares"
+        );
+    }
+
+    #[test]
+    fn a_seed_of_a_title_no_parser_reads_keeps_the_title_as_a_test() {
+        let seeded = seed(&ENGINE, "just some words with no structure at all");
+
+        assert_eq!(seeded.parser, "", "no parser read it, so none is named");
+        assert_eq!(seeded.conditions, [], "and nothing was read to compare");
+        assert_eq!(
+            seeded.tests,
+            [TitleTest {
+                title: "just some words with no structure at all".to_owned(),
+                expected: BTreeMap::new(),
+            }],
+            "the title stays, so the reader writes the fields against something"
         );
     }
 

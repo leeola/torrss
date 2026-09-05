@@ -28,6 +28,7 @@ use crate::{
     rules::Engine,
     ruleset,
     ruleset::form::{EditorRows, RulesetForm},
+    ruleset::import,
     ruleset::registry::{Rulesets, SaveError},
     ruleset::{Condition, Diff, Ruleset},
     server::{
@@ -1244,12 +1245,46 @@ async fn remove_feed_now(cx: &Cx, id: String) -> Result<bool> {
     Ok(removed)
 }
 
+/// Which stored feed item a new ruleset starts from.
+#[query_params(error = bad_request)]
+struct NewRulesetView {
+    /// [`StoredItem::id`] of the item whose title seeds the draft, or absent
+    /// for an empty one.
+    from: Option<String>,
+}
+
+/// Opens the editor on a ruleset nothing has stored yet.
+///
+/// A `from` naming a stored item reads its title into a parser, conditions,
+/// and a test, so a reader who met an unmatched title in the feed starts
+/// from what it already says. Anything else opens the editor empty.
 #[page("/admin/rulesets/new")]
 async fn new_ruleset(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Rulesets>>(cx).engine();
 
+    // An id naming no row, or naming nothing at all, opens the editor empty
+    // rather than reporting itself. A link the reader followed to a row the
+    // store dropped still gets them an editor.
+    let seeded = match query_params::<NewRulesetView>(cx)?.from.as_deref() {
+        Some(from) => match from.parse() {
+            Ok(id) => store::item(&app_context::<Services>(cx).db, id).await?,
+            Err(_) => None,
+        },
+        None => None,
+    };
+
+    let draft = match &seeded {
+        Some(stored) => import::seed(&engine, &stored.item.title),
+        None => RulesetForm {
+            name: String::new(),
+            parser: String::new(),
+            conditions: Vec::new(),
+            tests: Vec::new(),
+        },
+    };
+
     view! {
-        editor(engine: &engine, ruleset: None)
+        editor(engine: &engine, ruleset: None, draft: &draft)
     }
 }
 
@@ -1260,8 +1295,41 @@ async fn ruleset_editor(cx: &Cx) -> Result {
         .ruleset(path_param::<RulesetId>(cx))
         .ok_or_not_found()?;
 
+    let draft = stored_draft(ruleset);
+
     view! {
-        editor(engine: &engine, ruleset: Some(ruleset))
+        editor(engine: &engine, ruleset: Some(ruleset), draft: &draft)
+    }
+}
+
+/// The form a stored ruleset opens its editor on.
+///
+/// A stored test carries what an older draft asserted, which reaches further
+/// than the conditions do. Dropping the rest here keeps the first render and
+/// the first verdict agreed, and the next Save writes the narrowed set back.
+fn stored_draft(ruleset: &Ruleset) -> RulesetForm {
+    RulesetForm {
+        name: ruleset.name.clone(),
+        parser: ruleset.parser.clone(),
+        conditions: ruleset.conditions.clone(),
+        tests: ruleset
+            .tests
+            .iter()
+            .map(|test| TitleTest {
+                title: test.title.clone(),
+                expected: test
+                    .expected
+                    .iter()
+                    .filter(|(field, _)| {
+                        ruleset
+                            .conditions
+                            .iter()
+                            .any(|condition| &condition.field == *field)
+                    })
+                    .map(|(field, value)| (field.clone(), value.clone()))
+                    .collect(),
+            })
+            .collect(),
     }
 }
 
@@ -1272,10 +1340,8 @@ async fn ruleset_editor(cx: &Cx) -> Result {
 /// [`None`] shows Create and no switch, because a ruleset nothing has saved
 /// has nothing to switch on.
 #[component]
-async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
-    let name = ruleset
-        .map(|ruleset| ruleset.name.clone())
-        .unwrap_or_default();
+async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm) -> Result {
+    let name = draft.name.clone();
 
     let ruleset_id = ruleset
         .map(|ruleset| ruleset.id.clone())
@@ -1286,47 +1352,23 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
 
     let parsers: Vec<&Parser> = engine.parsers().collect();
 
-    // A new ruleset starts on the first parser the index lists, because the
-    // select shows that one and a draft has to agree with what it shows.
-    let named_parser = ruleset
-        .map(|ruleset| ruleset.parser.clone())
-        .or_else(|| parsers.first().map(|parser| parser.id.clone()))
-        .unwrap_or_default();
+    // A draft that names no parser starts on the first the index lists,
+    // because the select shows that one and the draft has to agree with what
+    // it shows.
+    let named_parser = if draft.parser.is_empty() {
+        parsers
+            .first()
+            .map(|parser| parser.id.clone())
+            .unwrap_or_default()
+    } else {
+        draft.parser.clone()
+    };
 
     // What the browser posts on the first keystroke, so the draft starts
     // where the render left off.
     let initial_draft = RulesetForm {
-        name: name.clone(),
         parser: named_parser.clone(),
-        conditions: ruleset
-            .map(|ruleset| ruleset.conditions.clone())
-            .unwrap_or_default(),
-        // A stored test carries what an older draft asserted, which reaches
-        // further than the conditions do. Dropping the rest here keeps the
-        // first render and the first verdict agreed, and the next Save
-        // writes the narrowed set back.
-        tests: ruleset
-            .map(|ruleset| {
-                ruleset
-                    .tests
-                    .iter()
-                    .map(|test| TitleTest {
-                        title: test.title.clone(),
-                        expected: test
-                            .expected
-                            .iter()
-                            .filter(|(field, _)| {
-                                ruleset
-                                    .conditions
-                                    .iter()
-                                    .any(|condition| &condition.field == *field)
-                            })
-                            .map(|(field, value)| (field.clone(), value.clone()))
-                            .collect(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        ..draft.clone()
     }
     .encode();
     let initial_rows = initial_draft.clone();

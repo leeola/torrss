@@ -279,6 +279,12 @@ pub(crate) async fn item_row(
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                     if details.rulesets.is_empty() {
                         <span class="text-slate-600">"unmatched"</span>
+                        <a
+                            href=(format!("/admin/rulesets/new?from={}", item.id))
+                            class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                        >
+                            "Import ruleset"
+                        </a>
                     } else {
                         for ruleset in &details.rulesets {
                             <a
