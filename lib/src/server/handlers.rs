@@ -1807,7 +1807,7 @@ fn posted(RawForm(body): &RawForm) -> Result<RulesetForm> {
 /// A set that does not compile is the reader's own edit coming back, so it
 /// reads as a 400 carrying the reason. Everything else is the application's
 /// problem, not theirs.
-fn write_failed(error: SaveError) -> Error {
+pub(super) fn write_failed(error: SaveError) -> Error {
     match error {
         SaveError::Engine { .. } | SaveError::InUse { .. } => bad_request(error.to_string()).into(),
         SaveError::Store { .. } => internal_server_error(error).into(),

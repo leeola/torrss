@@ -35,6 +35,25 @@ pub(crate) struct Parsed {
     pub(crate) identity: Identity,
 }
 
+/// What one parser read out of a name, with no ruleset judging it.
+///
+/// An import asks what the client's torrents are, and a show the reader has
+/// written no ruleset for yet answers nothing through [`Parsed`]. This
+/// carries the reading anyway, so the import has fields to suggest
+/// conditions on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Reading {
+    /// The parser that read the name, which is the first one declared that
+    /// does.
+    pub(crate) parser: String,
+
+    /// Every field that matched, in the parser's own order.
+    ///
+    /// These are the raw captures, as [`Parsed::values`] are. Nothing has
+    /// normalized them, because no condition compared them.
+    pub(crate) values: Vec<(String, String)>,
+}
+
 /// What makes two releases the same thing.
 ///
 /// The parser named here is the one the claiming ruleset reads with, rather
@@ -355,6 +374,23 @@ impl Engine {
             })
         })
     }
+
+    /// Reads `title` with the first declared parser that matches it.
+    ///
+    /// No ruleset takes part, so a title every ruleset refuses still reads.
+    /// Declaration order settles two parsers that both read one title, which
+    /// is the order [`Self::parse`] settles two rulesets by.
+    pub(crate) fn read(&self, title: &str) -> Option<Reading> {
+        self.parsers
+            .iter()
+            .zip(&self.compiled_parsers)
+            .find_map(|(parser, compiled)| {
+                Some(Reading {
+                    parser: parser.id.clone(),
+                    values: captures(compiled, title)?,
+                })
+            })
+    }
 }
 
 impl Compiled {
@@ -631,6 +667,27 @@ mod tests {
             ENGINE.parse(HOLLOW_720),
             None,
             "the parser reads the 720p name, and no ruleset admits that resolution"
+        );
+    }
+
+    #[test]
+    fn read_names_the_parser_when_no_ruleset_claims() {
+        let reading = ENGINE.read(HOLLOW_720).expect("read");
+
+        assert_eq!(
+            reading.parser, "series-episodes",
+            "the show ruleset requires 1080p, and the parser reads the name all the same"
+        );
+        assert!(
+            reading
+                .values
+                .contains(&("resolution".to_owned(), "720p".to_owned())),
+            "the reading carries the raw capture no condition would admit"
+        );
+        assert_eq!(
+            ENGINE.read(NONSENSE),
+            None,
+            "a name of no shape reads through no parser"
         );
     }
 
