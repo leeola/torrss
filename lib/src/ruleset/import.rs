@@ -13,14 +13,14 @@
 //! Nothing here grabs a torrent. A ruleset puts titles on the wanted list,
 //! and the client already holds these.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
 use super::{Condition, Op};
 use crate::parser::FieldKind;
 use crate::rules::Engine;
-use crate::torrent::Torrent;
+use crate::torrent::{Torrent, TorrentId};
 
 /// Fields a suggested condition never names.
 ///
@@ -31,9 +31,12 @@ const SKIPPED_FIELDS: &[&str] = &["extension", "checksum", "episodeName"];
 
 /// One ruleset an import offers to create.
 ///
-/// The count and the time are what the preview reports about a subject, so
-/// the reader decides from them whether the suggestion is one they want.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The torrents and the time are what the preview reports about a subject,
+/// so the reader decides from them whether the suggestion is one they want.
+///
+/// No [`Eq`], because a member carries the client's report of a torrent and
+/// that carries a progress fraction.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Suggestion {
     /// [`crate::parser::Parser::id`] the suggested ruleset reads with.
     pub(crate) parser: String,
@@ -47,8 +50,9 @@ pub(crate) struct Suggestion {
     /// The subject as the suggested ruleset names it.
     pub(crate) show: String,
 
-    /// How many of the client's torrents this subject accounts for.
-    pub(crate) torrents: usize,
+    /// The client's torrents this subject accounts for, in the order the
+    /// client listed them.
+    pub(crate) members: Vec<Member>,
 
     /// When the client added the newest of them, or nothing when it named no
     /// time for any.
@@ -70,6 +74,17 @@ pub(crate) struct Suggestion {
     pub(crate) repeats: Option<String>,
 }
 
+/// One torrent a subject groups, and whether the reader kept it.
+///
+/// An excluded torrent stays listed so the reader takes it back, and it
+/// feeds no condition while it is out. That is how a name the reader
+/// rejects stops holding an agreement back.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Member {
+    pub(crate) torrent: Torrent,
+    pub(crate) included: bool,
+}
+
 /// A ruleset that already names the subject a suggestion is about.
 ///
 /// On the same parser the suggestion is one the reader has, so the preview
@@ -87,8 +102,12 @@ pub(crate) struct Collision {
 /// Every torrent of one show, and what each of them read.
 #[derive(Default)]
 struct Group {
-    /// One entry per torrent, each field's raw capture beside its normalized
-    /// form.
+    /// Every torrent of the group in the order the client listed them,
+    /// excluded ones among them.
+    members: Vec<Member>,
+
+    /// One entry per included torrent, each field's raw capture beside its
+    /// normalized form.
     readings: Vec<BTreeMap<String, (String, String)>>,
 
     newest: Option<DateTime<Utc>>,
@@ -117,6 +136,12 @@ impl Group {
 
 /// Returns one suggestion per subject the client holds.
 ///
+/// A torrent named in `excluded` stays listed among the suggestion's
+/// members and feeds no condition, so a name the reader rejects stops
+/// holding an agreement back. A group whose every torrent is excluded still
+/// suggests, with the subject condition alone and no time, which the sort
+/// places last.
+///
 /// A subject a ruleset already names carries that ruleset in its
 /// [`Suggestion::collision`] rather than dropping out, so the reader sees
 /// that the client holds a show they follow.
@@ -132,7 +157,11 @@ impl Group {
 /// The suggestions come out newest first, so the subject the reader added
 /// most recently is the one the preview leads with. A subject the client
 /// named no time for comes last.
-pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
+pub(crate) fn plan(
+    engine: &Engine,
+    torrents: &[Torrent],
+    excluded: &HashSet<TorrentId>,
+) -> Vec<Suggestion> {
     let mut groups: BTreeMap<(String, String), Group> = BTreeMap::new();
 
     for torrent in torrents {
@@ -170,6 +199,16 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
             .collect::<BTreeMap<_, _>>();
 
         let group = groups.entry((reading.parser.clone(), key)).or_default();
+        let included = !excluded.contains(&torrent.id);
+
+        group.members.push(Member {
+            torrent: torrent.clone(),
+            included,
+        });
+
+        if !included {
+            continue;
+        }
 
         // A torrent the client named no time for counts as the oldest, and
         // `None` orders below every `Some`. The first torrent of a group
@@ -215,7 +254,7 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
             Some(Suggestion {
                 collision: collision(engine, &parser_id, &subject.name, &key),
                 parser: parser_id,
-                torrents: group.readings.len(),
+                members: group.members,
                 newest: group.newest,
                 repeats: None,
                 key,
@@ -301,9 +340,11 @@ fn titled(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use chrono::{TimeZone, Utc};
 
-    use super::{Collision, plan};
+    use super::{Collision, Suggestion, plan};
     use crate::parser::{Field, Parser};
     use crate::rules::Engine;
     use crate::ruleset::fixture::{self, ENGINE};
@@ -321,6 +362,12 @@ mod tests {
         }
     }
 
+    /// Plans over `torrents` with nothing excluded, which is what every test
+    /// but the exclusion one asks about.
+    fn planned(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
+        plan(engine, torrents, &HashSet::new())
+    }
+
     fn equals(field: &str, value: &str) -> Condition {
         Condition {
             field: field.to_owned(),
@@ -331,7 +378,7 @@ mod tests {
 
     #[test]
     fn unanimous_fields_become_conditions() {
-        let planned = plan(
+        let planned = planned(
             &ENGINE,
             &[
                 torrent(
@@ -350,7 +397,7 @@ mod tests {
         };
 
         assert_eq!(suggestion.show, "Coastal Ecology");
-        assert_eq!(suggestion.torrents, 2);
+        assert_eq!(suggestion.members.len(), 2);
         assert_eq!(
             suggestion.conditions,
             [
@@ -366,7 +413,7 @@ mod tests {
 
     #[test]
     fn a_show_a_ruleset_names_is_listed_with_its_collision() {
-        let planned = plan(
+        let planned = planned(
             &ENGINE,
             &[torrent(
                 "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
@@ -411,7 +458,7 @@ mod tests {
         )
         .expect("the fixture patterns compile");
 
-        let planned = plan(
+        let planned = planned(
             &engine,
             &[torrent(
                 "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
@@ -456,7 +503,7 @@ mod tests {
         let engine =
             Engine::new(vec![strict, episodes], Vec::new()).expect("the fixture patterns compile");
 
-        let planned = plan(
+        let planned = planned(
             &engine,
             &[
                 torrent("Coastal.Ecology.S01E01.1080p.Broadcast-PublicWave.mkv", 6),
@@ -478,9 +525,58 @@ mod tests {
     }
 
     #[test]
+    fn an_excluded_torrent_stays_listed_and_leaves_the_agreement() {
+        let torrents = [
+            torrent(
+                "Coastal.Ecology.S01E01.720p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                4,
+            ),
+            torrent(
+                "Coastal.Ecology.S01E02.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                6,
+            ),
+        ];
+
+        let whole = planned(&ENGINE, &torrents);
+
+        let [whole] = whole.as_slice() else {
+            panic!("one show, so one suggestion");
+        };
+
+        assert!(
+            !whole.conditions.contains(&equals("resolution", "1080p")),
+            "the two disagree on the resolution, so no condition names it"
+        );
+
+        let excluded = HashSet::from([torrents[0].id.clone()]);
+        let planned = plan(&ENGINE, &torrents, &excluded);
+
+        let [suggestion] = planned.as_slice() else {
+            panic!("one show, so one suggestion");
+        };
+
+        assert!(
+            suggestion
+                .conditions
+                .contains(&equals("resolution", "1080p")),
+            "the one that disagreed is out, so the rest agree: {:?}",
+            suggestion.conditions
+        );
+        assert_eq!(
+            suggestion
+                .members
+                .iter()
+                .map(|member| (&*member.torrent.name, member.included))
+                .collect::<Vec<_>>(),
+            [(&*torrents[0].name, false), (&*torrents[1].name, true),],
+            "an excluded torrent stays listed, in the order the client gave"
+        );
+    }
+
+    #[test]
     fn a_film_the_client_holds_suggests_nothing() {
         assert_eq!(
-            plan(
+            planned(
                 &ENGINE,
                 &[torrent(
                     "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv",
@@ -494,7 +590,7 @@ mod tests {
 
     #[test]
     fn newest_torrent_leads() {
-        let planned = plan(
+        let planned = planned(
             &ENGINE,
             &[
                 torrent(
@@ -531,7 +627,7 @@ mod tests {
     #[test]
     fn a_name_no_parser_reads_is_ignored() {
         assert_eq!(
-            plan(
+            planned(
                 &ENGINE,
                 &[torrent("just some words with no structure at all", 4)],
             ),

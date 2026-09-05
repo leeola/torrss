@@ -8,7 +8,7 @@
 //! The client is the source, and a change between the two requests costs one
 //! stale row at most.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use topcoat::{
@@ -76,7 +76,7 @@ async fn import_preview(cx: &Cx) -> Result {
     let now = services.clock.now();
 
     let listed = match services.torrents.list().await {
-        Ok(torrents) => Ok(import::plan(&engine, &torrents)),
+        Ok(torrents) => Ok(import::plan(&engine, &torrents, &HashSet::new())),
         Err(error) => Err(error.to_string()),
     };
 
@@ -158,7 +158,15 @@ async fn import_preview(cx: &Cx) -> Result {
 
                                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                                     <span>
-                                        (format::count(suggestion.torrents, "torrent", "torrents"))
+                                        (format::count(
+                                            suggestion
+                                                .members
+                                                .iter()
+                                                .filter(|member| member.included)
+                                                .count(),
+                                            "torrent",
+                                            "torrents",
+                                        ))
                                     </span>
                                     <span>(format::age(now, suggestion.newest))</span>
                                 </div>
@@ -213,7 +221,7 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
         .await
         .map_err(internal_server_error)?;
 
-    for suggestion in import::plan(&rulesets.engine(), &torrents) {
+    for suggestion in import::plan(&rulesets.engine(), &torrents, &HashSet::new()) {
         if !picked.contains(&format!("{}|{}", suggestion.parser, suggestion.key)) {
             continue;
         }
