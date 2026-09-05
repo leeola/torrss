@@ -43,16 +43,17 @@ pub(crate) async fn filename(segments: &[Segment<'_>], editor: &str) -> Result {
     }
 }
 
-/// One feed filter, naming the feed it narrows the listing to.
+/// One chip of a row that narrows the listing.
 ///
-/// The chip carries its feed in its own value, so one delegated handler reads
-/// every chip. An empty value is the whole set rather than a feed.
+/// The chip carries its value in its own value, so one delegated handler
+/// reads every chip of a row. `name` is what that handler matches on, which
+/// is how two rows of chips settle two different things.
 #[component]
-pub(crate) async fn filter_chip(value: &str, label: &str, current: bool) -> Result {
+pub(crate) async fn filter_chip(name: &str, value: &str, label: &str, current: bool) -> Result {
     view! {
         <button
             type="button"
-            name="feed-filter"
+            name=(name)
             value=(value)
             aria-pressed=(if current { "true" } else { "false" })
             class=(class!(

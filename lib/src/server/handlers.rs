@@ -97,12 +97,12 @@ window.torrssFeed = {
     window.torrssFeed.view.set('feed', feed);
     window.torrssFeed.sync();
   },
-  flip: () => {
-    window.torrssFeed.view.set('all', window.torrssFeed.view.get('all') === '1' ? '' : '1');
+  mode: (value) => {
+    window.torrssFeed.view.set('show', value);
     window.torrssFeed.sync();
   },
   sync: () => {
-    for (const key of ['feed', 'all']) {
+    for (const key of ['feed', 'show']) {
       if (!window.torrssFeed.view.get(key)) {
         window.torrssFeed.view.delete(key);
       }
@@ -121,8 +121,8 @@ struct FeedView {
     /// feed to list, or absent for all.
     feed: Option<String>,
 
-    /// `1` to list every stored item, or absent for the wanted ones alone.
-    all: Option<String>,
+    /// Which rows the listing shows, or absent for the wanted ones.
+    show: Option<String>,
 }
 
 impl FeedView {
@@ -130,8 +130,17 @@ impl FeedView {
         self.feed.as_deref().filter(|id| !id.is_empty())
     }
 
-    fn show_all(&self) -> bool {
-        self.all.as_deref() == Some("1")
+    /// Which rows the listing shows.
+    ///
+    /// `all` is every stored item, `unmatched` is the titles no ruleset
+    /// claims, and an empty string is the wanted releases. Anything else
+    /// reads as the wanted releases, because a view the reader typed by hand
+    /// names no rows to show.
+    fn mode(&self) -> &str {
+        self.show
+            .as_deref()
+            .filter(|mode| matches!(*mode, "all" | "unmatched"))
+            .unwrap_or_default()
     }
 }
 
@@ -194,11 +203,11 @@ fn item_details(
 async fn feed(cx: &Cx) -> Result {
     let view = query_params::<FeedView>(cx)?;
     let active_id = view.active().unwrap_or_default().to_owned();
-    let show_all = view.show_all();
+    let mode = view.mode().to_owned();
 
     view! {
         signal filter = active_id;
-        signal all = show_all;
+        signal show = mode;
         signal selected = String::new();
         signal kept = String::new();
         signal count = 0.0;
@@ -234,10 +243,10 @@ async fn feed(cx: &Cx) -> Result {
                     raw!("window.torrssFeed.show(String(${e}.target.value))");
                 }
 
-                if e.target.name == "show-all" {
+                if e.target.name == "show-mode" {
                     kept.set(selected.get());
-                    all.toggle();
-                    raw!("window.torrssFeed.flip()");
+                    show.set(e.target.value);
+                    raw!("window.torrssFeed.mode(String(${e}.target.value))");
                 }
             })
         >
@@ -319,7 +328,7 @@ async fn feed(cx: &Cx) -> Result {
 
             feed_listing(
                 filter: $(filter.get()),
-                all: $(all.get()),
+                show: $(show.get()),
                 kept: $(kept.get()),
                 version: $(version.get()),
             )
@@ -333,7 +342,7 @@ async fn feed(cx: &Cx) -> Result {
 /// checked state from. `version` is unread here and exists so a grab forces
 /// a re-render once the rows it took are gone.
 #[shard]
-async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version: f64) -> Result {
+async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, version: f64) -> Result {
     // Read for its change alone: a grab bumps it so the rows it took leave
     // the listing.
     let _ = version;
@@ -386,9 +395,13 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
         .count();
     let hidden_count = owned_count + disabled_count + unmatched_count;
 
+    let wanted = show != "all" && show != "unmatched";
+
     let mut listed: Vec<(&StoredItem, Standing)> = items.iter().zip(standings).collect();
-    if !all {
-        listed.retain(|(_, standing)| standing.is_wanted());
+    match show.as_str() {
+        "all" => {}
+        "unmatched" => listed.retain(|(_, standing)| matches!(standing, Standing::Unmatched)),
+        _ => listed.retain(|(_, standing)| standing.is_wanted()),
     }
 
     let ids: Vec<String> = listed.iter().map(|(item, _)| item.id.to_string()).collect();
@@ -407,9 +420,15 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
         // No chip carries a selection. The browser holds it, so a filter
         // change re-renders the rows and leaves the set alone.
         <nav class="mt-6 flex flex-wrap gap-2">
-            components::filter_chip(value: "", label: "All", current: active.is_none())
+            components::filter_chip(
+                name: "feed-filter",
+                value: "",
+                label: "All",
+                current: active.is_none(),
+            )
             for entry in &registered {
                 components::filter_chip(
+                    name: "feed-filter",
                     value: entry.id.as_str(),
                     label: entry.name.as_str(),
                     current: active == Some(entry.id.as_str()),
@@ -417,28 +436,43 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
             }
         </nav>
 
+        <nav class="mt-2 flex flex-wrap gap-2">
+            components::filter_chip(
+                name: "show-mode",
+                value: "",
+                label: "Wanted",
+                current: wanted,
+            )
+            components::filter_chip(
+                name: "show-mode",
+                value: "all",
+                label: "All",
+                current: show == "all",
+            )
+            components::filter_chip(
+                name: "show-mode",
+                value: "unmatched",
+                label: "Unmatched",
+                current: show == "unmatched",
+            )
+        </nav>
+
         <p class="mt-3 text-sm text-slate-400">
-            if all {
-                (format::count(ids.len(), "item", "items"))
-            } else {
-                (format::count(ids.len(), "wanted release", "wanted releases"))
+            match show.as_str() {
+                "all" => (format::count(ids.len(), "item", "items")),
+                "unmatched" => (format::count(ids.len(), "unmatched title", "unmatched titles")),
+                _ => (format::count(ids.len(), "wanted release", "wanted releases")),
             }
             " from " (format::count(registered.len(), "feed", "feeds"))
-            if hidden_count > 0 {
-                if all { ", " } else { ", hidden: " }
+            // Only the wanted view leaves rows out, so only it says what it
+            // left out.
+            if wanted && hidden_count > 0 {
+                ", hidden: "
                 (owned_count) " owned, "
                 (disabled_count) " disabled, "
                 (unmatched_count) " unmatched"
             }
             "."
-            " "
-            <button
-                type="button"
-                name="show-all"
-                class="underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
-            >
-                if all { "Show wanted only" } else { "Show all" }
-            </button>
             if registered.is_empty() {
                 " "
                 <a
@@ -452,7 +486,11 @@ async fn feed_listing(cx: &Cx, filter: String, all: bool, kept: String, version:
 
         if listed.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                if all { "No item in this feed yet." } else { "No wanted release yet." }
+                match show.as_str() {
+                    "all" => "No item in this feed yet.",
+                    "unmatched" => "No unmatched title.",
+                    _ => "No wanted release yet.",
+                }
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
