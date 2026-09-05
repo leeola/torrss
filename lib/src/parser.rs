@@ -732,14 +732,14 @@ mod tests {
         assert_eq!(
             read_fields(
                 &fields,
-                "Silo.S03E02.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-playWEB.mkv"
+                "Ridge.Runner.S03E02.2160p.WEB-DL.DDP5.1.Atmos.H.265-OpenReel.mkv"
             ),
             [
-                ("show", "silo"),
+                ("show", "ridge runner"),
                 ("season", "3"),
                 ("episodeNumber", "2"),
                 ("resolution", "2160p"),
-                ("publisher", "playweb"),
+                ("publisher", "openreel"),
                 ("extension", "mkv"),
             ]
             .map(|(name, value)| (name.to_owned(), value.to_owned())),
