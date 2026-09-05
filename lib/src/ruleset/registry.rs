@@ -564,6 +564,28 @@ mod tests {
         );
     }
 
+    #[sqlx::test]
+    async fn a_copy_of_a_built_in_parser_saves_under_its_own_id(pool: SqlitePool) {
+        let rulesets = loaded(&pool).await;
+
+        let copy = Parser {
+            id: "series-copy".to_owned(),
+            built_in: false,
+            ..shipped::parsers()
+                .into_iter()
+                .find(|parser| parser.id == "series")
+                .expect("the shipped set carries the series parser")
+        };
+
+        rulesets.save_parser(copy.clone()).await.expect("save");
+
+        assert_eq!(
+            rulesets.engine().parsers().next(),
+            Some(&copy),
+            "a copy is the reader's own parser, so it reads ahead of the set it came from"
+        );
+    }
+
     /// Every parser the engine carries, in declaration order.
     fn ids(rulesets: &Rulesets) -> Vec<String> {
         rulesets

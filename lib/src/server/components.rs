@@ -1187,7 +1187,14 @@ pub(crate) async fn parser_card(parser: &Parser) -> Result {
                 href=(format!("/admin/parsers/{}", parser.id))
                 class="block rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700"
             >
-                <h2 class="text-sm font-semibold text-slate-100">(&parser.name)</h2>
+                <div class="flex flex-wrap items-center gap-3">
+                    <h2 class="text-sm font-semibold text-slate-100">(&parser.name)</h2>
+                    if parser.built_in {
+                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                            "built in"
+                        </span>
+                    }
+                </div>
 
                 <p class="mt-1 text-xs text-slate-500">
                     (format::count(parser.fields.len(), "field", "fields"))

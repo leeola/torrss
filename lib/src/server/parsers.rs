@@ -23,13 +23,13 @@ use topcoat::{
     },
     runtime::{Event, procedure, shard},
     view::Unescaped,
-    view::{component, view},
+    view::{class, component, view},
 };
 use tracing::error;
 
 use crate::feed::registry::FeedRegistry;
 use crate::parser::form::{self as parser_form, ParserForm, ParserRows};
-use crate::parser::{PRESETS, Parser};
+use crate::parser::{PRESETS, Parser, Tint};
 use crate::ruleset::Diff;
 use crate::ruleset::registry::{Rulesets, SaveError};
 use crate::server::handlers::compute_matches;
@@ -91,7 +91,11 @@ async fn parser_editor_page(cx: &Cx) -> Result {
         .ok_or_not_found()?;
 
     view! {
-        parser_editor(parser: Some(parser))
+        if parser.built_in {
+            built_in_parser(parser: parser)
+        } else {
+            parser_editor(parser: Some(parser))
+        }
     }
 }
 
@@ -345,6 +349,123 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
     }
 }
 
+/// Shows a parser the binary carries, which no save reaches.
+///
+/// [`Rulesets::save_parser`] refuses a built-in id, so the editor's Save and
+/// Delete have nothing to write. The reader sees what the parser reads and
+/// takes a copy under their own name to change it.
+#[component]
+async fn built_in_parser(parser: &Parser) -> Result {
+    let fields = parser.fields.iter().collect::<Vec<_>>();
+    let rules = matches::rules(&fields, &[], &Edits::default()).0;
+
+    let judged = parser
+        .tests
+        .iter()
+        .map(|test| (test, verdict::verdict(&rules, test)))
+        .collect::<Vec<_>>();
+
+    let draft = ParserForm {
+        name: parser.name.clone(),
+        fields: parser.fields.clone(),
+        tests: parser.tests.clone(),
+    }
+    .encode();
+
+    // A shard argument outlives the render that built it, so the id crosses
+    // as an owned value rather than as a borrow of the parser.
+    let parser_id = parser.id.clone();
+
+    view! {
+        signal diff = String::new();
+
+        <nav class="text-sm text-slate-500">
+            <a href="/admin/parsers" class="hover:text-slate-300">"Parsers"</a>
+            " / "
+            <span class="text-slate-300">(&parser.name)</span>
+        </nav>
+
+        <div class="mt-3 flex flex-wrap items-start justify-between gap-4">
+            <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-3">
+                    <h1 class="text-2xl font-semibold tracking-tight">(&parser.name)</h1>
+                    <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                        "built in"
+                    </span>
+                </div>
+                <p class="mt-1 text-sm text-slate-400">
+                    "Built into torrss and read-only here. Copy it to change the fields under
+                    your own name."
+                </p>
+            </div>
+
+            <form method="post" action=(format!("/admin/parsers/{}/copy", parser.id))>
+                <button
+                    type="submit"
+                    class="cursor-pointer rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
+                >
+                    "Copy"
+                </button>
+            </form>
+        </div>
+
+        <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
+            <div class="px-4 py-3">
+                <h2 class="text-sm font-semibold text-slate-100">"Fields"</h2>
+                <p class="mt-1 text-xs text-slate-500">
+                    "Each field claims one run of the name, in the order they are listed."
+                </p>
+            </div>
+
+            <ul class="border-t border-slate-800">
+                for (position, field) in parser.fields.iter().enumerate() {
+                    <li class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-800/60 px-4 py-2 last:border-b-0">
+                        <span class=(class!(
+                            "size-2 shrink-0 rounded-full",
+                            Tint::at(position).dot(),
+                        ))></span>
+                        <span class="text-sm text-slate-200">(&field.name)</span>
+                        <span class="text-xs text-slate-500">(field.kind.label())</span>
+                        <span class="font-mono text-xs text-slate-400">
+                            (field.matcher().unwrap_or(""))
+                        </span>
+                        if field.required {
+                            <span class="text-xs text-slate-500">"required"</span>
+                        }
+                        if field.identity {
+                            <span class="text-xs text-slate-500">"identity"</span>
+                        }
+                        if field.tight {
+                            <span class="text-xs text-slate-500">"tight"</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+
+        <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
+            <div class="px-4 py-3">
+                <h2 class="text-sm font-semibold text-slate-100">"Tests"</h2>
+            </div>
+
+            components::test_verdicts(judged: &judged)
+        </div>
+
+        // The chips the shard renders post their filter back through this,
+        // as they do in the editor.
+        <div @click=$(|e: Event| if e.target.name == "diff-filter" {
+            diff.set(e.target.value);
+        })>
+            parser_matches(
+                parser: $(parser_id),
+                diff: $(diff.get()),
+                draft: $(draft),
+                saved: $(0.0),
+            )
+        </div>
+    }
+}
+
 /// Re-renders the Matches section against the draft the editor holds.
 ///
 /// The draft is the form's own body, so what the reader typed reaches the
@@ -486,6 +607,41 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
             Ok(Err("the parser was not stored".to_owned()))
         }
     }
+}
+
+/// Saves a copy of a parser under a fresh id, then opens its editor.
+///
+/// This is how a reader changes a parser the binary carries, which no save
+/// reaches. It checks nothing about `built_in`, because a stored parser
+/// copies the same way and [`Rulesets::save_parser`] refuses a write to a
+/// shipped id on its own.
+#[route(POST "/admin/parsers/{parser_id}/copy")]
+async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
+    let rulesets = app_context::<Arc<Rulesets>>(cx);
+
+    let copy = {
+        let engine = rulesets.engine();
+        let parser = engine
+            .parser(path_param::<ParserId>(cx))
+            .ok_or_not_found()?;
+
+        let name = format!("{} copy", parser.name);
+        let id = parser_form::unique_slug(&name, |id| engine.parser(id).is_some())
+            .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?;
+
+        Parser {
+            id,
+            name,
+            fields: parser.fields.clone(),
+            tests: parser.tests.clone(),
+            built_in: false,
+        }
+    };
+
+    let id = copy.id.clone();
+    rulesets.save_parser(copy).await.map_err(write_failed)?;
+
+    Ok(see_other(format!("/admin/parsers/{id}")))
 }
 
 /// Deletes a parser, then returns to the index.
