@@ -1290,6 +1290,10 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
         signal rows = initial_rows;
         signal diff = String::new();
         signal enabled = enabled_now;
+        // The name the page shows. A save replaces it, because a blank name
+        // stores one read out of the conditions and the reader has to see
+        // what the ruleset is called without loading the page again.
+        signal title = name;
         // The id the switch and the save name. A handler outlives the render
         // that built it, so the argument comes from a signal rather than
         // from a capture.
@@ -1306,7 +1310,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
             <a href="/admin/rulesets" class="hover:text-slate-300">"Rulesets"</a>
             " / "
             <span class="text-slate-300">
-                if name.is_empty() { "New" } else { (&name) }
+                $(if title.get().is_empty() { "New".to_owned() } else { title.get() })
             </span>
         </nav>
 
@@ -1362,7 +1366,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                         <input
                             type="text"
                             name="name"
-                            value=(&name)
+                            :value=$(title.get())
                             placeholder="named from the conditions"
                             class="w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-2xl font-semibold tracking-tight text-slate-100 focus:border-slate-600 focus:outline-none"
                         >
@@ -1434,6 +1438,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                                     ).await;
 
                                     if outcome.is_ok() {
+                                        title.set(outcome.unwrap());
                                         saved.increment();
                                     } else {
                                         save_error.set(outcome.unwrap_err());
