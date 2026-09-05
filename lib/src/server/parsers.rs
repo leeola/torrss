@@ -440,6 +440,7 @@ async fn create_parser(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             name: posted.name,
             fields: posted.fields,
             tests: posted.tests,
+            built_in: false,
         })
         .await
         .map_err(write_failed)?;
@@ -470,12 +471,15 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
             name: posted.name,
             fields: posted.fields,
             tests: posted.tests,
+            built_in: false,
         })
         .await;
 
     match saved {
         Ok(()) => Ok(Ok(name)),
-        Err(error @ SaveError::Engine { .. }) => Ok(Err(error.to_string())),
+        Err(error @ (SaveError::Engine { .. } | SaveError::BuiltIn { .. })) => {
+            Ok(Err(error.to_string()))
+        }
         Err(error) => {
             error!(error = %error, "save failed");
 
@@ -517,7 +521,9 @@ fn posted(RawForm(body): &RawForm) -> Result<ParserForm> {
 /// answers 500.
 fn write_failed(error: SaveError) -> Error {
     match error {
-        SaveError::Engine { .. } | SaveError::InUse { .. } => bad_request(error.to_string()).into(),
+        SaveError::Engine { .. } | SaveError::InUse { .. } | SaveError::BuiltIn { .. } => {
+            bad_request(error.to_string()).into()
+        }
         SaveError::Store { .. } => internal_server_error(error).into(),
     }
 }

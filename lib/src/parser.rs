@@ -12,6 +12,7 @@
 //! field wears wherever the reader meets it.
 
 pub(crate) mod form;
+pub(crate) mod shipped;
 pub(crate) mod store;
 
 use std::collections::BTreeMap;
@@ -39,6 +40,12 @@ pub(crate) struct Parser {
     /// Nothing outside the editor runs these. They exist so a field change
     /// that breaks a title the reader cared about says so as they type.
     pub(crate) tests: Vec<TitleTest>,
+
+    /// Whether the binary carries this parser.
+    ///
+    /// A built-in parser is never written or removed, and the store never
+    /// lists one, so a reader who wants a different version copies it.
+    pub(crate) built_in: bool,
 }
 
 /// The color one field wears wherever the reader meets it.
@@ -492,6 +499,7 @@ mod tests {
                 name: "Scene".to_owned(),
                 fields: fields.to_vec(),
                 tests: Vec::new(),
+                built_in: false,
             }],
             vec![Ruleset {
                 id: "wanted".to_owned(),

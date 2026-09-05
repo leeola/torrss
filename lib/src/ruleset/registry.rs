@@ -16,6 +16,7 @@ use snafu::{ResultExt, Snafu};
 use super::Ruleset;
 use super::store::RulesetStore;
 use crate::parser::Parser;
+use crate::parser::shipped;
 use crate::parser::store::ParserStore;
 use crate::rules::{Engine, EngineError};
 
@@ -52,6 +53,10 @@ pub(crate) enum SaveError {
 
     #[snafu(display("{id} is what another ruleset reads with"))]
     InUse { id: String },
+
+    /// The binary carries the parser, so no table row stands behind it.
+    #[snafu(display("{id} is built in. Copy it to change it."))]
+    BuiltIn { id: String },
 }
 
 impl Rulesets {
@@ -64,7 +69,7 @@ impl Rulesets {
     /// does, so this reports a table edited outside the application.
     pub(crate) async fn load(store: RulesetStore, parsers: ParserStore) -> Result<Self, LoadError> {
         let engine = Engine::new(
-            parsers.list().await.context(load_error::StoreSnafu)?,
+            with_shipped(parsers.list().await.context(load_error::StoreSnafu)?),
             store.list().await.context(load_error::StoreSnafu)?,
         )
         .context(load_error::EngineSnafu)?;
@@ -127,7 +132,12 @@ impl Rulesets {
     /// Returns [`SaveError::Engine`] when the resulting set does not
     /// compile, before anything is written. A pattern the reader broke
     /// mid-edit therefore leaves the stored parsers as they were.
+    ///
+    /// Returns [`SaveError::BuiltIn`] for a parser the binary carries. The
+    /// reader copies one to write their own version of it.
     pub(crate) async fn save_parser(&self, parser: Parser) -> Result<(), SaveError> {
+        self.refuse_built_in(&parser.id)?;
+
         let engine = self.rebuilt_with_parser(parser.clone())?;
 
         self.parsers.upsert(&parser).await.context(StoreSnafu)?;
@@ -143,7 +153,12 @@ impl Rulesets {
     /// Returns [`SaveError::InUse`] while a ruleset reads with it. A ruleset
     /// whose parser is gone reads no title, so the reader removes those
     /// first.
+    ///
+    /// Returns [`SaveError::BuiltIn`] for a parser the binary carries, which
+    /// no table row stands behind.
     pub(crate) async fn remove_parser(&self, id: &str) -> Result<bool, SaveError> {
+        self.refuse_built_in(id)?;
+
         {
             let engine = self.read();
 
@@ -182,6 +197,16 @@ impl Rulesets {
         Ok(true)
     }
 
+    /// Refuses a write to a parser the binary carries, before any table is
+    /// touched.
+    fn refuse_built_in(&self, id: &str) -> Result<(), SaveError> {
+        if self.read().parser(id).is_some_and(|parser| parser.built_in) {
+            return BuiltInSnafu { id }.fail();
+        }
+
+        Ok(())
+    }
+
     /// Compiles the running set with `ruleset` replaced or appended.
     ///
     /// The whole set compiles rather than the one ruleset alone, because the
@@ -213,14 +238,15 @@ impl Rulesets {
 
         let mut parsers = engine
             .parsers()
-            .filter(|stored| stored.id != parser.id)
+            .filter(|stored| !stored.built_in && stored.id != parser.id)
             .cloned()
             .collect::<Vec<_>>();
 
         parsers.push(parser);
 
         Ok(Arc::new(
-            Engine::new(parsers, engine.rulesets().cloned().collect()).context(EngineSnafu)?,
+            Engine::new(with_shipped(parsers), engine.rulesets().cloned().collect())
+                .context(EngineSnafu)?,
         ))
     }
 
@@ -231,7 +257,7 @@ impl Rulesets {
     /// which the router refuses.
     async fn reload(&self) -> Result<(), SaveError> {
         let engine = Engine::new(
-            self.parsers.list().await.context(StoreSnafu)?,
+            with_shipped(self.parsers.list().await.context(StoreSnafu)?),
             self.store.list().await.context(StoreSnafu)?,
         )
         .context(EngineSnafu)?;
@@ -257,11 +283,23 @@ impl Rulesets {
     }
 }
 
+/// Puts `stored` ahead of the parsers the binary carries.
+///
+/// A stored parser reads first because the reader wrote it for the trackers
+/// they follow, and a copy of a shipped parser is how they replace one. The
+/// shipped order behind it carries the classification, most specific first.
+fn with_shipped(stored: Vec<Parser>) -> Vec<Parser> {
+    let mut parsers = stored;
+    parsers.extend(shipped::parsers());
+
+    parsers
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::SqlitePool;
 
-    use super::{Rulesets, SaveError};
+    use super::{Rulesets, SaveError, shipped};
     use crate::parser::store::ParserStore;
     use crate::parser::{Field, FieldKind, Parser};
     use crate::ruleset::Ruleset;
@@ -287,11 +325,11 @@ mod tests {
         .expect("the stored set compiles")
     }
 
-    /// A registry over `pool` with `series` already saved as a parser.
+    /// A registry over `pool` with `shows` already saved as a parser.
     async fn with_parser(pool: &SqlitePool) -> Rulesets {
         let rulesets = loaded(pool).await;
         rulesets
-            .save_parser(parser("series", r"^(?<show>\w+)"))
+            .save_parser(parser("shows", r"^(?<show>\w+)"))
             .await
             .expect("the parser the rulesets read with");
 
@@ -307,13 +345,13 @@ mod tests {
     async fn a_saved_ruleset_reaches_the_engine_and_the_table(pool: SqlitePool) {
         let rulesets = with_parser(&pool).await;
         rulesets
-            .save(ruleset("hollow", "series"))
+            .save(ruleset("hollow", "shows"))
             .await
             .expect("save");
 
         assert_eq!(
             rulesets.engine().ruleset("hollow"),
-            Some(&ruleset("hollow", "series")),
+            Some(&ruleset("hollow", "shows")),
             "the running engine sees the save"
         );
         assert_eq!(
@@ -343,13 +381,13 @@ mod tests {
     async fn removing_a_parser_a_ruleset_reads_with_is_refused(pool: SqlitePool) {
         let rulesets = with_parser(&pool).await;
         rulesets
-            .save(ruleset("hollow", "series"))
+            .save(ruleset("hollow", "shows"))
             .await
             .expect("the ruleset on it");
 
         assert!(
             matches!(
-                rulesets.remove_parser("series").await,
+                rulesets.remove_parser("shows").await,
                 Err(SaveError::InUse { .. })
             ),
             "a ruleset whose parser is gone reads no title"
@@ -359,7 +397,7 @@ mod tests {
             "the ruleset itself removes"
         );
         assert!(
-            rulesets.remove_parser("series").await.expect("now free"),
+            rulesets.remove_parser("shows").await.expect("now free"),
             "and the parser follows once nothing reads with it"
         );
     }
@@ -368,7 +406,7 @@ mod tests {
     async fn set_enabled_shows_in_the_next_engine(pool: SqlitePool) {
         let rulesets = with_parser(&pool).await;
         rulesets
-            .save(ruleset("hollow", "series"))
+            .save(ruleset("hollow", "shows"))
             .await
             .expect("save");
 
@@ -404,6 +442,7 @@ mod tests {
                 identity: true,
             }],
             tests: Vec::new(),
+            built_in: false,
         }
     }
 
@@ -411,17 +450,22 @@ mod tests {
     async fn a_saved_parser_reaches_the_engine_and_the_table(pool: SqlitePool) {
         let rulesets = loaded(&pool).await;
         rulesets
-            .save_parser(parser("series", r"^(?<show>\w+)"))
+            .save_parser(parser("shows", r"^(?<show>\w+)"))
             .await
             .expect("save");
 
         assert_eq!(
-            rulesets.engine().parser("series"),
-            Some(&parser("series", r"^(?<show>\w+)")),
+            rulesets.engine().parser("shows"),
+            Some(&parser("shows", r"^(?<show>\w+)")),
             "the running engine sees the save"
         );
         assert_eq!(
-            loaded(&pool).await.engine().parsers().count(),
+            loaded(&pool)
+                .await
+                .engine()
+                .parsers()
+                .filter(|parser| !parser.built_in)
+                .count(),
             1,
             "and so does a process that starts after it"
         );
@@ -430,14 +474,19 @@ mod tests {
     #[sqlx::test]
     async fn a_parser_that_does_not_compile_is_never_written(pool: SqlitePool) {
         let rulesets = loaded(&pool).await;
-        let outcome = rulesets.save_parser(parser("series", "(")).await;
+        let outcome = rulesets.save_parser(parser("shows", "(")).await;
 
         assert!(
             matches!(outcome, Err(SaveError::Engine { .. })),
             "a broken pattern is reported rather than stored"
         );
         assert_eq!(
-            loaded(&pool).await.engine().parsers().count(),
+            loaded(&pool)
+                .await
+                .engine()
+                .parsers()
+                .filter(|parser| !parser.built_in)
+                .count(),
             0,
             "the table is untouched"
         );
@@ -447,15 +496,80 @@ mod tests {
     async fn remove_parser_reports_whether_one_was_there(pool: SqlitePool) {
         let rulesets = loaded(&pool).await;
         rulesets
-            .save_parser(parser("series", r"^(?<show>\w+)"))
+            .save_parser(parser("shows", r"^(?<show>\w+)"))
             .await
             .expect("save");
 
-        assert!(rulesets.remove_parser("series").await.expect("remove"));
-        assert_eq!(rulesets.engine().parsers().count(), 0);
+        assert!(rulesets.remove_parser("shows").await.expect("remove"));
+        assert_eq!(
+            rulesets
+                .engine()
+                .parsers()
+                .filter(|parser| !parser.built_in)
+                .count(),
+            0
+        );
         assert!(
-            !rulesets.remove_parser("series").await.expect("remove"),
+            !rulesets.remove_parser("shows").await.expect("remove"),
             "an id no parser carries reports the same absence"
         );
+    }
+
+    #[sqlx::test]
+    async fn a_fresh_database_loads_the_shipped_parsers(pool: SqlitePool) {
+        assert_eq!(
+            ids(&loaded(&pool).await),
+            shipped::parsers()
+                .into_iter()
+                .map(|parser| parser.id)
+                .collect::<Vec<_>>(),
+            "a reader who has written nothing still reads a title"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_saved_parser_reads_before_the_shipped_set(pool: SqlitePool) {
+        let rulesets = loaded(&pool).await;
+        rulesets
+            .save_parser(parser("series-copy", r"^(?<show>\w+)"))
+            .await
+            .expect("save");
+
+        assert_eq!(
+            ids(&rulesets).first().map(String::as_str),
+            Some("series-copy"),
+            "the reader wrote it for their own trackers, so it reads first"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_built_in_parser_is_never_saved_or_removed(pool: SqlitePool) {
+        let rulesets = loaded(&pool).await;
+
+        assert!(
+            matches!(
+                rulesets
+                    .save_parser(parser("series", r"^(?<show>\w+)"))
+                    .await,
+                Err(SaveError::BuiltIn { .. })
+            ),
+            "the binary carries it, so no row stands behind the write"
+        );
+        assert!(
+            matches!(
+                rulesets.remove_parser("series").await,
+                Err(SaveError::BuiltIn { .. })
+            ),
+            "and none stands behind the removal either"
+        );
+    }
+
+    /// Every parser the engine carries, in declaration order.
+    fn ids(rulesets: &Rulesets) -> Vec<String> {
+        rulesets
+            .engine()
+            .parsers()
+            .map(|parser| parser.id.clone())
+            .collect()
     }
 }

@@ -1817,7 +1817,9 @@ fn posted(RawForm(body): &RawForm) -> Result<RulesetForm> {
 /// problem, not theirs.
 pub(super) fn write_failed(error: SaveError) -> Error {
     match error {
-        SaveError::Engine { .. } | SaveError::InUse { .. } => bad_request(error.to_string()).into(),
+        SaveError::Engine { .. } | SaveError::InUse { .. } | SaveError::BuiltIn { .. } => {
+            bad_request(error.to_string()).into()
+        }
         SaveError::Store { .. } => internal_server_error(error).into(),
     }
 }

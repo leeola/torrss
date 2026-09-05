@@ -135,6 +135,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
                 ),
             ],
             tests: Vec::new(),
+            built_in: false,
         },
         Parser {
             id: "feature-films".to_owned(),
@@ -202,6 +203,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
                 ),
             ],
             tests: Vec::new(),
+            built_in: false,
         },
         Parser {
             id: "archive-talks".to_owned(),
@@ -250,6 +252,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
                 ),
             ],
             tests: Vec::new(),
+            built_in: false,
         },
     ]
 }

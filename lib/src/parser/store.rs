@@ -83,6 +83,7 @@ impl ParserStore {
                 name,
                 fields: Vec::new(),
                 tests: Vec::new(),
+                built_in: false,
             })
             .collect::<Vec<_>>();
 
@@ -267,6 +268,7 @@ mod tests {
             name: id.to_owned(),
             fields,
             tests: Vec::new(),
+            built_in: false,
         }
     }
 

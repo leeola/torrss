@@ -24,9 +24,10 @@ const SHOW_FIELD: &str = "show";
 
 /// Fields a suggested condition never names.
 ///
-/// A feed title carries neither, so a condition on one claims nothing the
-/// feed announces.
-const SKIPPED_FIELDS: &[&str] = &["extension", "checksum"];
+/// A feed title carries no extension and no checksum, so a condition on
+/// either claims nothing the feed announces. A condition on the episode name
+/// claims one episode, where a suggestion is about a whole show.
+const SKIPPED_FIELDS: &[&str] = &["extension", "checksum", "episodeName"];
 
 /// One ruleset an import offers to create.
 ///
