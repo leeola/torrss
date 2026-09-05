@@ -26,6 +26,72 @@ pub(crate) fn parsers() -> Vec<Parser> {
     });
 
     vec![
+        // This leads the set because a required bracketed group tag is the
+        // most specific opening any of these has. A scene name never starts
+        // with one, so nothing else loses a title to it. A name such as
+        // [OpenReel] Coastal Ecology S2 - 05v2 carries an S2 token, and the
+        // series parsers read that token as their own season.
+        //
+        // The identity fields match series, so a show numbered by season
+        // files with its scene releases. One numbered without a season keeps
+        // an empty season part, which is what the positional key is for.
+        //
+        // A v2 suffix marks a re-release of the same episode, so it stays out
+        // of the number. Only the extension comes from tags(), because this
+        // shape writes its quality inside brackets rather than as trailing
+        // dotted tags.
+        Parser {
+            id: "anime".to_owned(),
+            name: "Anime".to_owned(),
+            fields: vec![
+                field(
+                    "publisher",
+                    Text,
+                    Some(r"^\[(?<publisher>[^\]]+)\]"),
+                    true,
+                    false,
+                    false,
+                ),
+                field("show", Text, Some(r"\s(?<show>.+?)"), true, true, true),
+                field(
+                    "season",
+                    Season,
+                    Some(r"\sS(?<season>\d{1,2})"),
+                    false,
+                    true,
+                    true,
+                ),
+                field(
+                    "episodeNumber",
+                    Episode,
+                    Some(r"\s-\s(?<episodeNumber>\d{1,4})(?:v\d)?"),
+                    true,
+                    true,
+                    false,
+                ),
+                field(
+                    "resolution",
+                    Enum,
+                    Some(r"(?i)[\[(](?:[^\])]*\s)?(?<resolution>480p|720p|1080p|2160p)"),
+                    false,
+                    false,
+                    false,
+                ),
+                field(
+                    "checksum",
+                    Text,
+                    Some(r"\[(?<checksum>[0-9A-Fa-f]{8})\]"),
+                    false,
+                    false,
+                    false,
+                ),
+            ]
+            .into_iter()
+            .chain(tags().into_iter().filter(|tag| tag.name == "extension"))
+            .collect(),
+            tests: Vec::new(),
+            built_in: true,
+        },
         // The show is lazy, so it stops at the first season token. The year
         // is optional and takes no part in the identity, so Show.2019.S02E05
         // and Show.S02E05 read one show rather than two. A double episode
@@ -327,6 +393,34 @@ mod tests {
     /// Every row names every value the parser captured, so a pattern that
     /// claims one run too many fails here rather than passing unseen.
     const READINGS: &[(&str, Read<'_>)] = &[
+        (
+            "[OpenReel] Coastal Ecology - 18 [1080p][A1B2C3D4].mkv",
+            Some((
+                "anime",
+                &[
+                    ("publisher", "openreel"),
+                    ("show", "coastal ecology"),
+                    ("episodeNumber", "18"),
+                    ("resolution", "1080p"),
+                    ("checksum", "a1b2c3d4"),
+                    ("extension", "mkv"),
+                ],
+            )),
+        ),
+        (
+            "[OpenReel] Coastal Ecology S2 - 05v2 (720p).mkv",
+            Some((
+                "anime",
+                &[
+                    ("publisher", "openreel"),
+                    ("show", "coastal ecology"),
+                    ("season", "2"),
+                    ("episodeNumber", "5"),
+                    ("resolution", "720p"),
+                    ("extension", "mkv"),
+                ],
+            )),
+        ),
         (
             "Coastal.Ecology.S02E05.1080p.WEB-DL.x265.DDP5.1-OpenReel.mkv",
             Some((
