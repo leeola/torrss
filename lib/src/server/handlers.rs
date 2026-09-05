@@ -26,6 +26,7 @@ use crate::{
     parser::form as parser_form,
     parser::{Field, Parser, TitleTest},
     rules::Engine,
+    ruleset,
     ruleset::form::{EditorRows, RulesetForm},
     ruleset::registry::{Rulesets, SaveError},
     ruleset::{Condition, Diff, Ruleset},
@@ -1362,7 +1363,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>) -> Result {
                             type="text"
                             name="name"
                             value=(&name)
-                            placeholder="Coastal Ecology"
+                            placeholder="named from the conditions"
                             class="w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-2xl font-semibold tracking-tight text-slate-100 focus:border-slate-600 focus:outline-none"
                         >
                         // The badge is bound rather than rendered by the
@@ -1823,17 +1824,20 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     let rulesets = app_context::<Arc<Rulesets>>(cx);
     let posted = posted(&form)?;
 
-    let id = {
+    let (id, name) = {
         let engine = rulesets.engine();
+        let name = resolve_name(&engine, &posted);
 
-        parser_form::unique_slug(&posted.name, |id| engine.ruleset(id).is_some())
-            .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?
+        let id = parser_form::unique_slug(&name, |id| engine.ruleset(id).is_some())
+            .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?;
+
+        (id, name)
     };
 
     rulesets
         .save(Ruleset {
             id: id.clone(),
-            name: posted.name,
+            name,
             enabled: true,
             parser: posted.parser,
             conditions: posted.conditions,
@@ -1867,12 +1871,12 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
 
     let rulesets = app_context::<Arc<Rulesets>>(cx);
     let enabled = rulesets.engine().ruleset(&id).ok_or_not_found()?.enabled;
-    let name = posted.name.clone();
+    let name = resolve_name(&rulesets.engine(), &posted);
 
     let saved = rulesets
         .save(Ruleset {
             id,
-            name: posted.name,
+            name: name.clone(),
             enabled,
             parser: posted.parser,
             conditions: posted.conditions,
@@ -1891,6 +1895,26 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
             Ok(Err("the ruleset was not stored".to_owned()))
         }
     }
+}
+
+/// Returns the name a write stores for a posted ruleset.
+///
+/// A blank name is the reader asking the conditions to name the ruleset, so
+/// it reads one out of them rather than refusing the write.
+///
+/// A parser the engine does not carry stands in as its own id. The save then
+/// fails on the engine, so the name never lands and the substitute never
+/// reaches the reader.
+fn resolve_name(engine: &Engine, posted: &RulesetForm) -> String {
+    if !posted.name.is_empty() {
+        return posted.name.clone();
+    }
+
+    let parser = engine
+        .parser(&posted.parser)
+        .map_or(posted.parser.as_str(), |parser| parser.name.as_str());
+
+    ruleset::inferred_name(&posted.conditions, parser)
 }
 
 /// Deletes a ruleset, then returns to the index.

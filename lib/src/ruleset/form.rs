@@ -21,8 +21,8 @@ use url::form_urlencoded;
 use super::{Condition, Op};
 use crate::parser::TitleTest;
 use crate::parser::form::{
-    EmptyNameSnafu, FormError, MissingParserSnafu, MissingValueSnafu, TestRow, UnknownOpSnafu,
-    draft_test, encode_test, read_test,
+    FormError, MissingParserSnafu, MissingValueSnafu, TestRow, UnknownOpSnafu, draft_test,
+    encode_test, read_test,
 };
 
 /// A ruleset as the editor's form describes it.
@@ -119,6 +119,10 @@ impl RulesetForm {
     /// Returns a refusal when the body names no parser. A ruleset with none
     /// reads no title, so there is nothing for its conditions to judge.
     ///
+    /// A blank name is accepted. The write infers one from the conditions
+    /// through [`crate::ruleset::inferred_name`], so the reader names a
+    /// ruleset once or not at all.
+    ///
     /// Returns a refusal for a condition naming an operator this build does
     /// not know, or leaving its value empty under an operator that compares
     /// one.
@@ -128,7 +132,6 @@ impl RulesetForm {
     /// The editor lists such a row through [`EditorRows`], which keeps it.
     pub(crate) fn parse(body: &str) -> Result<Self, FormError> {
         let form = Self::parse_draft(body)?;
-        ensure!(!form.name.is_empty(), EmptyNameSnafu);
         ensure!(!form.parser.is_empty(), MissingParserSnafu);
 
         Ok(form)
@@ -138,14 +141,15 @@ impl RulesetForm {
     /// reader types one.
     ///
     /// The name has no part in a compare. The rules come from the parser and
-    /// the conditions, and the verdicts from the tests, so a blank name is a
-    /// save's concern rather than this one's. A blank parser is too: the
-    /// editor renders nothing to compare against until the reader picks one.
+    /// the conditions, and the verdicts from the tests, so a blank name is
+    /// the write's concern rather than this one's, and the write infers one.
+    /// A blank parser is the write's concern too: the editor renders nothing
+    /// to compare against until the reader picks one.
     ///
     /// # Errors
     ///
     /// Returns the same condition refusals [`Self::parse`] does, less the
-    /// empty name and the missing parser.
+    /// missing parser.
     pub(crate) fn parse_draft(body: &str) -> Result<Self, FormError> {
         let posted = read(body);
 
@@ -295,8 +299,13 @@ mod tests {
 
         assert_eq!(
             RulesetForm::parse("parser=series"),
-            Err(FormError::EmptyName),
-            "a save names what it stores"
+            Ok(RulesetForm {
+                name: String::new(),
+                parser: "series".to_owned(),
+                conditions: Vec::new(),
+                tests: Vec::new(),
+            }),
+            "a blank name is inferred at the write"
         );
     }
 

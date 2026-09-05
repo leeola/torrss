@@ -28,6 +28,11 @@ pub(crate) struct Ruleset {
     /// Stable key that names the ruleset in a URL.
     pub(crate) id: String,
 
+    /// What the reader calls this ruleset.
+    ///
+    /// The editor posts this blank when the reader types nothing, and a
+    /// blank one stores [`inferred_name`] of the conditions instead. A typed
+    /// name is kept as typed.
     pub(crate) name: String,
 
     /// Whether the ruleset claims titles.
@@ -289,9 +294,53 @@ impl Condition {
     }
 }
 
+/// Returns the name a condition list reads as.
+///
+/// An equals value is the name a reader types by hand, so it stands alone
+/// and leads the list. Every other condition reads as its field, its
+/// operator, and its value, which is how the editor's own row reads it. An
+/// operator that takes no value renders without one.
+///
+/// A list value keeps its commas, because the reader wrote them.
+///
+/// A ruleset with no condition claims every title its parser reads, so it
+/// takes the parser's name.
+pub(crate) fn inferred_name(conditions: &[Condition], parser: &str) -> String {
+    if conditions.is_empty() {
+        return parser.to_owned();
+    }
+
+    let leading = conditions.iter().filter(|held| held.op == Op::Equals);
+    let trailing = conditions.iter().filter(|held| held.op != Op::Equals);
+
+    let mut name = String::new();
+
+    for condition in leading.chain(trailing) {
+        if !name.is_empty() {
+            name.push_str(", ");
+        }
+
+        if condition.op == Op::Equals {
+            name.push_str(condition.value.trim());
+            continue;
+        }
+
+        name.push_str(&condition.field);
+        name.push(' ');
+        name.push_str(condition.op.label());
+
+        if condition.op.takes_value() {
+            name.push(' ');
+            name.push_str(condition.value.trim());
+        }
+    }
+
+    name
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Condition, Op};
+    use super::{Condition, Op, inferred_name};
     use crate::parser::FieldKind;
 
     fn condition(field: &str, op: Op, value: &str) -> Condition {
@@ -367,5 +416,47 @@ mod tests {
         );
         assert!(!condition("episodeNumber", Op::Present, "").holds(FieldKind::Episode, None));
         assert!(!condition("episodeNumber", Op::Equals, "6").holds(FieldKind::Episode, None));
+    }
+
+    #[test]
+    fn equals_values_lead_and_the_rest_follow() {
+        assert_eq!(
+            inferred_name(
+                &[
+                    condition("show", Op::Equals, "Coastal Ecology"),
+                    condition("season", Op::AtLeast, "2"),
+                    condition("resolution", Op::OneOf, "1080p, 2160p"),
+                ],
+                "Series Episodes"
+            ),
+            "Coastal Ecology, season at least 2, resolution one of 1080p, 2160p"
+        );
+    }
+
+    #[test]
+    fn an_equals_after_an_ordering_still_leads() {
+        assert_eq!(
+            inferred_name(
+                &[
+                    condition("season", Op::AtLeast, "2"),
+                    condition("show", Op::Equals, "Coastal Ecology"),
+                ],
+                "Series Episodes"
+            ),
+            "Coastal Ecology, season at least 2"
+        );
+    }
+
+    #[test]
+    fn no_condition_takes_the_parser_name() {
+        assert_eq!(inferred_name(&[], "Series Episodes"), "Series Episodes");
+        assert_eq!(
+            inferred_name(
+                &[condition("episodeNumber", Op::Absent, "")],
+                "Series Episodes"
+            ),
+            "episodeNumber absent",
+            "an operator that takes no value renders without one"
+        );
     }
 }
