@@ -77,10 +77,7 @@ pub(super) struct ParsedValue {
 /// appear in a well-formed name. A captured name with no matching field is
 /// dropped: the engine compiles from this same list, so none is expected.
 pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue> {
-    let Some(parser) = engine
-        .ruleset(&parsed.ruleset)
-        .and_then(|ruleset| engine.parser_of(ruleset))
-    else {
+    let Some(parser) = engine.parser(&parsed.parser) else {
         return Vec::new();
     };
 

@@ -26,6 +26,12 @@ pub(crate) struct Parsed {
     /// that does.
     pub(crate) ruleset: String,
 
+    /// [`crate::parser::Parser::id`] of the parser the claimant read with.
+    ///
+    /// The identity names the fields rather than the parser, so this is what
+    /// the library row records to say which parser claimed a torrent.
+    pub(crate) parser: String,
+
     /// Every field that matched, in the ruleset's own order.
     ///
     /// A ruleset claims a title when its regex reads it and every condition
@@ -56,10 +62,10 @@ pub(crate) struct Reading {
 
 /// What makes two releases the same thing.
 ///
-/// The parser named here is the one the claiming ruleset reads with, rather
-/// than the ruleset itself. Every ruleset on one parser therefore shares one
-/// namespace of releases, so the same episode claimed by two of them is one
-/// release.
+/// The fields that name a release are what decide it, rather than whatever
+/// read them, so releases are filed under the names of those fields. Every
+/// parser whose identity fields carry those names therefore files into one
+/// set, and a reader's copy of a shipped parser never doubles a grab.
 ///
 /// A trailing empty part makes the identity a span rather than one release. A
 /// season pack captures a show and a season and no episode, so its key ends
@@ -67,7 +73,9 @@ pub(crate) struct Reading {
 /// name. See [`Self::spans`] for the spans one release falls inside.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Identity {
-    pub(crate) parser: String,
+    /// The identity field names in the parser's order, joined with `+`, such
+    /// as `show+season+episodeNumber`.
+    pub(crate) namespace: String,
 
     /// The normalized value of each identity field, in the parser.s order.
     pub(crate) key: Vec<String>,
@@ -79,7 +87,7 @@ impl Identity {
     ///
     /// The first entry is the release itself, and each later one drops one
     /// more trailing part. An episode therefore yields its own key, its
-    /// season, its show, and the bare ruleset. Testing all of them against
+    /// season, its show, and the bare namespace. Testing all of them against
     /// the library is what lets a stored season pack own the episodes it
     /// carries.
     ///
@@ -95,7 +103,7 @@ impl Identity {
                 }
 
                 Self {
-                    parser: self.parser.clone(),
+                    namespace: self.namespace.clone(),
                     key,
                 }
                 .to_string()
@@ -107,7 +115,7 @@ impl Identity {
 impl Display for Identity {
     /// Renders the form the library table stores.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.parser)?;
+        write!(f, "{}", self.namespace)?;
 
         for part in &self.key {
             write!(f, "|{part}")?;
@@ -369,7 +377,8 @@ impl Engine {
 
             Some(Parsed {
                 ruleset: ruleset.id.clone(),
-                identity: ruleset.identity(&self.parsers[ruleset.parser], &parser.fields, &values),
+                parser: self.parsers[ruleset.parser].id.clone(),
+                identity: ruleset.identity(&parser.fields, &values),
                 values,
             })
         })
@@ -456,14 +465,14 @@ impl Compiled {
     /// two releases only agree position by position, and a trailing gap
     /// reads as a span over everything inside it rather than as a shorter
     /// key that matches nothing.
-    fn identity(
-        &self,
-        parser: &Parser,
-        fields: &[CompiledField],
-        values: &[(String, String)],
-    ) -> Identity {
+    fn identity(&self, fields: &[CompiledField], values: &[(String, String)]) -> Identity {
         Identity {
-            parser: parser.id.clone(),
+            namespace: fields
+                .iter()
+                .filter(|field| field.identity)
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>()
+                .join("+"),
             key: fields
                 .iter()
                 .filter(|field| field.identity)
@@ -692,11 +701,11 @@ mod tests {
     }
 
     #[test]
-    fn identity_names_the_parser() {
+    fn identity_names_its_fields() {
         assert_eq!(
-            identity(HOLLOW_1080).parser,
-            "series-episodes",
-            "the identity names the parser, not the ruleset that claimed it"
+            identity(HOLLOW_1080).namespace,
+            "show+season+episodeNumber",
+            "the identity names the fields that make it, not the parser that read them"
         );
     }
 
@@ -705,7 +714,7 @@ mod tests {
         assert_eq!(
             identity(HOLLOW_OTHER_GROUP),
             Identity {
-                parser: "series-episodes".to_owned(),
+                namespace: "show+season+episodeNumber".to_owned(),
                 key: vec![
                     "the hollow meridian".to_owned(),
                     "4".to_owned(),
@@ -737,7 +746,7 @@ mod tests {
         assert_eq!(
             parsed.identity,
             Identity {
-                parser: "series-episodes".to_owned(),
+                namespace: "show+season+episodeNumber".to_owned(),
                 key: vec![
                     "the hollow meridian".to_owned(),
                     "1".to_owned(),
@@ -753,12 +762,12 @@ mod tests {
         assert_eq!(
             identity(HOLLOW_1080).spans(),
             [
-                "series-episodes|the hollow meridian|4|6",
-                "series-episodes|the hollow meridian|4|",
-                "series-episodes|the hollow meridian||",
-                "series-episodes|||",
+                "show+season+episodeNumber|the hollow meridian|4|6",
+                "show+season+episodeNumber|the hollow meridian|4|",
+                "show+season+episodeNumber|the hollow meridian||",
+                "show+season+episodeNumber|||",
             ],
-            "the episode, then its season, then its show, then the parser"
+            "the episode, then its season, then its show, then the namespace"
         );
     }
 
@@ -766,7 +775,7 @@ mod tests {
     fn season_pack_renders_with_a_trailing_empty_part() {
         assert_eq!(
             identity(HOLLOW_PACK).to_string(),
-            "series-episodes|the hollow meridian|1|",
+            "show+season+episodeNumber|the hollow meridian|1|",
             "the form the library stores"
         );
     }
@@ -794,7 +803,7 @@ mod tests {
         assert_eq!(
             identity(FILM),
             Identity {
-                parser: "feature-films".to_owned(),
+                namespace: "title+year".to_owned(),
                 key: vec!["coastal drift".to_owned(), "2024".to_owned()],
             }
         );
@@ -805,13 +814,37 @@ mod tests {
         assert_eq!(ENGINE.parse(NONSENSE), None);
     }
 
-    /// The rendered form is what the library table stores, so a change here
-    /// orphans every row already written.
+    /// The rendered form is what the library table stores. A row written
+    /// under an older form needs no migration, because `library::replace`
+    /// rewrites the table whole from the next scan.
     #[test]
     fn identity_renders_as_the_stored_key() {
         assert_eq!(
             identity(HOLLOW_1080).to_string(),
-            "series-episodes|the hollow meridian|4|6"
+            "show+season+episodeNumber|the hollow meridian|4|6"
+        );
+    }
+
+    #[test]
+    fn two_parsers_with_one_identity_share_an_identity() {
+        let claimed = |parsers: Vec<Parser>, parser: &str| {
+            Engine::new(parsers, vec![on_parser("episodes", parser, Vec::new())])
+                .expect("the fixture patterns compile")
+                .parse(HOLLOW_1080)
+                .expect("a ruleset with no conditions claims what its parser reads")
+                .identity
+        };
+
+        let copies = {
+            let mut parsers = fixture::parsers();
+            parsers[0].id = "series-copy".to_owned();
+            parsers
+        };
+
+        assert_eq!(
+            claimed(fixture::parsers(), "series-episodes"),
+            claimed(copies, "series-copy"),
+            "a copy of a parser names the same identity fields, so it files no second release"
         );
     }
 

@@ -311,7 +311,7 @@ fn identify(torrent: &Torrent, engine: &Engine) -> Option<Owned> {
 
     Some(Owned {
         identity: parsed.identity.to_string(),
-        parser: parsed.identity.parser,
+        parser: parsed.parser,
         torrent_id: torrent.id.clone(),
         name: torrent.name.clone(),
     })
@@ -340,10 +340,10 @@ mod tests {
     /// A whole season the client holds as one torrent.
     const HOLLOW_PACK: &str = "The.Hollow.Meridian.S04.1080p.Broadcast";
 
-    const HOLLOW_KEY: &str = "series-episodes|the hollow meridian|4|6";
-    const NEXT_KEY: &str = "series-episodes|the hollow meridian|4|7";
-    const FILM_KEY: &str = "feature-films|coastal drift|2024";
-    const PACK_KEY: &str = "series-episodes|the hollow meridian|4|";
+    const HOLLOW_KEY: &str = "show+season+episodeNumber|the hollow meridian|4|6";
+    const NEXT_KEY: &str = "show+season+episodeNumber|the hollow meridian|4|7";
+    const FILM_KEY: &str = "title+year|coastal drift|2024";
+    const PACK_KEY: &str = "show+season+episodeNumber|the hollow meridian|4|";
 
     fn set(identities: &[&str]) -> HashSet<String> {
         identities.iter().map(|id| (*id).to_owned()).collect()

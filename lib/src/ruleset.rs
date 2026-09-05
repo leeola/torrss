@@ -48,10 +48,11 @@ pub(crate) struct Ruleset {
     /// [`crate::parser::Parser::id`] of the parser this ruleset reads titles
     /// with.
     ///
-    /// The identity names the parser too, so every ruleset reading through
-    /// one shares a single namespace of releases. Two rulesets that claim
-    /// different halves of what a parser reads therefore never file the same
-    /// episode twice.
+    /// The identity names the parser's identity fields rather than the parser
+    /// itself, so every ruleset reading through one shares a namespace of
+    /// releases with every other parser that names those fields. Two rulesets
+    /// that claim different halves of what a parser reads therefore never
+    /// file the same episode twice.
     pub(crate) parser: String,
 
     /// Each comparison this ruleset makes on a value the parser read.
