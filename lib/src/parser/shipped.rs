@@ -182,6 +182,32 @@ pub(crate) fn parsers() -> Vec<Parser> {
             tests: Vec::new(),
             built_in: true,
         },
+        // The movie run is greedy, so the last year in the title is the one
+        // read. That keeps a year written inside a name, such as
+        // The.2000.Drift, out of the year field.
+        //
+        // The year also matches its parenthesized spelling, because a client
+        // names the folder it unpacked into Title (2024).
+        Parser {
+            id: "film".to_owned(),
+            name: "Film".to_owned(),
+            fields: vec![
+                field("movie", Text, Some(r"^(?<movie>.+)"), true, true, true),
+                field(
+                    "year",
+                    Number,
+                    Some(r"[. _(](?<year>(?:19|20)\d{2})\)?"),
+                    true,
+                    true,
+                    false,
+                ),
+            ]
+            .into_iter()
+            .chain(tags())
+            .collect(),
+            tests: Vec::new(),
+            built_in: true,
+        },
     ]
 }
 
@@ -470,6 +496,45 @@ mod tests {
                     ("resolution", "1080p"),
                     ("source", "web dl"),
                     ("publisher", "openreel"),
+                ],
+            )),
+        ),
+        (
+            "Coastal.Drift.2024.1080p.BluRay.x264.DTS-HD-MeridianPress.mkv",
+            Some((
+                "film",
+                &[
+                    ("movie", "coastal drift"),
+                    ("year", "2024"),
+                    ("resolution", "1080p"),
+                    ("source", "bluray"),
+                    ("codec", "x264"),
+                    ("audio", "dts hd"),
+                    ("publisher", "meridianpress"),
+                    ("extension", "mkv"),
+                ],
+            )),
+        ),
+        (
+            "Coastal Drift (2024) 2160p WEB-DL",
+            Some((
+                "film",
+                &[
+                    ("movie", "coastal drift"),
+                    ("year", "2024"),
+                    ("resolution", "2160p"),
+                    ("source", "web dl"),
+                ],
+            )),
+        ),
+        (
+            "The.2000.Drift.2024.720p",
+            Some((
+                "film",
+                &[
+                    ("movie", "the 2000 drift"),
+                    ("year", "2024"),
+                    ("resolution", "720p"),
                 ],
             )),
         ),
