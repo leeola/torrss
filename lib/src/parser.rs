@@ -48,6 +48,30 @@ pub(crate) struct Parser {
     pub(crate) built_in: bool,
 }
 
+impl Parser {
+    /// The field that names what a release is about, such as the show or the
+    /// film.
+    ///
+    /// It is the first identity field, because the subject leads a title and
+    /// so leads the identity. Parsers name it differently, so anything that
+    /// groups releases by their subject asks here rather than for a field
+    /// called `show`.
+    pub(crate) fn subject(&self) -> Option<&Field> {
+        self.fields.iter().find(|field| field.identity)
+    }
+
+    /// Whether this parser reads releases that arrive one at a time.
+    ///
+    /// A season or an episode field is what says so. A ruleset on a subject
+    /// waits for releases still to come, which is only meaningful for a
+    /// parser that reads them.
+    pub(crate) fn episodic(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| matches!(field.kind, FieldKind::Season | FieldKind::Episode))
+    }
+}
+
 /// The color one field wears wherever the reader meets it.
 ///
 /// A field takes its color from its position among a parser.s
@@ -485,6 +509,45 @@ mod tests {
             tight: preset.tight,
             identity: preset.identity,
         }
+    }
+
+    /// A parser over the presets `names`, which is all `subject` and
+    /// `episodic` read.
+    fn over(names: &[&str]) -> Parser {
+        Parser {
+            id: "scene".to_owned(),
+            name: "Scene".to_owned(),
+            fields: names.iter().copied().map(preset_field).collect(),
+            tests: Vec::new(),
+            built_in: false,
+        }
+    }
+
+    #[test]
+    fn subject_is_the_first_identity_field() {
+        assert_eq!(
+            [
+                over(&["show", "season"])
+                    .subject()
+                    .map(|field| &*field.name),
+                over(&["movie", "year"]).subject().map(|field| &*field.name),
+                over(&["resolution"]).subject().map(|field| &*field.name),
+            ],
+            [Some("show"), Some("movie"), None],
+            "the subject leads the identity, and a parser with no identity field has none"
+        );
+    }
+
+    #[test]
+    fn episodic_needs_a_season_or_episode_field() {
+        assert_eq!(
+            [
+                over(&["show", "season"]).episodic(),
+                over(&["movie", "year"]).episodic(),
+            ],
+            [true, false],
+            "a film arrives once, so nothing about it is episodic"
+        );
     }
 
     /// Reads `title` through one parser over `fields`, claimed by a ruleset

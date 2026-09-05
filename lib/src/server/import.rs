@@ -27,12 +27,40 @@ use url::form_urlencoded;
 use crate::parser::form as parser_form;
 use crate::rules::Engine;
 use crate::ruleset;
+use crate::ruleset::import::{Collision, Suggestion};
 use crate::ruleset::registry::Rulesets;
 use crate::ruleset::{Ruleset, import};
 use crate::server::{components, format, handlers};
 use crate::services::Services;
 
-/// Lists every show the client holds that no ruleset names.
+/// One suggestion with every name the row renders resolved.
+struct Row<'a> {
+    suggestion: &'a Suggestion,
+
+    /// What the suggested ruleset is called.
+    name: String,
+
+    /// The ruleset that already names this subject, when one does.
+    claimed: Option<Claimed>,
+}
+
+/// The ruleset a collision points at, named for the reader.
+///
+/// The engine is read once per row here, because a badge names the ruleset
+/// and the parser it reads with rather than their ids.
+struct Claimed {
+    id: String,
+    ruleset: String,
+
+    /// What the ruleset's parser is called, which only a collision on
+    /// another parser renders.
+    parser: String,
+
+    same_parser: bool,
+}
+
+/// Lists every subject the client holds, and marks each one a ruleset
+/// already names.
 ///
 /// A client that does not answer renders its refusal on the page rather than
 /// as an error status. The request itself succeeded, and the client is what
@@ -48,12 +76,19 @@ async fn import_preview(cx: &Cx) -> Result {
         Err(error) => Err(error.to_string()),
     };
 
-    // The name is resolved here rather than in the view, because a row
-    // borrows it and a value built inline dies before the row reads it.
+    // The names are resolved here rather than in the view, because a row
+    // borrows them and a value built inline dies before the row reads it.
     let rows = listed.as_ref().map(|suggestions| {
         suggestions
             .iter()
-            .map(|suggestion| (suggestion, named(&engine, suggestion)))
+            .map(|suggestion| Row {
+                name: named(&engine, suggestion),
+                claimed: suggestion
+                    .collision
+                    .as_ref()
+                    .map(|collision| claimed(&engine, collision)),
+                suggestion,
+            })
             .collect::<Vec<_>>()
     });
 
@@ -74,11 +109,11 @@ async fn import_preview(cx: &Cx) -> Result {
                 "failed: " (error)
             </p>,
             Ok(entries) if entries.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "Every show the client holds already has a ruleset, or no parser reads its names."
+                "The client holds no show a parser reads."
             </p>,
             Ok(entries) => <form method="post" action="/admin/rulesets/import">
                 <ul class="mt-6 flex flex-col gap-2">
-                    for (suggestion, name) in entries {
+                    for Row { suggestion, name, claimed } in entries {
                         <li>
                             <label class="block cursor-pointer rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700">
                                 <div class="flex flex-wrap items-center gap-3">
@@ -86,10 +121,24 @@ async fn import_preview(cx: &Cx) -> Result {
                                         type="checkbox"
                                         name="pick"
                                         value=(format!("{}|{}", suggestion.parser, suggestion.key))
-                                        checked=(true)
+                                        checked=(claimed.as_ref().is_none_or(|claimed| !claimed.same_parser))
+                                        disabled=(claimed.as_ref().is_some_and(|claimed| claimed.same_parser))
                                         class="size-4 rounded border-slate-700 bg-slate-950"
                                     >
                                     <h2 class="text-sm font-semibold text-slate-100">(name)</h2>
+
+                                    match claimed {
+                                        Some(claimed) if claimed.same_parser => <a
+                                            href=(format!("/admin/rulesets/{}", claimed.id))
+                                            class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300"
+                                        >
+                                            "already a ruleset: " (&claimed.ruleset)
+                                        </a>,
+                                        Some(claimed) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                                            "also " (&claimed.ruleset) ", read with " (&claimed.parser)
+                                        </span>,
+                                        None => "",
+                                    }
                                 </div>
 
                                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -154,6 +203,17 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
             continue;
         }
 
+        // The preview never offers a subject its own parser already has a
+        // ruleset for, so a post that names one is stale. It creates a second
+        // ruleset over the same releases.
+        if suggestion
+            .collision
+            .as_ref()
+            .is_some_and(|collision| collision.same_parser)
+        {
+            continue;
+        }
+
         // The engine is read again per suggestion, because each save
         // rebuilds it and the next slug has to see the id just taken.
         let (id, name) = {
@@ -187,11 +247,30 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
     Ok(see_other("/admin/rulesets"))
 }
 
+/// Resolves a collision's ids to the names the badge renders.
+///
+/// A ruleset removed between the plan and the render leaves its id in place
+/// of a name, which still tells the reader which one to look for.
+fn claimed(engine: &Engine, collision: &Collision) -> Claimed {
+    let found = engine.ruleset(&collision.ruleset);
+
+    let parser = found
+        .and_then(|ruleset| engine.parser(&ruleset.parser))
+        .map_or_else(String::new, |parser| parser.name.clone());
+
+    Claimed {
+        id: collision.ruleset.clone(),
+        ruleset: found.map_or_else(|| collision.ruleset.clone(), |ruleset| ruleset.name.clone()),
+        parser,
+        same_parser: collision.same_parser,
+    }
+}
+
 /// Returns the name the suggested ruleset takes.
 ///
 /// The conditions name it, as they name a ruleset the reader saved with a
 /// blank name, so an imported ruleset reads the same as a hand-written one.
-fn named(engine: &Engine, suggestion: &import::Suggestion) -> String {
+fn named(engine: &Engine, suggestion: &Suggestion) -> String {
     let parser = engine
         .parser(&suggestion.parser)
         .map_or(suggestion.parser.as_str(), |parser| parser.name.as_str());

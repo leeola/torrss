@@ -1,8 +1,14 @@
 //! Reading the torrents a client holds into the rulesets they imply.
 //!
-//! A client full of one show is the reader saying they follow it. This reads
-//! that statement into a ruleset the reader writes by hand otherwise. The
-//! ruleset names the show, and every other field those torrents agree on.
+//! A client full of one subject is the reader saying they follow it. This
+//! reads that statement into a ruleset the reader writes by hand otherwise.
+//! The ruleset names the subject, and every other field those torrents agree
+//! on.
+//!
+//! The grouping is by the parser's own subject rather than by a field called
+//! `show`, because a parser names its subject as it likes. Only an episodic
+//! parser takes part. A film the client holds suggests nothing, because the
+//! reader already has it and no later release of it follows.
 //!
 //! Nothing here grabs a torrent. A ruleset puts titles on the wanted list,
 //! and the client already holds these.
@@ -16,12 +22,6 @@ use crate::parser::FieldKind;
 use crate::rules::Engine;
 use crate::torrent::Torrent;
 
-/// The field an import groups by.
-///
-/// A ruleset is about one show, so a parser that reads no field by this name
-/// yields nothing to suggest.
-const SHOW_FIELD: &str = "show";
-
 /// Fields a suggested condition never names.
 ///
 /// A feed title carries no extension and no checksum, so a condition on
@@ -31,32 +31,49 @@ const SKIPPED_FIELDS: &[&str] = &["extension", "checksum", "episodeName"];
 
 /// One ruleset an import offers to create.
 ///
-/// The count and the time are what the preview reports about a show, so the
-/// reader decides from them whether the suggestion is one they want.
+/// The count and the time are what the preview reports about a subject, so
+/// the reader decides from them whether the suggestion is one they want.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Suggestion {
     /// [`crate::parser::Parser::id`] the suggested ruleset reads with.
     pub(crate) parser: String,
 
-    /// The show as [`FieldKind::normalize`] renders it.
+    /// The subject as [`FieldKind::normalize`] renders it.
     ///
     /// A checkbox posts this back, and the dedupe compares it, so it is the
-    /// one spelling two torrents that named the show differently share.
+    /// one spelling two torrents that named the subject differently share.
     pub(crate) key: String,
 
-    /// The show as the suggested ruleset names it.
+    /// The subject as the suggested ruleset names it.
     pub(crate) show: String,
 
-    /// How many of the client's torrents this show accounts for.
+    /// How many of the client's torrents this subject accounts for.
     pub(crate) torrents: usize,
 
     /// When the client added the newest of them, or nothing when it named no
     /// time for any.
     pub(crate) newest: Option<DateTime<Utc>>,
 
-    /// What the suggested ruleset compares, the show first and the fields
+    /// What the suggested ruleset compares, the subject first and the fields
     /// the torrents agree on after it, in the parser's own order.
     pub(crate) conditions: Vec<Condition>,
+
+    /// The ruleset that already names this subject, when one does.
+    pub(crate) collision: Option<Collision>,
+}
+
+/// A ruleset that already names the subject a suggestion is about.
+///
+/// On the same parser the suggestion is one the reader has, so the preview
+/// shows it and offers nothing. On another parser the preview still offers
+/// it, because each ruleset claims the shape its own parser reads and the
+/// reader wants both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Collision {
+    /// [`crate::ruleset::Ruleset::id`] of the ruleset that names the subject.
+    pub(crate) ruleset: String,
+
+    pub(crate) same_parser: bool,
 }
 
 /// Every torrent of one show, and what each of them read.
@@ -90,14 +107,19 @@ impl Group {
     }
 }
 
-/// Returns one suggestion per show the client holds that no ruleset names.
+/// Returns one suggestion per subject the client holds.
 ///
-/// A torrent whose name no parser reads is ignored, as is one whose parser
-/// reads no show. Neither says anything about a ruleset the reader wants.
+/// A subject a ruleset already names carries that ruleset in its
+/// [`Suggestion::collision`] rather than dropping out, so the reader sees
+/// that the client holds a show they follow.
 ///
-/// The suggestions come out newest first, so the show the reader added most
-/// recently is the one the preview leads with. A show the client named no
-/// time for comes last.
+/// A torrent whose name no parser reads is ignored, as is one read by a
+/// parser with no subject or with nothing episodic about it. Neither says
+/// anything about a ruleset the reader wants.
+///
+/// The suggestions come out newest first, so the subject the reader added
+/// most recently is the one the preview leads with. A subject the client
+/// named no time for comes last.
 pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
     let mut groups: BTreeMap<(String, String), Group> = BTreeMap::new();
 
@@ -110,14 +132,20 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
             continue;
         };
 
+        let Some(subject) = parser.subject().filter(|_| parser.episodic()) else {
+            continue;
+        };
+
         let Some(show) = reading
             .values
             .iter()
-            .find(|(field, _)| field == SHOW_FIELD)
+            .find(|(field, _)| field == &subject.name)
             .map(|(_, raw)| raw)
         else {
             continue;
         };
+
+        let key = subject.kind.normalize(show);
 
         let read = reading
             .values
@@ -129,9 +157,7 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
             })
             .collect::<BTreeMap<_, _>>();
 
-        let group = groups
-            .entry((reading.parser.clone(), FieldKind::Text.normalize(show)))
-            .or_default();
+        let group = groups.entry((reading.parser.clone(), key)).or_default();
 
         // A torrent the client named no time for counts as the oldest, and
         // `None` orders below every `Some`. The first torrent of a group
@@ -147,13 +173,13 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
 
     let mut suggestions = groups
         .into_iter()
-        .filter(|((parser, key), _)| !named_by_a_ruleset(engine, parser, key))
         .filter_map(|((parser_id, key), group)| {
             let parser = engine.parser(&parser_id)?;
+            let subject = parser.subject()?;
             let show = titled(&key);
 
             let mut conditions = vec![Condition {
-                field: SHOW_FIELD.to_owned(),
+                field: subject.name.clone(),
                 op: Op::Equals,
                 value: show.clone(),
             }];
@@ -175,6 +201,7 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
             );
 
             Some(Suggestion {
+                collision: collision(engine, &parser_id, &subject.name, &key),
                 parser: parser_id,
                 torrents: group.readings.len(),
                 newest: group.newest,
@@ -195,19 +222,31 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
     suggestions
 }
 
-/// Reports whether a ruleset on `parser` already names `key` as its show.
+/// Finds the ruleset that already names `key` under the field `subject`.
 ///
-/// A second import then offers only the shows the reader has no ruleset for,
-/// however that ruleset spells the show, because both sides normalize before
-/// they compare.
-fn named_by_a_ruleset(engine: &Engine, parser: &str, key: &str) -> bool {
-    engine.rulesets().any(|ruleset| {
-        ruleset.parser == parser
-            && ruleset.conditions.iter().any(|condition| {
-                condition.field == SHOW_FIELD
+/// The one on `parser` wins over one on another parser, because that is the
+/// ruleset this suggestion repeats. Both sides normalize before they compare,
+/// so a ruleset that spells the subject differently is still found.
+fn collision(engine: &Engine, parser: &str, subject: &str, key: &str) -> Option<Collision> {
+    let named = engine
+        .rulesets()
+        .filter(|ruleset| {
+            ruleset.conditions.iter().any(|condition| {
+                condition.field == subject
                     && condition.op == Op::Equals
                     && FieldKind::Text.normalize(&condition.value) == key
             })
+        })
+        .collect::<Vec<_>>();
+
+    let found = named
+        .iter()
+        .find(|ruleset| ruleset.parser == parser)
+        .or(named.first())?;
+
+    Some(Collision {
+        ruleset: found.id.clone(),
+        same_parser: found.parser == parser,
     })
 }
 
@@ -238,9 +277,11 @@ fn titled(key: &str) -> String {
 mod tests {
     use chrono::{TimeZone, Utc};
 
-    use super::plan;
-    use crate::ruleset::fixture::ENGINE;
-    use crate::ruleset::{Condition, Op};
+    use super::{Collision, plan};
+    use crate::parser::Parser;
+    use crate::rules::Engine;
+    use crate::ruleset::fixture::{self, ENGINE};
+    use crate::ruleset::{Condition, Op, Ruleset};
     use crate::torrent::{Torrent, TorrentId, TorrentState};
 
     fn torrent(name: &str, day: u32) -> Torrent {
@@ -298,17 +339,86 @@ mod tests {
     }
 
     #[test]
-    fn a_show_a_ruleset_names_is_skipped() {
+    fn a_show_a_ruleset_names_is_listed_with_its_collision() {
+        let planned = plan(
+            &ENGINE,
+            &[torrent(
+                "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+                4,
+            )],
+        );
+
+        let [suggestion] = &planned[..] else {
+            panic!("one show, so one suggestion: {planned:?}");
+        };
+
+        assert_eq!(
+            suggestion.collision,
+            Some(Collision {
+                ruleset: "series-hollow-meridian".to_owned(),
+                same_parser: true,
+            }),
+            "the reader follows this show already, and the preview says so rather than hiding it"
+        );
+    }
+
+    #[test]
+    fn a_ruleset_on_another_parser_marks_the_collision() {
+        let copy = Parser {
+            id: "series-copy".to_owned(),
+            ..fixture::parsers()
+                .into_iter()
+                .find(|parser| parser.id == "series-episodes")
+                .expect("the fixture declares the episode parser")
+        };
+
+        let engine = Engine::new(
+            fixture::parsers().into_iter().chain([copy]).collect(),
+            vec![Ruleset {
+                id: "hollow-copy".to_owned(),
+                name: "Hollow copy".to_owned(),
+                enabled: true,
+                parser: "series-copy".to_owned(),
+                conditions: vec![equals("show", "The Hollow Meridian")],
+                tests: Vec::new(),
+            }],
+        )
+        .expect("the fixture patterns compile");
+
+        let planned = plan(
+            &engine,
+            &[torrent(
+                "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+                4,
+            )],
+        );
+
+        let [suggestion] = &planned[..] else {
+            panic!("one show, so one suggestion: {planned:?}");
+        };
+
+        assert_eq!(
+            suggestion.collision,
+            Some(Collision {
+                ruleset: "hollow-copy".to_owned(),
+                same_parser: false,
+            }),
+            "the other parser claims a different shape, so the reader wants this one too"
+        );
+    }
+
+    #[test]
+    fn a_film_the_client_holds_suggests_nothing() {
         assert_eq!(
             plan(
                 &ENGINE,
                 &[torrent(
-                    "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+                    "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv",
                     4,
                 )],
             ),
             Vec::new(),
-            "a ruleset names the show, though it requires a resolution this torrent is not"
+            "a film arrives once, and the reader already has it"
         );
     }
 
