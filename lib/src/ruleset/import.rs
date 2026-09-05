@@ -60,6 +60,14 @@ pub(crate) struct Suggestion {
 
     /// The ruleset that already names this subject, when one does.
     pub(crate) collision: Option<Collision>,
+
+    /// [`crate::parser::Parser::id`] of the earlier suggestion about this
+    /// same subject, when one precedes this.
+    ///
+    /// A client holds one show in two shapes when one tracker names the
+    /// episode and another does not. Each shape reads through its own
+    /// parser, so both are offered and the later one says what it repeats.
+    pub(crate) repeats: Option<String>,
 }
 
 /// A ruleset that already names the subject a suggestion is about.
@@ -116,6 +124,10 @@ impl Group {
 /// A torrent whose name no parser reads is ignored, as is one read by a
 /// parser with no subject or with nothing episodic about it. Neither says
 /// anything about a ruleset the reader wants.
+///
+/// One subject read by two parsers yields one suggestion per parser, and
+/// each after the first carries the earlier one in
+/// [`Suggestion::repeats`].
 ///
 /// The suggestions come out newest first, so the subject the reader added
 /// most recently is the one the preview leads with. A subject the client
@@ -205,6 +217,7 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
                 parser: parser_id,
                 torrents: group.readings.len(),
                 newest: group.newest,
+                repeats: None,
                 key,
                 show,
                 conditions,
@@ -218,6 +231,19 @@ pub(crate) fn plan(engine: &Engine, torrents: &[Torrent]) -> Vec<Suggestion> {
             .cmp(&one.newest)
             .then_with(|| one.show.cmp(&other.show))
     });
+
+    // After the sort, because the earlier suggestion is the one the reader
+    // meets first rather than the one the grouping happened to build first.
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+
+    for suggestion in &mut suggestions {
+        match seen.get(&suggestion.key) {
+            Some(parser) => suggestion.repeats = Some(parser.clone()),
+            None => {
+                seen.insert(suggestion.key.clone(), suggestion.parser.clone());
+            }
+        }
+    }
 
     suggestions
 }
@@ -278,7 +304,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::{Collision, plan};
-    use crate::parser::Parser;
+    use crate::parser::{Field, Parser};
     use crate::rules::Engine;
     use crate::ruleset::fixture::{self, ENGINE};
     use crate::ruleset::{Condition, Op, Ruleset};
@@ -404,6 +430,50 @@ mod tests {
                 same_parser: false,
             }),
             "the other parser claims a different shape, so the reader wants this one too"
+        );
+    }
+
+    #[test]
+    fn a_show_read_by_two_parsers_is_listed_twice_and_the_second_says_so() {
+        let episodes = fixture::parsers()
+            .into_iter()
+            .find(|parser| parser.id == "series-episodes")
+            .expect("the fixture declares the episode parser");
+
+        let strict = Parser {
+            id: "series-strict".to_owned(),
+            fields: episodes
+                .fields
+                .iter()
+                .map(|field| Field {
+                    required: field.name == "resolution" || field.required,
+                    ..field.clone()
+                })
+                .collect(),
+            ..episodes.clone()
+        };
+
+        let engine =
+            Engine::new(vec![strict, episodes], Vec::new()).expect("the fixture patterns compile");
+
+        let planned = plan(
+            &engine,
+            &[
+                torrent("Coastal.Ecology.S01E01.1080p.Broadcast-PublicWave.mkv", 6),
+                torrent("Coastal.Ecology.S01E02.Broadcast-PublicWave.mkv", 4),
+            ],
+        );
+
+        assert_eq!(
+            planned
+                .iter()
+                .map(|suggestion| (&*suggestion.parser, suggestion.repeats.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                ("series-strict", None),
+                ("series-episodes", Some("series-strict")),
+            ],
+            "one show in two shapes, and the later row names the row it repeats"
         );
     }
 

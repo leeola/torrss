@@ -42,6 +42,10 @@ struct Row<'a> {
 
     /// The ruleset that already names this subject, when one does.
     claimed: Option<Claimed>,
+
+    /// What the parser of the earlier suggestion about this subject is
+    /// called, when one precedes this.
+    repeats: Option<String>,
 }
 
 /// The ruleset a collision points at, named for the reader.
@@ -87,6 +91,11 @@ async fn import_preview(cx: &Cx) -> Result {
                     .collision
                     .as_ref()
                     .map(|collision| claimed(&engine, collision)),
+                repeats: suggestion.repeats.as_ref().map(|id| {
+                    engine
+                        .parser(id)
+                        .map_or_else(|| id.clone(), |parser| parser.name.clone())
+                }),
                 suggestion,
             })
             .collect::<Vec<_>>()
@@ -113,7 +122,7 @@ async fn import_preview(cx: &Cx) -> Result {
             </p>,
             Ok(entries) => <form method="post" action="/admin/rulesets/import">
                 <ul class="mt-6 flex flex-col gap-2">
-                    for Row { suggestion, name, claimed } in entries {
+                    for Row { suggestion, name, claimed, repeats } in entries {
                         <li>
                             <label class="block cursor-pointer rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700">
                                 <div class="flex flex-wrap items-center gap-3">
@@ -138,6 +147,12 @@ async fn import_preview(cx: &Cx) -> Result {
                                             "also " (&claimed.ruleset) ", read with " (&claimed.parser)
                                         </span>,
                                         None => "",
+                                    }
+
+                                    if let Some(repeats) = repeats {
+                                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                                            "same show as the " (repeats) " suggestion"
+                                        </span>
                                     }
                                 </div>
 
