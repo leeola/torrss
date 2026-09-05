@@ -601,6 +601,9 @@ pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
 /// The value input renders under every operator. The two that ask about
 /// presence alone ignore what it holds, so a reader who switches to one and
 /// back finds their text where they left it.
+///
+/// The arrows trade the row with its neighbor, and the order they set is the
+/// one the ruleset stores.
 #[component]
 pub(crate) async fn condition_row(
     index: usize,
@@ -617,7 +620,7 @@ pub(crate) async fn condition_row(
 
     view! {
         <div class="grid grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 md:grid-cols-12 md:items-center">
-            <div class="md:col-span-4">
+            <div class="md:col-span-3">
                 <label class="block text-xs text-slate-500">"Field"</label>
                 <div class="mt-1 flex items-center gap-2">
                     match tint {
@@ -673,15 +676,35 @@ pub(crate) async fn condition_row(
                 >
             </div>
 
-            <div class="md:col-span-1 md:justify-self-end">
-                <button
-                    type="button"
-                    name="row-action"
-                    value=(format!("remove-condition:{index}"))
-                    class="mt-5 inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
-                >
-                    "remove"
-                </button>
+            <div class="md:col-span-2 md:justify-self-end">
+                <div class="mt-5 flex items-center gap-1">
+                    <button
+                        type="button"
+                        name="row-action"
+                        value=(format!("move-condition-up:{index}"))
+                        title="Move up"
+                        class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+                    >
+                        "\u{2191}"
+                    </button>
+                    <button
+                        type="button"
+                        name="row-action"
+                        value=(format!("move-condition-down:{index}"))
+                        title="Move down"
+                        class="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+                    >
+                        "\u{2193}"
+                    </button>
+                    <button
+                        type="button"
+                        name="row-action"
+                        value=(format!("remove-condition:{index}"))
+                        class="inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
+                    >
+                        "remove"
+                    </button>
+                </div>
             </div>
         </div>
     }
@@ -934,11 +957,13 @@ mod tests {
 /// of the row, as the `test` action's argument is, so the script copies pairs
 /// and knows no preset.
 ///
-/// `move-up` and `move-down` trade one row's keys with its neighbor's. The
-/// rows are keyed by their index and `RulesetForm::parse` orders by it, so a
-/// move renames two rows' keys and touches nothing else. A move off either
-/// end returns the form unchanged, because the row it would trade with does
-/// not exist.
+/// Two move pairs trade one row's keys with its neighbor's: `move-up` and
+/// `move-down` on a field row, `move-condition-up` and
+/// `move-condition-down` on a condition row. The rows are keyed by their
+/// index and both `RulesetForm::parse` and `ParserForm::parse` order by it,
+/// so a move renames two rows' keys and touches nothing else. A move off
+/// either end returns the form unchanged, because the neighbor row on that
+/// side does not exist.
 ///
 /// Every branch returns the form serialized, which is what both the rows and
 /// the matches read.
@@ -957,17 +982,18 @@ window.torrssRows = {
       }
     }
   },
-  swap: (params, a, b) => {
+  swap: (params, prefix, a, b) => {
     const moved = new URLSearchParams();
+    const pattern = new RegExp(`^${prefix}\\.(\\d+)\\.`);
 
     for (const [key, value] of params) {
-      const row = key.match(/^field\.(\d+)\./);
+      const row = key.match(pattern);
       const index = row === null ? null : Number(row[1]);
 
       if (index === a) {
-        moved.append(`field.${b}.${key.slice(row[0].length)}`, value);
+        moved.append(`${prefix}.${b}.${key.slice(row[0].length)}`, value);
       } else if (index === b) {
-        moved.append(`field.${a}.${key.slice(row[0].length)}`, value);
+        moved.append(`${prefix}.${a}.${key.slice(row[0].length)}`, value);
       } else {
         moved.append(key, value);
       }
@@ -1014,7 +1040,18 @@ window.torrssRows = {
         return params.toString();
       }
 
-      return window.torrssRows.swap(params, from, to);
+      return window.torrssRows.swap(params, 'field', from, to);
+    }
+
+    if (name === 'move-condition-up' || name === 'move-condition-down') {
+      const from = Number(argument);
+      const to = name === 'move-condition-up' ? from - 1 : from + 1;
+
+      if (to < 0 || to >= window.torrssRows.nextCondition(params)) {
+        return params.toString();
+      }
+
+      return window.torrssRows.swap(params, 'condition', from, to);
     }
 
     if (name === 'remove') {
