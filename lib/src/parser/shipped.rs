@@ -140,6 +140,48 @@ pub(crate) fn parsers() -> Vec<Parser> {
             tests: Vec::new(),
             built_in: true,
         },
+        // The three date parts are the identity, so an episode of this shape
+        // files into show+year+month+day. A talk show names no season, and
+        // the date is what tells one broadcast from the next.
+        //
+        // This entry precedes the film parser, because a dated title carries
+        // a year too and the film parser reads a title followed by one.
+        Parser {
+            id: "series-daily".to_owned(),
+            name: "Series by date".to_owned(),
+            fields: vec![
+                field("show", Text, Some(r"^(?<show>.+?)"), true, true, true),
+                field(
+                    "year",
+                    Number,
+                    Some(r"[. _](?<year>(?:19|20)\d{2})"),
+                    true,
+                    true,
+                    true,
+                ),
+                field(
+                    "month",
+                    Number,
+                    Some(r"[. _](?<month>0[1-9]|1[0-2])"),
+                    true,
+                    true,
+                    true,
+                ),
+                field(
+                    "day",
+                    Number,
+                    Some(r"[. _](?<day>0[1-9]|[12]\d|3[01])"),
+                    true,
+                    true,
+                    false,
+                ),
+            ]
+            .into_iter()
+            .chain(tags())
+            .collect(),
+            tests: Vec::new(),
+            built_in: true,
+        },
     ]
 }
 
@@ -413,6 +455,21 @@ mod tests {
                     ("season", "12"),
                     ("episodeNumber", "105"),
                     ("resolution", "1080p"),
+                ],
+            )),
+        ),
+        (
+            "Coastal.Ecology.2024.03.15.1080p.WEB-DL-OpenReel",
+            Some((
+                "series-daily",
+                &[
+                    ("show", "coastal ecology"),
+                    ("year", "2024"),
+                    ("month", "3"),
+                    ("day", "15"),
+                    ("resolution", "1080p"),
+                    ("source", "web dl"),
+                    ("publisher", "openreel"),
                 ],
             )),
         ),
