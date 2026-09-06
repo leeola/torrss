@@ -10,8 +10,10 @@
 //! therefore find `show`, `season`, `episodeNumber`, and `resolution` under
 //! one name, whichever parser read them.
 //!
-//! Every separator is `[. _]`. A tracker writes a name in dots, and a client
-//! writes the folder it unpacked into in spaces.
+//! A separator is `[. _]`. A tracker writes a name in dots, and a client
+//! writes the folder it unpacked into in spaces. The resolution admits `(`
+//! as well, because a tracker that brackets its quality tags opens the run
+//! with it.
 
 use super::FieldKind::{Enum, Episode, Number, Season, Text};
 use super::{Field, FieldKind, Parser};
@@ -308,10 +310,12 @@ fn field(
 /// its own order, so each is optional and none is tight.
 fn tags() -> Vec<Field> {
     vec![
+        // A tracker that writes its tags inside parentheses opens the run
+        // with the resolution, so `(` separates it as a dot does.
         field(
             "resolution",
             Enum,
-            Some(r"(?i)[. _](?<resolution>480p|576p|720p|1080p|1080i|2160p)"),
+            Some(r"(?i)[. _(](?<resolution>480p|576p|720p|1080p|1080i|2160p)"),
             false,
             false,
             false,
@@ -552,6 +556,20 @@ mod tests {
                     ("episodeNumber", "4"),
                     ("source", "hdtv"),
                     ("publisher", "publicwave"),
+                ],
+            )),
+        ),
+        (
+            "Coastal Ecology S02 (2160p WEB-DL H265 DDP Atmos 5.1 English - OpenReel)",
+            Some((
+                "series-loose",
+                &[
+                    ("show", "coastal ecology"),
+                    ("season", "2"),
+                    ("resolution", "2160p"),
+                    ("source", "web dl"),
+                    ("codec", "h265"),
+                    ("audio", "atmos"),
                 ],
             )),
         ),
