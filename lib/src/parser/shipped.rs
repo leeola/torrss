@@ -17,6 +17,10 @@ use super::FieldKind::{Enum, Episode, Number, Season, Text};
 use super::{Field, FieldKind, Parser};
 
 /// The parsers the binary carries, in the order the engine tries them.
+///
+/// None carries a title test. Those belong to the reader who writes a parser
+/// and names the titles it must read, where the `READINGS` table in this
+/// module's tests checks what a shipped one reads.
 pub(crate) fn parsers() -> Vec<Parser> {
     // The episode name is a lazy run that nothing inside it ends, so the
     // resolution behind it is what stops it.
@@ -711,6 +715,14 @@ mod tests {
     #[test]
     fn every_shipped_parser_is_built_in() {
         assert!(parsers().iter().all(|parser| parser.built_in));
+    }
+
+    #[test]
+    fn a_shipped_parser_carries_no_title_tests() {
+        assert!(
+            parsers().iter().all(|parser| parser.tests.is_empty()),
+            "the titles a shipped parser must read are checked by READINGS"
+        );
     }
 
     #[test]

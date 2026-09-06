@@ -356,15 +356,6 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
 /// takes a copy under their own name to change it.
 #[component]
 async fn built_in_parser(parser: &Parser) -> Result {
-    let fields = parser.fields.iter().collect::<Vec<_>>();
-    let rules = matches::rules(&fields, &[], &Edits::default()).0;
-
-    let judged = parser
-        .tests
-        .iter()
-        .map(|test| (test, verdict::verdict(&rules, test)))
-        .collect::<Vec<_>>();
-
     let draft = ParserForm {
         name: parser.name.clone(),
         fields: parser.fields.clone(),
@@ -441,14 +432,6 @@ async fn built_in_parser(parser: &Parser) -> Result {
                     </li>
                 }
             </ul>
-        </div>
-
-        <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
-            <div class="px-4 py-3">
-                <h2 class="text-sm font-semibold text-slate-100">"Tests"</h2>
-            </div>
-
-            components::test_verdicts(judged: &judged)
         </div>
 
         // The chips the shard renders post their filter back through this,
