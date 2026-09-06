@@ -36,6 +36,41 @@ use crate::server::{components, format, handlers};
 use crate::services::Services;
 use crate::torrent::{Torrent, TorrentId};
 
+/// Flips every checkbox of the review at once.
+///
+/// Each operation returns the form serialized, which is what the `review`
+/// signal takes and the shard re-plans from.
+///
+/// A disabled pick names a subject a ruleset on the same parser already
+/// covers, so the selector leaves it alone.
+const IMPORT_ACTIONS: &str = r"
+window.torrssImport = {
+  boxes: (root, name) =>
+    [...root.querySelectorAll('input[name=' + name + ']:not(:disabled)')],
+  set: (root, names, on) => {
+    for (const name of names) {
+      for (const box of window.torrssImport.boxes(root, name)) {
+        box.checked = on;
+      }
+    }
+
+    return window.torrssRows.serialize();
+  },
+  all: () =>
+    window.torrssImport.set(
+      document.querySelector('#import-form'),
+      ['pick', 'torrent'],
+      true,
+    ),
+  none: () =>
+    window.torrssImport.set(
+      document.querySelector('#import-form'),
+      ['pick', 'torrent'],
+      false,
+    ),
+};
+";
+
 /// What the reader left checked in the preview.
 ///
 /// The form is the review. A checkbox posts its value only when it is
@@ -140,6 +175,7 @@ async fn import_preview() -> Result {
         // The shard's checkboxes are rendered outside this render, so the
         // form is read back through the serializer rather than a capture.
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
+        <script>(Unescaped::new_unchecked(IMPORT_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
             <a href="/admin/rulesets" class="hover:text-slate-300">"Rulesets"</a>
@@ -180,6 +216,34 @@ async fn import_preview() -> Result {
                     "Import"
                 </button>
                 components::link_button(href: "/admin/rulesets", label: "Cancel")
+
+                // Both stay visible, because the page counts nothing and a
+                // review with everything off is as reachable as one with
+                // everything on.
+                <button
+                    type="button"
+                    class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                    @click=$(|_e: Event| {
+                        review.set(raw!(
+                            "cx.hydrate(window.torrssImport.all())",
+                            String::new()
+                        ));
+                    })
+                >
+                    "Select all"
+                </button>
+                <button
+                    type="button"
+                    class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                    @click=$(|_e: Event| {
+                        review.set(raw!(
+                            "cx.hydrate(window.torrssImport.none())",
+                            String::new()
+                        ));
+                    })
+                >
+                    "Deselect all"
+                </button>
             </div>
         </form>
     }
