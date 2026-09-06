@@ -36,13 +36,16 @@ use crate::server::{components, format, handlers};
 use crate::services::Services;
 use crate::torrent::{Torrent, TorrentId};
 
-/// Flips every checkbox of the review at once.
+/// Flips the review's checkboxes in a group, either the whole page or one
+/// show's torrents.
 ///
 /// Each operation returns the form serialized, which is what the `review`
 /// signal takes and the shard re-plans from.
 ///
 /// A disabled pick names a subject a ruleset on the same parser already
-/// covers, so the selector leaves it alone.
+/// covers, so the page-wide operations leave it alone. `torrents` falls
+/// back to every pick when it looks one up, because the reader still edits
+/// the torrents of a subject the preview offers no pick for.
 const IMPORT_ACTIONS: &str = r"
 window.torrssImport = {
   boxes: (root, name) =>
@@ -68,6 +71,18 @@ window.torrssImport = {
       ['pick', 'torrent'],
       false,
     ),
+  torrents: (action) => {
+    const cut = action.indexOf(':');
+    const on = action.slice(0, cut) === 'all';
+    const pick = action.slice(cut + 1);
+    const form = document.querySelector('#import-form');
+
+    const box =
+      window.torrssImport.boxes(form, 'pick').find((one) => one.value === pick) ||
+      [...form.querySelectorAll('input[name=pick]')].find((one) => one.value === pick);
+
+    return window.torrssImport.set(box.closest('li'), ['torrent'], on);
+  },
 };
 ";
 
@@ -198,6 +213,16 @@ async fn import_preview() -> Result {
             @change=$(|_e: Event| {
                 review.set(raw!(
                     "cx.hydrate(window.torrssRows.serialize())",
+                    String::new()
+                ));
+            })
+            // A per-show button is rendered by the shard, so its click is
+            // caught here, where the signal lives. The button names its show
+            // in its own value, because the event vocabulary carries a
+            // target's name and value and nothing structural.
+            @click=$(|e: Event| if e.target.name == "torrents" {
+                review.set(raw!(
+                    "cx.hydrate(window.torrssImport.torrents(String(${e}.target.value)))",
                     String::new()
                 ));
             })
@@ -357,6 +382,28 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                                     ))
                                 </span>
                                 <span>(format::age(now, suggestion.newest))</span>
+
+                                // A button names its show in its own value,
+                                // because the event vocabulary carries a
+                                // target's name and value and nothing
+                                // structural. The prefix ends at the first
+                                // colon, which no parser id carries.
+                                <button
+                                    type="button"
+                                    name="torrents"
+                                    value=(format!("all:{}|{}", suggestion.parser, suggestion.key))
+                                    class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                                >
+                                    "Select all"
+                                </button>
+                                <button
+                                    type="button"
+                                    name="torrents"
+                                    value=(format!("none:{}|{}", suggestion.parser, suggestion.key))
+                                    class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                                >
+                                    "Deselect all"
+                                </button>
                             </div>
 
                             <div class="mt-3 flex flex-wrap items-center gap-2">
