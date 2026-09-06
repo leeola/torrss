@@ -231,17 +231,9 @@ async fn import_preview() -> Result {
             // which reads as the first render and checks everything again.
             <input type="hidden" name="reviewed" value="1">
 
-            import_suggestions(review: $(review.get()))
-
             <div class="mt-6 flex flex-wrap items-center gap-3">
-                <button
-                    type="submit"
-                    class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
-                >
-                    "Import"
-                </button>
-                components::link_button(href: "/admin/rulesets", label: "Cancel")
-
+                // These lead the list, because a reader who starts from
+                // nothing reaches for them before reading a single show.
                 // Both stay visible, because the page counts nothing and a
                 // review with everything off is as reachable as one with
                 // everything on.
@@ -269,6 +261,18 @@ async fn import_preview() -> Result {
                 >
                     "Deselect all"
                 </button>
+            </div>
+
+            import_suggestions(review: $(review.get()))
+
+            <div class="mt-6 flex flex-wrap items-center gap-3">
+                <button
+                    type="submit"
+                    class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
+                >
+                    "Import"
+                </button>
+                components::link_button(href: "/admin/rulesets", label: "Cancel")
             </div>
         </form>
     }
