@@ -55,8 +55,11 @@ pub(crate) struct Suggestion {
     /// client listed them.
     pub(crate) members: Vec<Member>,
 
-    /// When the client added the newest of them, or nothing when it named no
-    /// time for any.
+    /// When the client added the newest of its members, or nothing when it
+    /// named no time for any.
+    ///
+    /// An excluded member counts, so a suggestion keeps its place in the
+    /// list while the reader unchecks torrents.
     pub(crate) newest: Option<DateTime<Utc>>,
 
     /// What the suggested ruleset compares, the subject first and the fields
@@ -111,10 +114,18 @@ struct Group {
     /// normalized form.
     readings: Vec<BTreeMap<String, (String, String)>>,
 
+    /// When the client added the newest member, excluded ones among them,
+    /// so a review moves no suggestion in the list.
     newest: Option<DateTime<Utc>>,
 
-    /// What the newest torrent read, which is where an agreed condition
-    /// takes its value from.
+    /// When the client added the torrent that seeded `newest_values`.
+    ///
+    /// It runs over included torrents alone, where `newest` runs over every
+    /// member, because an excluded torrent feeds no condition.
+    values_at: Option<DateTime<Utc>>,
+
+    /// What the newest included torrent read, which is where an agreed
+    /// condition takes its value from.
     newest_values: BTreeMap<String, (String, String)>,
 }
 
@@ -140,8 +151,8 @@ impl Group {
 /// A torrent named in `excluded` stays listed among the suggestion's
 /// members and feeds no condition, so a name the reader rejects stops
 /// holding an agreement back. A group whose every torrent is excluded still
-/// suggests, with the subject condition alone and no time, which the sort
-/// places last.
+/// suggests, with the subject condition alone, and it keeps its place in the
+/// list.
 ///
 /// A subject a ruleset already names carries that ruleset in its
 /// [`Suggestion::collision`] rather than dropping out, so the reader sees
@@ -198,16 +209,21 @@ pub(crate) fn plan(
             included,
         });
 
+        // Every member counts here, so unchecking a torrent leaves the
+        // suggestion where the reader met it. `None` orders below every
+        // `Some`, so a group the client named no time for stays `None`.
+        group.newest = group.newest.max(torrent.added_at);
+
         if !included {
             continue;
         }
 
-        // A torrent the client named no time for counts as the oldest, and
-        // `None` orders below every `Some`. The first torrent of a group
-        // seeds the values even so, because a group of nothing but those
-        // still suggests conditions.
-        if group.readings.is_empty() || torrent.added_at > group.newest {
-            group.newest = torrent.added_at;
+        // A torrent the client named no time for counts as the oldest for
+        // `values_at` too. The first included torrent seeds the values even
+        // so, because a group of nothing but those still suggests
+        // conditions.
+        if group.readings.is_empty() || torrent.added_at > group.values_at {
+            group.values_at = torrent.added_at;
             group.newest_values = read.clone();
         }
 
@@ -650,6 +666,45 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(&*torrents[0].name, false), (&*torrents[1].name, true),],
             "an excluded torrent stays listed, in the order the client gave"
+        );
+    }
+
+    #[test]
+    fn an_excluded_torrent_keeps_the_suggestion_in_place() {
+        let torrents = [
+            torrent(
+                "Ridge.Runner.S02E03.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                2,
+            ),
+            torrent(
+                "Coastal.Ecology.S01E01.1080p.Broadcast.AAC.Stereo.H.264-publicwave.mkv",
+                4,
+            ),
+            torrent(
+                "Coastal.Ecology.S01E02.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                6,
+            ),
+        ];
+
+        let excluded = HashSet::from([torrents[1].id.clone(), torrents[2].id.clone()]);
+        let planned = plan(&ENGINE, &torrents, &excluded);
+
+        assert_eq!(
+            planned
+                .iter()
+                .map(|suggestion| &*suggestion.show)
+                .collect::<Vec<_>>(),
+            ["Coastal Ecology", "Ridge Runner"],
+            "an unchecked torrent moves no suggestion"
+        );
+        assert_eq!(
+            planned[0].newest, torrents[2].added_at,
+            "the age is the client's, not the review's"
+        );
+        assert_eq!(
+            planned[0].conditions,
+            [equals("show", "Coastal Ecology")],
+            "nothing included, so the subject alone is a condition"
         );
     }
 
