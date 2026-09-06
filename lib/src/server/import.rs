@@ -104,9 +104,9 @@ impl Review {
     /// Reads a review out of a serialized form, or [`None`] when the body
     /// carries none.
     ///
-    /// An empty body is the first render, where everything is checked. The
-    /// hidden `reviewed` input is what keeps a form the reader emptied from
-    /// reading the same way.
+    /// An empty body is the first render, where no show is picked and every
+    /// torrent is in its agreement. The hidden `reviewed` input is what keeps
+    /// a form the reader emptied from reading the same way.
     fn parse(body: &str) -> Option<Self> {
         if body.is_empty() {
             return None;
@@ -135,7 +135,8 @@ impl Review {
 
 /// The ids of every listed torrent the review left out.
 ///
-/// No review excludes nothing, because the first render checks everything.
+/// No review excludes nothing, because the first render keeps every torrent
+/// in its agreement.
 fn excluded(torrents: &[Torrent], review: Option<&Review>) -> HashSet<TorrentId> {
     let Some(review) = review else {
         return HashSet::new();
@@ -200,7 +201,7 @@ async fn import_preview() -> Result {
 
         <h1 class="mt-3 text-2xl font-semibold tracking-tight">"Import from client"</h1>
         <p class="mt-1 text-sm text-slate-400">
-            "Listed just now. Nothing is stored until you import."
+            "Listed just now. Check the shows to import. Nothing is stored until you do."
         </p>
 
         <form
@@ -228,7 +229,7 @@ async fn import_preview() -> Result {
             })
         >
             // Without this a form the reader emptied serializes to nothing,
-            // which reads as the first render and checks everything again.
+            // which reads as the first render and puts every torrent back.
             <input type="hidden" name="reviewed" value="1">
 
             <div class="mt-6 flex flex-wrap items-center gap-3">
@@ -343,11 +344,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                                     type="checkbox"
                                     name="pick"
                                     value=(format!("{}|{}", suggestion.parser, suggestion.key))
-                                    checked=(picked(
-                                        review.as_ref(),
-                                        suggestion,
-                                        claimed.as_ref(),
-                                    ))
+                                    checked=(picked(review.as_ref(), suggestion))
                                     disabled=(claimed.as_ref().is_some_and(|claimed| claimed.same_parser))
                                     class="size-4 rounded border-slate-700 bg-slate-950"
                                 >
@@ -447,16 +444,15 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
 
 /// Whether the pick checkbox of `suggestion` renders checked.
 ///
-/// The first render checks everything the reader can act on, and a ruleset
-/// on the same parser already covers its subject. After that the review
+/// Nothing is picked on the first render, so the reader picks the shows they
+/// want rather than unpicking the ones they do not. After that the review
 /// itself says what they kept.
-fn picked(review: Option<&Review>, suggestion: &Suggestion, claimed: Option<&Claimed>) -> bool {
-    let value = format!("{}|{}", suggestion.parser, suggestion.key);
-
-    review.map_or_else(
-        || claimed.is_none_or(|claimed| !claimed.same_parser),
-        |review| review.picked.contains(&value),
-    )
+fn picked(review: Option<&Review>, suggestion: &Suggestion) -> bool {
+    review.is_some_and(|review| {
+        review
+            .picked
+            .contains(&format!("{}|{}", suggestion.parser, suggestion.key))
+    })
 }
 
 /// Creates a ruleset for each checked show, then returns to the index.
@@ -591,7 +587,7 @@ mod tests {
         assert_eq!(
             Review::parse(""),
             None,
-            "the first render posts nothing, and everything is checked there"
+            "the first render posts nothing, and no show is picked there"
         );
     }
 
@@ -637,7 +633,7 @@ mod tests {
         assert_eq!(
             excluded(&torrents, None),
             HashSet::new(),
-            "no review excludes nothing, because the first render checks everything"
+            "no review excludes nothing, because the first render keeps every torrent"
         );
     }
 }
