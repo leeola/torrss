@@ -29,6 +29,7 @@ use url::form_urlencoded;
 use crate::parser::form as parser_form;
 use crate::rules::Engine;
 use crate::ruleset;
+use crate::ruleset::Condition;
 use crate::ruleset::import::{Collision, Suggestion};
 use crate::ruleset::registry::Rulesets;
 use crate::ruleset::{Ruleset, import};
@@ -98,6 +99,13 @@ struct Review {
 
     /// Every torrent the reader left in its suggestion's agreement.
     included: HashSet<TorrentId>,
+
+    /// The `parser|key|field` of every condition the reader turned off.
+    ///
+    /// A chip's checkbox is checked when its condition is off, so the
+    /// serialized form carries what was dropped rather than what was kept,
+    /// and a field that starts to agree comes in on.
+    dropped: HashSet<String>,
 }
 
 impl Review {
@@ -115,6 +123,7 @@ impl Review {
         let mut review = Self {
             picked: BTreeSet::new(),
             included: HashSet::new(),
+            dropped: HashSet::new(),
         };
 
         for (key, value) in form_urlencoded::parse(body.as_bytes()) {
@@ -124,6 +133,9 @@ impl Review {
                 }
                 "torrent" => {
                     review.included.insert(TorrentId(value.into_owned()));
+                }
+                "drop" => {
+                    review.dropped.insert(value.into_owned());
                 }
                 _ => {}
             }
@@ -146,6 +158,39 @@ fn excluded(torrents: &[Torrent], review: Option<&Review>) -> HashSet<TorrentId>
         .iter()
         .map(|torrent| torrent.id.clone())
         .filter(|id| !review.included.contains(id))
+        .collect()
+}
+
+/// Names one condition of one suggestion, which is what a chip's checkbox
+/// posts to turn it off.
+fn condition_value(suggestion: &Suggestion, condition: &Condition) -> String {
+    format!(
+        "{}|{}|{}",
+        suggestion.parser, suggestion.key, condition.field
+    )
+}
+
+/// The conditions the imported ruleset carries.
+///
+/// The subject leads, because [`crate::ruleset::import`] places it first,
+/// and it never drops. A ruleset with no subject condition claims every
+/// release its parser reads.
+fn kept(suggestion: &Suggestion, review: Option<&Review>) -> Vec<Condition> {
+    let Some((subject, rest)) = suggestion.conditions.split_first() else {
+        return Vec::new();
+    };
+
+    let dropped = |condition: &Condition| {
+        review.is_some_and(|review| {
+            review
+                .dropped
+                .contains(&condition_value(suggestion, condition))
+        })
+    };
+
+    [subject.clone()]
+        .into_iter()
+        .chain(rest.iter().filter(|one| !dropped(one)).cloned())
         .collect()
 }
 
@@ -312,7 +357,11 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
         suggestions
             .iter()
             .map(|suggestion| Row {
-                name: named(&engine, suggestion),
+                name: named(
+                    &engine,
+                    &suggestion.parser,
+                    &kept(suggestion, review.as_ref()),
+                ),
                 claimed: suggestion
                     .collision
                     .as_ref()
@@ -408,10 +457,34 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                             </div>
 
                             <div class="mt-3 flex flex-wrap items-center gap-2">
-                                for condition in &suggestion.conditions {
+                                if let Some((subject, rest)) = suggestion.conditions.split_first() {
+                                    // The subject never drops, so it stays a
+                                    // span. A ruleset without it claims every
+                                    // release its parser reads.
                                     <span class="rounded-full bg-slate-800/70 px-2 py-0.5 font-mono text-xs text-slate-400">
-                                        (&condition.field) " " (condition.op.label()) " " (&condition.value)
+                                        (&subject.field) " " (subject.op.label()) " " (&subject.value)
                                     </span>
+
+                                    // The box is checked when the condition
+                                    // is off, so the form carries what the
+                                    // reader dropped rather than what they
+                                    // kept.
+                                    for condition in rest {
+                                        <label class="cursor-pointer rounded-full bg-slate-800/70 px-2 py-0.5 font-mono text-xs text-slate-400 has-checked:bg-slate-900/40 has-checked:text-slate-600 has-checked:line-through">
+                                            <input
+                                                type="checkbox"
+                                                name="drop"
+                                                value=(condition_value(suggestion, condition))
+                                                checked=(review.as_ref().is_some_and(|review| {
+                                                    review
+                                                        .dropped
+                                                        .contains(&condition_value(suggestion, condition))
+                                                }))
+                                                class="sr-only"
+                                            >
+                                            (&condition.field) " " (condition.op.label()) " " (&condition.value)
+                                        </label>
+                                    }
                                 }
                             </div>
 
@@ -498,11 +571,13 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
             continue;
         }
 
+        let conditions = kept(&suggestion, Some(&review));
+
         // The engine is read again per suggestion, because each save
         // rebuilds it and the next slug has to see the id just taken.
         let (id, name) = {
             let engine = rulesets.engine();
-            let name = named(&engine, &suggestion);
+            let name = named(&engine, &suggestion.parser, &conditions);
 
             let id = parser_form::unique_slug(&name, |id| engine.ruleset(id).is_some())
                 .ok_or_else(|| {
@@ -521,7 +596,7 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
                 name,
                 enabled: true,
                 parser: suggestion.parser,
-                conditions: suggestion.conditions,
+                conditions,
                 tests: Vec::new(),
             })
             .await
@@ -554,12 +629,12 @@ fn claimed(engine: &Engine, collision: &Collision) -> Claimed {
 ///
 /// The conditions name it, as they name a ruleset the reader saved with a
 /// blank name, so an imported ruleset reads the same as a hand-written one.
-fn named(engine: &Engine, suggestion: &Suggestion) -> String {
-    let parser = engine
-        .parser(&suggestion.parser)
-        .map_or(suggestion.parser.as_str(), |parser| parser.name.as_str());
+fn named(engine: &Engine, parser: &str, conditions: &[Condition]) -> String {
+    let named = engine
+        .parser(parser)
+        .map_or(parser, |parser| parser.name.as_str());
 
-    ruleset::inferred_name(&suggestion.conditions, parser)
+    ruleset::inferred_name(conditions, named)
 }
 
 #[cfg(test)]
@@ -568,8 +643,18 @@ mod tests {
 
     use chrono::{TimeZone, Utc};
 
-    use super::{Review, excluded};
+    use super::{Review, excluded, kept};
+    use crate::ruleset::import::Suggestion;
+    use crate::ruleset::{Condition, Op};
     use crate::torrent::{Torrent, TorrentId, TorrentState};
+
+    fn equals(field: &str, value: &str) -> Condition {
+        Condition {
+            field: field.to_owned(),
+            op: Op::Equals,
+            value: value.to_owned(),
+        }
+    }
 
     fn torrent(id: &str) -> Torrent {
         Torrent {
@@ -593,9 +678,11 @@ mod tests {
 
     #[test]
     fn a_review_reads_picks_and_torrents() {
-        let review =
-            Review::parse("reviewed=1&pick=series%7Ccoastal+ecology&torrent=abc&torrent=def")
-                .expect("a body with the hidden input is a review");
+        let review = Review::parse(
+            "reviewed=1&pick=series%7Ccoastal+ecology&torrent=abc&torrent=def\
+             &drop=series%7Ccoastal+ecology%7Cresolution",
+        )
+        .expect("a body with the hidden input is a review");
 
         assert_eq!(
             review.picked.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -607,6 +694,41 @@ mod tests {
             HashSet::from([TorrentId("abc".to_owned()), TorrentId("def".to_owned())]),
             "every checked torrent stays in its agreement"
         );
+        assert_eq!(
+            review.dropped,
+            HashSet::from(["series|coastal ecology|resolution".to_owned()]),
+            "a dropped condition is named by its show and its field"
+        );
+    }
+
+    #[test]
+    fn a_dropped_condition_leaves_the_ruleset_and_the_subject_stays() {
+        let suggestion = Suggestion {
+            parser: "series".to_owned(),
+            key: "coastal ecology".to_owned(),
+            show: "Coastal Ecology".to_owned(),
+            members: Vec::new(),
+            newest: None,
+            conditions: vec![
+                equals("show", "Coastal Ecology"),
+                equals("resolution", "1080p"),
+                equals("codec", "x265"),
+            ],
+            collision: None,
+            repeats: None,
+        };
+
+        let review = Review::parse(
+            "reviewed=1&drop=series%7Ccoastal+ecology%7Cshow\
+             &drop=series%7Ccoastal+ecology%7Cresolution",
+        )
+        .expect("a body with the hidden input is a review");
+
+        assert_eq!(
+            kept(&suggestion, Some(&review)),
+            [equals("show", "Coastal Ecology"), equals("codec", "x265")],
+            "the subject stays whatever the review says, and the dropped field goes"
+        );
     }
 
     #[test]
@@ -616,6 +738,7 @@ mod tests {
             Some(Review {
                 picked: BTreeSet::new(),
                 included: HashSet::new(),
+                dropped: HashSet::new(),
             }),
             "the hidden input is what tells an emptied form from the first render"
         );
