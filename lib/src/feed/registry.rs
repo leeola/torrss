@@ -8,7 +8,7 @@
 //! The items a feed returned do not live here at all, only in the
 //! `feed_items` table, so nothing a restart drops is lost.
 //!
-//! This mirrors [`Rulesets`](crate::ruleset::registry::Rulesets) in one
+//! This mirrors [`Searches`](crate::search::registry::Searches) in one
 //! respect: it sits in the app context, and a handler reads it there rather
 //! than through an argument.
 

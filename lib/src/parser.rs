@@ -62,7 +62,7 @@ impl Parser {
 
     /// Whether this parser reads releases that arrive one at a time.
     ///
-    /// A season or an episode field is what says so. A ruleset on a subject
+    /// A season or an episode field is what says so. A search on a subject
     /// waits for releases still to come, which is only meaningful for a
     /// parser that reads them.
     pub(crate) fn episodic(&self) -> bool {
@@ -215,7 +215,7 @@ pub(crate) struct TitleTest {
 /// How a matched string converts before the rest of the app sees it.
 ///
 /// [`Self::Season`] and [`Self::Episode`] are premade kinds: each carries its
-/// own pattern, so a ruleset names the kind and writes no regex. Every other
+/// own pattern, so a search names the kind and writes no regex. Every other
 /// kind leaves the pattern to the field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldKind {
@@ -327,7 +327,7 @@ pub(crate) struct Preset {
 /// before its run and nothing after it. A tight preset is one whose run only
 /// the next component ends: the show, the movie, the season, and the episode
 /// name. Every other preset lets the next component sit anywhere after its
-/// own run, so a resolution reads past an episode name the ruleset does not
+/// own run, so a resolution reads past an episode name the search does not
 /// claim. The reader still orders the rows as the tracker orders the tokens.
 ///
 /// Each names its capture group after its preset, because that is the name the
@@ -467,7 +467,7 @@ mod tests {
 
     use super::{Field, FieldKind, PRESETS, Parser};
     use crate::rules::{Component, Engine, compose};
-    use crate::ruleset::Ruleset;
+    use crate::search::Search;
 
     /// Reads `title` through the pattern `kind` supplies, as the engine does.
     ///
@@ -550,7 +550,7 @@ mod tests {
         );
     }
 
-    /// Reads `title` through one parser over `fields`, claimed by a ruleset
+    /// Reads `title` through one parser over `fields`, claimed by a search
     /// that writes no condition.
     ///
     /// Each value comes back normalized by its field's kind, which is the
@@ -564,7 +564,7 @@ mod tests {
                 tests: Vec::new(),
                 built_in: false,
             }],
-            vec![Ruleset {
+            vec![Search {
                 id: "wanted".to_owned(),
                 name: "Wanted".to_owned(),
                 enabled: true,
@@ -584,7 +584,7 @@ mod tests {
                 let kind = fields
                     .iter()
                     .find(|field| &field.name == name)
-                    .expect("a field of the ruleset")
+                    .expect("a field of the search")
                     .kind;
 
                 (name.clone(), kind.normalize(raw))
@@ -677,7 +677,7 @@ mod tests {
                 .collect::<BTreeSet<_>>()
                 .len(),
             13,
-            "each preset names a distinct field, so two never collide in one ruleset"
+            "each preset names a distinct field, so two never collide in one search"
         );
     }
 

@@ -1,4 +1,4 @@
-//! What the ruleset editor posts, and what it becomes.
+//! What the search editor posts, and what it becomes.
 //!
 //! The editor's condition and test lists grow and shrink in the browser, so
 //! the number of rows a submission carries is not known ahead of time. A
@@ -9,7 +9,7 @@
 //! orders them and nothing more, so a row the reader removed leaves a gap
 //! rather than renumbering every row after it.
 //!
-//! The fields belong to the parser the ruleset names, so
+//! The fields belong to the parser the search names, so
 //! [`crate::parser::form`] reads the test rows and this adds the parser and
 //! the conditions on top.
 
@@ -25,16 +25,16 @@ use crate::parser::form::{
     encode_test, read_test,
 };
 
-/// A ruleset as the editor's form describes it.
+/// A search as the editor's form describes it.
 ///
 /// The id is absent because the form never carries one. A create derives it
 /// from the name through [`crate::parser::form::unique_slug`], and a save
 /// already knows it from the route.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RulesetForm {
+pub(crate) struct SearchForm {
     pub(crate) name: String,
 
-    /// The parser this ruleset reads titles with.
+    /// The parser this search reads titles with.
     pub(crate) parser: String,
 
     pub(crate) conditions: Vec<Condition>,
@@ -58,7 +58,7 @@ struct ConditionRow {
 /// A posted body sorted into its parts, before anything judges it.
 ///
 /// Both reads of a form start here and part company after. One drops what a
-/// stored ruleset never carries. The other keeps every row the editor showed.
+/// stored search never carries. The other keeps every row the editor showed.
 #[derive(Default)]
 struct Posted {
     name: String,
@@ -72,11 +72,11 @@ struct Posted {
 /// The rows the editor holds, kept exactly as the form posted them.
 ///
 /// A condition row the reader just added names no field yet.
-/// [`RulesetForm::parse`] drops it, because a stored ruleset carries no
+/// [`SearchForm::parse`] drops it, because a stored search carries no
 /// nameless condition. The row shards read this instead, so the row the
 /// reader asked for appears.
 ///
-/// A blank ruleset name is no error here either. The new page has none until
+/// A blank search name is no error here either. The new page has none until
 /// the reader types one, and the rows list before that.
 ///
 /// A condition that posted no operator comes back under the first option
@@ -111,17 +111,17 @@ impl EditorRows {
     }
 }
 
-impl RulesetForm {
-    /// Reads a ruleset out of a form-encoded body.
+impl SearchForm {
+    /// Reads a search out of a form-encoded body.
     ///
     /// # Errors
     ///
-    /// Returns a refusal when the body names no parser. A ruleset with none
+    /// Returns a refusal when the body names no parser. A search with none
     /// reads no title, so there is nothing for its conditions to judge.
     ///
     /// A blank name is accepted. The write infers one from the conditions
-    /// through [`crate::ruleset::inferred_name`], so the reader names a
-    /// ruleset once or not at all.
+    /// through [`crate::search::inferred_name`], so the reader names a
+    /// search once or not at all.
     ///
     /// Returns a refusal for a condition naming an operator this build does
     /// not know, or leaving its value empty under an operator that compares
@@ -185,7 +185,7 @@ impl RulesetForm {
         })
     }
 
-    /// Writes the pairs a browser posts for this ruleset.
+    /// Writes the pairs a browser posts for this search.
     ///
     /// The inverse of [`Self::parse`], which the editor uses to seed the
     /// draft its live re-render reads.
@@ -275,31 +275,31 @@ fn condition(row: ConditionRow) -> Result<Condition, FormError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{Condition, EditorRows, FormError, Op, RulesetForm};
+    use super::{Condition, EditorRows, FormError, Op, SearchForm};
     use crate::parser::TitleTest;
 
     #[test]
-    fn a_ruleset_names_a_parser_and_nothing_else_reads_as_one() {
+    fn a_search_names_a_parser_and_nothing_else_reads_as_one() {
         assert_eq!(
-            RulesetForm::parse("name=Hollow&parser=series"),
-            Ok(RulesetForm {
+            SearchForm::parse("name=Hollow&parser=series"),
+            Ok(SearchForm {
                 name: "Hollow".to_owned(),
                 parser: "series".to_owned(),
                 conditions: Vec::new(),
                 tests: Vec::new(),
             }),
-            "a ruleset with no condition claims every title its parser reads"
+            "a search with no condition claims every title its parser reads"
         );
 
         assert_eq!(
-            RulesetForm::parse("name=Hollow"),
+            SearchForm::parse("name=Hollow"),
             Err(FormError::MissingParser),
-            "a ruleset with no parser reads no title"
+            "a search with no parser reads no title"
         );
 
         assert_eq!(
-            RulesetForm::parse("parser=series"),
-            Ok(RulesetForm {
+            SearchForm::parse("parser=series"),
+            Ok(SearchForm {
                 name: String::new(),
                 parser: "series".to_owned(),
                 conditions: Vec::new(),
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn tests_read_the_title_and_each_expected_value() {
-        let form = RulesetForm::parse(
+        let form = SearchForm::parse(
             "name=Hollow&parser=series\
              &test.1.title=Coastal.Drift.2024&test.1.expect.show=coastal%20drift\
              &test.1.expect.year=\
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn conditions_read_field_op_and_value() {
         assert_eq!(
-            RulesetForm::parse(
+            SearchForm::parse(
                 "name=Hollow&parser=series\
                  &condition.1.field=episodeNumber&condition.1.op=one+of&condition.1.value=10,+12\
                  &condition.0.field=resolution&condition.0.op=equals&condition.0.value=1080p\
@@ -363,12 +363,12 @@ mod tests {
         );
 
         assert_eq!(
-            RulesetForm::parse("name=X&parser=series&condition.0.field=show&condition.0.op=x"),
+            SearchForm::parse("name=X&parser=series&condition.0.field=show&condition.0.op=x"),
             Err(FormError::UnknownOp { op: "x".to_owned() }),
         );
 
         assert_eq!(
-            RulesetForm::parse("name=X&parser=series&condition.0.field=show&condition.0.op=equals"),
+            SearchForm::parse("name=X&parser=series&condition.0.field=show&condition.0.op=equals"),
             Err(FormError::MissingValue {
                 field: "show".to_owned()
             }),
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn an_encoded_form_parses_back_to_itself() {
-        let saved = RulesetForm {
+        let saved = SearchForm {
             name: "The Hollow Meridian".to_owned(),
             parser: "series-episodes".to_owned(),
             conditions: vec![Condition {
@@ -396,7 +396,7 @@ mod tests {
         };
 
         assert_eq!(
-            RulesetForm::parse(&saved.encode()),
+            SearchForm::parse(&saved.encode()),
             Ok(saved),
             "what the editor seeds its draft with is what a post reads back"
         );
@@ -425,8 +425,8 @@ mod tests {
     #[test]
     fn a_draft_needs_no_name_and_no_parser() {
         assert_eq!(
-            RulesetForm::parse_draft("condition.0.field=show&condition.0.op=present"),
-            Ok(RulesetForm {
+            SearchForm::parse_draft("condition.0.field=show&condition.0.op=present"),
+            Ok(SearchForm {
                 name: String::new(),
                 parser: String::new(),
                 conditions: vec![Condition {

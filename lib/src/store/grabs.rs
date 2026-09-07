@@ -1,4 +1,4 @@
-//! What was already grabbed, how each attempt went, and which rulesets
+//! What was already grabbed, how each attempt went, and which searches
 //! claimed it.
 //!
 //! The feed page marks a row the application has acted on, so a reader tells
@@ -28,9 +28,9 @@ const UPSERT: &str = "
         error = excluded.error
 ";
 
-/// Reads every attempt with the rulesets that claimed it.
+/// Reads every attempt with the searches that claimed it.
 ///
-/// A left join, because a grab with no recorded ruleset is still a grab and
+/// A left join, because a grab with no recorded search is still a grab and
 /// still belongs in the map.
 ///
 /// The order is what carries the engine's ranking through to the page, so it
@@ -68,8 +68,8 @@ pub(crate) struct Grab {
     /// Why the attempt failed, or nothing when the client accepted it.
     pub(crate) error: Option<String>,
 
-    /// Every ruleset that claimed the release, in declaration order.
-    pub(crate) rulesets: Vec<String>,
+    /// Every search that claimed the release, in declaration order.
+    pub(crate) searches: Vec<String>,
 }
 
 /// One grab the client took, named by the title it was made for.
@@ -82,10 +82,10 @@ pub(crate) struct Accepted {
     pub(crate) at: DateTime<Utc>,
 }
 
-/// Records one attempt and the rulesets it passed, replacing the last one.
+/// Records one attempt and the searches it passed, replacing the last one.
 ///
 /// Runs as one transaction, so a failure part way leaves the previous attempt
-/// rather than a grab with half its rulesets.
+/// rather than a grab with half its searches.
 ///
 /// The item has to exist in `feed_items`. Foreign keys are enforced, so a
 /// grab against an id nothing stored is a caller bug and fails here rather
@@ -95,7 +95,7 @@ pub(crate) async fn record(
     item_id: i64,
     at: DateTime<Utc>,
     error: Option<&str>,
-    rulesets: &[&str],
+    searches: &[&str],
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
@@ -111,13 +111,13 @@ pub(crate) async fn record(
         .execute(&mut *tx)
         .await?;
 
-    for (position, ruleset) in rulesets.iter().enumerate() {
+    for (position, search) in searches.iter().enumerate() {
         sqlx::query(
             "INSERT INTO grab_searches (item_id, search, position)
              VALUES (?1, ?2, ?3)",
         )
         .bind(item_id)
-        .bind(ruleset)
+        .bind(search)
         .bind(position as i64)
         .execute(&mut *tx)
         .await?;
@@ -131,7 +131,7 @@ pub(crate) async fn record(
 /// The whole table comes back at once, because the feed page tests every
 /// listed row against it. A query per row costs one round trip each.
 ///
-/// One grab spans as many rows as it has rulesets, so the rows fold on the
+/// One grab spans as many rows as it has searches, so the rows fold on the
 /// item id rather than mapping one to one.
 pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::Error> {
     let rows = sqlx::query(SELECT).fetch_all(pool).await?;
@@ -146,12 +146,12 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::E
                 item_id,
                 at: row.try_get("grabbed_at")?,
                 error: row.try_get("error")?,
-                rulesets: Vec::new(),
+                searches: Vec::new(),
             }),
         };
 
-        if let Some(ruleset) = row.try_get::<Option<String>, _>("search")? {
-            grab.rulesets.push(ruleset);
+        if let Some(search) = row.try_get::<Option<String>, _>("search")? {
+            grab.searches.push(search);
         }
     }
 
@@ -242,7 +242,7 @@ mod tests {
                         item_id: ids[0],
                         at: at(3),
                         error: None,
-                        rulesets: Vec::new(),
+                        searches: Vec::new(),
                     }
                 ),
                 (
@@ -251,7 +251,7 @@ mod tests {
                         item_id: ids[1],
                         at: at(4),
                         error: None,
-                        rulesets: Vec::new(),
+                        searches: Vec::new(),
                     }
                 ),
             ]),
@@ -280,7 +280,7 @@ mod tests {
                     item_id: ids[0],
                     at: at(2),
                     error: Some("the torrent client rejected the request".to_owned()),
-                    rulesets: Vec::new(),
+                    searches: Vec::new(),
                 }
             )])
         );
@@ -300,7 +300,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn record_stores_rulesets_in_order(pool: SqlitePool) {
+    async fn record_stores_searches_in_order(pool: SqlitePool) {
         let ids = ingested(&pool, &["A.Release"]).await;
         record(
             &pool,
@@ -320,18 +320,18 @@ mod tests {
                     item_id: ids[0],
                     at: at(2),
                     error: None,
-                    rulesets: vec![
+                    searches: vec![
                         "series-hollow-meridian".to_owned(),
                         "series-episodes".to_owned(),
                     ],
                 }
             )]),
-            "the engine ranked the ruleset first, and the order survives the join"
+            "the engine ranked the search first, and the order survives the join"
         );
     }
 
     #[sqlx::test]
-    async fn record_retry_replaces_rulesets(pool: SqlitePool) {
+    async fn record_retry_replaces_searches(pool: SqlitePool) {
         let ids = ingested(&pool, &["A.Release"]).await;
         record(
             &pool,
@@ -355,15 +355,15 @@ mod tests {
                     item_id: ids[0],
                     at: at(3),
                     error: None,
-                    rulesets: vec!["feature-films".to_owned()],
+                    searches: vec!["feature-films".to_owned()],
                 }
             )]),
-            "a retry leaves none of the rulesets the first attempt recorded"
+            "a retry leaves none of the searches the first attempt recorded"
         );
     }
 
     #[sqlx::test]
-    async fn grab_with_no_rulesets_still_returns(pool: SqlitePool) {
+    async fn grab_with_no_searches_still_returns(pool: SqlitePool) {
         let ids = ingested(&pool, &["A.Release"]).await;
         record(&pool, ids[0], at(2), None, &[])
             .await
@@ -377,7 +377,7 @@ mod tests {
                     item_id: ids[0],
                     at: at(2),
                     error: None,
-                    rulesets: Vec::new(),
+                    searches: Vec::new(),
                 }
             )]),
             "the left join keeps a grab that claimed nothing"

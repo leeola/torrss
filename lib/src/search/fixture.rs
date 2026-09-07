@@ -1,4 +1,4 @@
-//! The parsers and rulesets the tests parse titles with.
+//! The parsers and searches the tests parse titles with.
 //!
 //! The application ships none, so a test that needs a claimed title
 //! supplies its own configuration. [`ENGINE`] here is what a test asserts
@@ -10,13 +10,13 @@
 //! - `feature-films`, a title followed by a production year.
 //! - `archive-talks`, a publisher-prefixed session number.
 //!
-//! Four rulesets on them: one for each film and talk parser claiming
+//! Four searches on them: one for each film and talk parser claiming
 //! everything it reads, and two on `series-episodes` narrowed by conditions
 //! to one show each.
 
 use std::sync::LazyLock;
 
-use super::{Condition, Op, Ruleset};
+use super::{Condition, Op, Search};
 use crate::parser::{
     Field, FieldKind,
     FieldKind::{Enum, Episode, Number, Season, Text},
@@ -44,7 +44,7 @@ fn field(
     }
 }
 
-/// Names one condition, so a ruleset below reads as a list of comparisons.
+/// Names one condition, so a search below reads as a list of comparisons.
 fn equals(field: &str, value: &str) -> Condition {
     Condition {
         field: field.to_owned(),
@@ -53,9 +53,9 @@ fn equals(field: &str, value: &str) -> Condition {
     }
 }
 
-/// Builds one ruleset on `parser`, claiming what its conditions admit.
-fn on(id: &str, name: &str, parser: &str, conditions: Vec<Condition>) -> Ruleset {
-    Ruleset {
+/// Builds one search on `parser`, claiming what its conditions admit.
+fn on(id: &str, name: &str, parser: &str, conditions: Vec<Condition>) -> Search {
+    Search {
         id: id.to_owned(),
         name: name.to_owned(),
         enabled: false,
@@ -65,14 +65,14 @@ fn on(id: &str, name: &str, parser: &str, conditions: Vec<Condition>) -> Ruleset
     }
 }
 
-/// The fixture parsers and rulesets, compiled once.
+/// The fixture parsers and searches, compiled once.
 ///
 /// # Panics
 ///
 /// Panics when a pattern fails to compile, which makes a bad fixture
 /// pattern a failure of the test run rather than a silent miss.
 pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
-    Engine::new(parsers(), rulesets()).expect("every fixture pattern is a valid regex")
+    Engine::new(parsers(), searches()).expect("every fixture pattern is a valid regex")
 });
 
 /// The three parsers the tests read titles with.
@@ -257,12 +257,12 @@ pub(crate) fn parsers() -> Vec<Parser> {
     ]
 }
 
-/// The four rulesets the tests claim titles with.
+/// The four searches the tests claim titles with.
 ///
-/// The film and talk rulesets write no condition, so each claims every name
-/// its parser reads. The two episode rulesets share one parser and name one
-/// show each, which is what two rulesets on one parser are for.
-pub(crate) fn rulesets() -> Vec<Ruleset> {
+/// The film and talk searches write no condition, so each claims every name
+/// its parser reads. The two episode searches share one parser and name one
+/// show each, which is what two searches on one parser are for.
+pub(crate) fn searches() -> Vec<Search> {
     vec![
         on(
             "feature-films",

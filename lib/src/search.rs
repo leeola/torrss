@@ -1,17 +1,17 @@
 //! Which of the titles a parser reads are wanted.
 //!
 //! A [`crate::parser::Parser`] reads a filename apart and judges nothing. A
-//! ruleset names one and decides which of the names it reads it claims,
+//! search names one and decides which of the names it reads it claims,
 //! through [`Condition`]: one comparison on a value the parser already read.
 //!
-//! The identity names the parser rather than the ruleset, so two rulesets on
+//! The identity names the parser rather than the search, so two searches on
 //! one parser share one namespace of releases.
 //!
-//! [`Diff`] belongs here too. The editor runs a ruleset against filenames as
+//! [`Diff`] belongs here too. The editor runs a search against filenames as
 //! the reader edits, and a diff state is what each row reports about the
 //! edit in progress.
 //!
-//! Every value is `'static`, so a handler borrows a ruleset rather than
+//! Every value is `'static`, so a handler borrows a search rather than
 //! building one per request. That is what a later store has to preserve.
 
 #[cfg(test)]
@@ -25,44 +25,44 @@ use crate::parser::{FieldKind, TitleTest};
 
 /// One set of conditions over the values a parser reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Ruleset {
-    /// Stable key that names the ruleset in a URL.
+pub(crate) struct Search {
+    /// Stable key that names the search in a URL.
     pub(crate) id: String,
 
-    /// What the reader calls this ruleset.
+    /// What the reader calls this search.
     ///
     /// The editor posts this blank when the reader types nothing, and a
     /// blank one stores [`inferred_name`] of the conditions instead. A typed
     /// name is kept as typed.
     pub(crate) name: String,
 
-    /// Whether the ruleset claims titles.
+    /// Whether the search claims titles.
     ///
-    /// A new ruleset stores `true`, and the editor's switch flips the stored
-    /// value through `Rulesets::set_enabled`.
+    /// A new search stores `true`, and the editor's switch flips the stored
+    /// value through `Searches::set_enabled`.
     ///
-    /// A disabled ruleset filters nothing, so its releases stay out of the
+    /// A disabled search filters nothing, so its releases stay out of the
     /// feed.
     pub(crate) enabled: bool,
 
-    /// [`crate::parser::Parser::id`] of the parser this ruleset reads titles
+    /// [`crate::parser::Parser::id`] of the parser this search reads titles
     /// with.
     ///
     /// The identity names the parser's identity fields rather than the parser
-    /// itself, so every ruleset reading through one shares a namespace of
-    /// releases with every other parser that names those fields. Two rulesets
+    /// itself, so every search reading through one shares a namespace of
+    /// releases with every other parser that names those fields. Two searches
     /// that claim different halves of what a parser reads therefore never
     /// file the same episode twice.
     pub(crate) parser: String,
 
-    /// Each comparison this ruleset makes on a value the parser read.
+    /// Each comparison this search makes on a value the parser read.
     ///
-    /// The parser decides which titles have the shape this ruleset works on,
-    /// and these decide which of those it wants. A ruleset with none claims
+    /// The parser decides which titles have the shape this search works on,
+    /// and these decide which of those it wants. A search with none claims
     /// every title its parser reads.
     pub(crate) conditions: Vec<Condition>,
 
-    /// What the reader expects this ruleset to read from named titles.
+    /// What the reader expects this search to read from named titles.
     ///
     /// The engine never reads these. They exist for the editor, which runs
     /// them against the draft as the reader types, so a rule change that
@@ -139,13 +139,13 @@ impl Diff {
 
 /// How a condition compares the value its field read.
 ///
-/// The four orderings compare numbers, so a ruleset writes one only on a
+/// The four orderings compare numbers, so a search writes one only on a
 /// number, season, or episode field. [`Self::Present`] and [`Self::Absent`]
 /// ask whether the field read anything at all and carry no value of their
 /// own.
 ///
 /// [`Self::OneOf`] and [`Self::NoneOf`] read their value as a list, so one
-/// condition names every resolution a reader wants rather than one ruleset
+/// condition names every resolution a reader wants rather than one search
 /// per resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Op {
@@ -221,9 +221,9 @@ impl Op {
     }
 }
 
-/// One comparison a ruleset makes on a value its regex read.
+/// One comparison a search makes on a value its regex read.
 ///
-/// The field names one of the ruleset's resolved fields. A condition on any
+/// The field names one of the search's resolved fields. A condition on any
 /// other name never compiles, because the value it asks about is one no rule
 /// produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,7 +248,7 @@ impl Condition {
     ///
     /// `read` is the normalized value the field produced, or [`None`] when
     /// the field read nothing. Every operator but [`Op::Absent`] fails on
-    /// [`None`], so a ruleset that names a value its title does not carry
+    /// [`None`], so a search that names a value its title does not carry
     /// claims nothing.
     ///
     /// An ordering parses both sides as numbers and fails when either side is
@@ -305,7 +305,7 @@ impl Condition {
 ///
 /// A list value keeps its commas, because the reader wrote them.
 ///
-/// A ruleset with no condition claims every title its parser reads, so it
+/// A search with no condition claims every title its parser reads, so it
 /// takes the parser's name.
 pub(crate) fn inferred_name(conditions: &[Condition], parser: &str) -> String {
     if conditions.is_empty() {
@@ -414,7 +414,7 @@ mod tests {
     fn absent_holds_on_no_value_and_the_rest_fail() {
         assert!(
             condition("episodeNumber", Op::Absent, "").holds(FieldKind::Episode, None),
-            "a pack names no episode, which is what a pack-only ruleset asks for"
+            "a pack names no episode, which is what a pack-only search asks for"
         );
         assert!(!condition("episodeNumber", Op::Present, "").holds(FieldKind::Episode, None));
         assert!(!condition("episodeNumber", Op::Equals, "6").holds(FieldKind::Episode, None));

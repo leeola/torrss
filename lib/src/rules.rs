@@ -1,10 +1,10 @@
-//! Running the rulesets over a release name.
+//! Running the searches over a release name.
 //!
 //! A tracker announces a filename and a torrent client reports another. This
 //! module decides whether the two name the same release, which is the whole
 //! question the library scan asks.
 //!
-//! The answer is an [`Identity`], built from the fields a ruleset marks as
+//! The answer is an [`Identity`], built from the fields a search marks as
 //! identity. Normalizing them keeps punctuation and case from turning one
 //! episode into two.
 
@@ -14,17 +14,17 @@ use regex::Regex;
 use snafu::{OptionExt, ResultExt, Snafu, ensure};
 
 use crate::parser::{Field, FieldKind, Parser};
-use crate::ruleset::{Condition, Ruleset};
+use crate::search::{Condition, Search};
 
-/// What one ruleset made of a release name.
+/// What one search made of a release name.
 ///
-/// A ruleset claims a name when its regex reads it and every condition it
+/// A search claims a name when its regex reads it and every condition it
 /// carries holds on what the fields read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
-    /// The ruleset that claimed the name, which is the first one declared
+    /// The search that claimed the name, which is the first one declared
     /// that does.
-    pub(crate) ruleset: String,
+    pub(crate) search: String,
 
     /// [`crate::parser::Parser::id`] of the parser the claimant read with.
     ///
@@ -32,19 +32,19 @@ pub(crate) struct Parsed {
     /// the library row records to say which parser claimed a torrent.
     pub(crate) parser: String,
 
-    /// Every field that matched, in the ruleset's own order.
+    /// Every field that matched, in the search's own order.
     ///
-    /// A ruleset claims a title when its regex reads it and every condition
+    /// A search claims a title when its regex reads it and every condition
     /// holds, so these are the values that met the conditions too.
     pub(crate) values: Vec<(String, String)>,
 
     pub(crate) identity: Identity,
 }
 
-/// What one parser read out of a name, with no ruleset judging it.
+/// What one parser read out of a name, with no search judging it.
 ///
 /// An import asks what the client's torrents are, and a show the reader has
-/// written no ruleset for yet answers nothing through [`Parsed`]. This
+/// written no search for yet answers nothing through [`Parsed`]. This
 /// carries the reading anyway, so the import has fields to suggest
 /// conditions on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,34 +125,34 @@ impl Display for Identity {
     }
 }
 
-/// Every parser and ruleset the process reads titles with, compiled in
+/// Every parser and search the process reads titles with, compiled in
 /// declaration order.
 pub(crate) struct Engine {
-    rulesets: Vec<Compiled>,
+    searches: Vec<Compiled>,
 
     /// The declarations the compiled set was built from.
     ///
     /// Inheritance resolves against this list alone, so an engine built from
     /// a fixture never reaches for the shipped set.
-    source: Vec<Ruleset>,
+    source: Vec<Search>,
 
     /// The parsers the set was built with, in declaration order.
     parsers: Vec<Parser>,
 
     /// The same parsers compiled, positionally aligned with `parsers`.
     ///
-    /// A ruleset holds an index into this rather than a regex of its own, so
-    /// every ruleset on one parser reads through the one regex compiled for
+    /// A search holds an index into this rather than a regex of its own, so
+    /// every search on one parser reads through the one regex compiled for
     /// it.
     compiled_parsers: Vec<CompiledParser>,
 }
 
-/// Why a set of parsers and rulesets does not compile into an engine.
+/// Why a set of parsers and searches does not compile into an engine.
 ///
 /// Every variant names what it came from, because a reader who saved a bad
-/// rule needs to know which page to open. A parser and a ruleset both
+/// rule needs to know which page to open. A parser and a search both
 /// compile fields, so the variants they share carry an `owner` that names
-/// the kind along with the id, such as `ruleset series-episodes`.
+/// the kind along with the id, such as `search series-episodes`.
 #[derive(Debug, Snafu)]
 pub(crate) enum EngineError {
     #[snafu(display("the pattern of field {field} in {owner} is not a valid regex"))]
@@ -162,19 +162,19 @@ pub(crate) enum EngineError {
         source: regex::Error,
     },
 
-    #[snafu(display("ruleset {ruleset} reads with parser {parser}, which does not exist"))]
-    UnknownParser { ruleset: String, parser: String },
+    #[snafu(display("search {search} reads with parser {parser}, which does not exist"))]
+    UnknownParser { search: String, parser: String },
 
     #[snafu(display("{owner} leaves field {field} without a pattern"))]
     BlankField { owner: String, field: String },
 
-    #[snafu(display("ruleset {ruleset} has a condition on field {field}, which it does not read"))]
-    UnknownField { ruleset: String, field: String },
+    #[snafu(display("search {search} has a condition on field {field}, which it does not read"))]
+    UnknownField { search: String, field: String },
 
     #[snafu(display(
-        "ruleset {ruleset} orders field {field}, which is not a number, season, or episode field"
+        "search {search} orders field {field}, which is not a number, season, or episode field"
     ))]
-    UnorderedField { ruleset: String, field: String },
+    UnorderedField { search: String, field: String },
 
     /// Every field compiled alone and the whole did not.
     ///
@@ -184,7 +184,7 @@ pub(crate) enum EngineError {
     Composed { owner: String, source: regex::Error },
 }
 
-/// One field's contribution to a ruleset's composed regex.
+/// One field's contribution to a search's composed regex.
 pub(crate) struct Component<'a> {
     pub(crate) name: &'a str,
     pub(crate) pattern: &'a str,
@@ -192,7 +192,7 @@ pub(crate) struct Component<'a> {
     pub(crate) tight: bool,
 }
 
-/// Joins every component into the one regex a ruleset matches with.
+/// Joins every component into the one regex a search matches with.
 ///
 /// A component that names no group of its own gets one named after its field,
 /// so every value comes back by name. One that already names that group is
@@ -243,14 +243,14 @@ pub(crate) fn compose(components: &[Component<'_>]) -> String {
 struct Compiled {
     id: String,
 
-    /// Where the parser this ruleset reads with sits in the engine's
+    /// Where the parser this search reads with sits in the engine's
     /// compiled list.
     ///
-    /// An index rather than a copy, because every ruleset on one parser
+    /// An index rather than a copy, because every search on one parser
     /// reads through the single regex compiled for it.
     parser: usize,
 
-    /// Every comparison the ruleset makes on a value the parser read, each
+    /// Every comparison the search makes on a value the parser read, each
     /// already checked against that parser's fields.
     conditions: Vec<Condition>,
 }
@@ -271,10 +271,10 @@ struct CompiledField {
 }
 
 impl Engine {
-    /// Compiles every parser, then every ruleset, in declaration order.
+    /// Compiles every parser, then every search, in declaration order.
     ///
-    /// A ruleset holds no regex of its own. It names a parser and reads
-    /// through the one compiled for it, so two rulesets on one parser share
+    /// A search holds no regex of its own. It names a parser and reads
+    /// through the one compiled for it, so two searches on one parser share
     /// that regex and the namespace of releases behind it.
     ///
     /// # Errors
@@ -282,10 +282,10 @@ impl Engine {
     /// Returns the first parser that leaves a field blank or carries a
     /// pattern the regex engine rejects.
     ///
-    /// Returns the first ruleset that names a parser no declaration
+    /// Returns the first search that names a parser no declaration
     /// carries, or that writes a condition its parser's fields do not
     /// answer.
-    pub(crate) fn new(parsers: Vec<Parser>, rulesets: Vec<Ruleset>) -> Result<Self, EngineError> {
+    pub(crate) fn new(parsers: Vec<Parser>, searches: Vec<Search>) -> Result<Self, EngineError> {
         let compiled_parsers = parsers
             .iter()
             .map(|parser| {
@@ -296,21 +296,21 @@ impl Engine {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let compiled = rulesets
+        let compiled = searches
             .iter()
-            .map(|ruleset| Compiled::new(ruleset, &parsers, &compiled_parsers))
+            .map(|search| Compiled::new(search, &parsers, &compiled_parsers))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
-            rulesets: compiled,
-            source: rulesets,
+            searches: compiled,
+            source: searches,
             parsers,
             compiled_parsers,
         })
     }
 
-    /// Every ruleset this engine was built from, in declaration order.
-    pub(crate) fn rulesets(&self) -> impl Iterator<Item = &Ruleset> {
+    /// Every search this engine was built from, in declaration order.
+    pub(crate) fn searches(&self) -> impl Iterator<Item = &Search> {
         self.source.iter()
     }
 
@@ -324,61 +324,61 @@ impl Engine {
         self.parsers.iter().find(|parser| parser.id == id)
     }
 
-    /// Finds the ruleset named by `id`.
-    pub(crate) fn ruleset(&self, id: &str) -> Option<&Ruleset> {
-        self.source.iter().find(|ruleset| ruleset.id == id)
+    /// Finds the search named by `id`.
+    pub(crate) fn search(&self, id: &str) -> Option<&Search> {
+        self.source.iter().find(|search| search.id == id)
     }
 
-    /// The parser `ruleset` reads titles with, or [`None`] when the engine
+    /// The parser `search` reads titles with, or [`None`] when the engine
     /// was built without it.
     ///
-    /// [`Engine::new`] refuses a ruleset whose parser is absent, so an engine
-    /// that compiled always answers this. A caller holding a ruleset from
+    /// [`Engine::new`] refuses a search whose parser is absent, so an engine
+    /// that compiled always answers this. A caller holding a search from
     /// somewhere else may not.
-    pub(crate) fn parser_of(&self, ruleset: &Ruleset) -> Option<&Parser> {
-        self.parser(&ruleset.parser)
+    pub(crate) fn parser_of(&self, search: &Search) -> Option<&Parser> {
+        self.parser(&search.parser)
     }
 
-    /// Every ruleset that reads with `parser`, in declaration order.
-    pub(crate) fn rulesets_on<'a>(
+    /// Every search that reads with `parser`, in declaration order.
+    pub(crate) fn searches_on<'a>(
         &'a self,
         parser: &'a Parser,
-    ) -> impl Iterator<Item = &'a Ruleset> {
+    ) -> impl Iterator<Item = &'a Search> {
         self.source
             .iter()
             .filter(move |one| one.parser == parser.id)
     }
 
-    /// Lists every ruleset that claims `title`, in declaration order.
+    /// Lists every search that claims `title`, in declaration order.
     ///
-    /// A ruleset claims a title when its regex reads it and every condition
+    /// A search claims a title when its regex reads it and every condition
     /// holds.
     ///
     /// A parser claims nothing, so one never appears here even when a
-    /// ruleset reading with it does.
+    /// search reading with it does.
     pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
-        self.rulesets
+        self.searches
             .iter()
-            .filter(|ruleset| {
-                claims(ruleset, &self.compiled_parsers[ruleset.parser], title).is_some()
+            .filter(|search| {
+                claims(search, &self.compiled_parsers[search.parser], title).is_some()
             })
-            .map(|ruleset| ruleset.id.clone())
+            .map(|search| search.id.clone())
             .collect()
     }
 
-    /// Parses `title` with the first declared ruleset that claims it.
+    /// Parses `title` with the first declared search that claims it.
     ///
-    /// Two rulesets that both claim one title are a set the reader wrote to
+    /// Two searches that both claim one title are a set the reader wrote to
     /// overlap, and declaration order is what settles it.
     pub(crate) fn parse(&self, title: &str) -> Option<Parsed> {
-        self.rulesets.iter().find_map(|ruleset| {
-            let parser = &self.compiled_parsers[ruleset.parser];
-            let values = claims(ruleset, parser, title)?;
+        self.searches.iter().find_map(|search| {
+            let parser = &self.compiled_parsers[search.parser];
+            let values = claims(search, parser, title)?;
 
             Some(Parsed {
-                ruleset: ruleset.id.clone(),
-                parser: self.parsers[ruleset.parser].id.clone(),
-                identity: ruleset.identity(&parser.fields, &values),
+                search: search.id.clone(),
+                parser: self.parsers[search.parser].id.clone(),
+                identity: search.identity(&parser.fields, &values),
                 values,
             })
         })
@@ -386,9 +386,9 @@ impl Engine {
 
     /// Reads `title` with the first declared parser that matches it.
     ///
-    /// No ruleset takes part, so a title every ruleset refuses still reads.
+    /// No search takes part, so a title every search refuses still reads.
     /// Declaration order settles two parsers that both read one title, which
-    /// is the order [`Self::parse`] settles two rulesets by.
+    /// is the order [`Self::parse`] settles two searches by.
     pub(crate) fn read(&self, title: &str) -> Option<Reading> {
         self.parsers
             .iter()
@@ -403,11 +403,11 @@ impl Engine {
 }
 
 impl Compiled {
-    /// Finds the parser `ruleset` reads with and checks its conditions
+    /// Finds the parser `search` reads with and checks its conditions
     /// against that parser's fields.
     ///
     /// `parsers` is the engine's compiled list in declaration order, and the
-    /// result indexes into it. Every ruleset on one parser therefore shares
+    /// result indexes into it. Every search on one parser therefore shares
     /// the single regex compiled for it, however many of them there are.
     ///
     /// # Errors
@@ -416,25 +416,25 @@ impl Compiled {
     /// named id, and the condition refusals when one names a field the
     /// parser does not read or ranks a field that does not rank.
     fn new(
-        ruleset: &Ruleset,
+        search: &Search,
         parsers: &[Parser],
         compiled: &[CompiledParser],
     ) -> Result<Self, EngineError> {
         let index = parsers
             .iter()
-            .position(|parser| parser.id == ruleset.parser)
+            .position(|parser| parser.id == search.parser)
             .context(UnknownParserSnafu {
-                ruleset: ruleset.id.clone(),
-                parser: ruleset.parser.clone(),
+                search: search.id.clone(),
+                parser: search.parser.clone(),
             })?;
 
-        for condition in &ruleset.conditions {
+        for condition in &search.conditions {
             let field = compiled[index]
                 .fields
                 .iter()
                 .find(|field| field.name == condition.field)
                 .context(UnknownFieldSnafu {
-                    ruleset: ruleset.id.clone(),
+                    search: search.id.clone(),
                     field: condition.field.clone(),
                 })?;
 
@@ -445,16 +445,16 @@ impl Compiled {
                         FieldKind::Number | FieldKind::Season | FieldKind::Episode
                     ),
                 UnorderedFieldSnafu {
-                    ruleset: ruleset.id.clone(),
+                    search: search.id.clone(),
                     field: condition.field.clone(),
                 }
             );
         }
 
         Ok(Self {
-            id: ruleset.id.clone(),
+            id: search.id.clone(),
             parser: index,
-            conditions: ruleset.conditions.clone(),
+            conditions: search.conditions.clone(),
         })
     }
 
@@ -491,7 +491,7 @@ impl Compiled {
 ///
 /// Each pattern compiles alone first, so a bad regex names the field that
 /// carries it rather than the whole list. `owner` names what carries the
-/// fields, such as `parser series` or `ruleset series-episodes`, because a
+/// fields, such as `parser series` or `search series-episodes`, because a
 /// reader who has to fix one needs to know which page to open.
 ///
 /// # Errors
@@ -549,13 +549,13 @@ fn compile_fields(owner: &str, fields: &[&Field]) -> Result<CompiledParser, Engi
     })
 }
 
-/// Runs the composed regex over `title`, or reports that the ruleset does not
+/// Runs the composed regex over `title`, or reports that the search does not
 /// claim it.
 ///
 /// One match answers for every field. A required field is a plain group, so
-/// the regex fails without it and the ruleset claims nothing. An optional one
+/// the regex fails without it and the search claims nothing. An optional one
 /// is a skippable group that contributes no value when it skips, which is
-/// what lets one ruleset claim a feed title and a folder-named torrent.
+/// what lets one search claim a feed title and a folder-named torrent.
 fn captures(parser: &CompiledParser, title: &str) -> Option<Vec<(String, String)>> {
     let caps = parser.regex.captures(title)?;
 
@@ -572,24 +572,24 @@ fn captures(parser: &CompiledParser, title: &str) -> Option<Vec<(String, String)
     )
 }
 
-/// Returns what the fields read from `title`, or reports that the ruleset
+/// Returns what the fields read from `title`, or reports that the search
 /// does not claim it.
 ///
-/// The regex decides which titles have the shape the ruleset describes, and
+/// The regex decides which titles have the shape the search describes, and
 /// the conditions decide which of those it wants. A condition compares the
 /// normalized value rather than the raw capture, so it agrees with the
 /// identity the library stores and with a saved test's verdict.
 ///
 /// A condition on a field the title did not carry fails, which is what makes
-/// an absent condition the way a ruleset asks for a pack alone.
+/// an absent condition the way a search asks for a pack alone.
 fn claims(
-    ruleset: &Compiled,
+    search: &Compiled,
     parser: &CompiledParser,
     title: &str,
 ) -> Option<Vec<(String, String)>> {
     let values = captures(parser, title)?;
 
-    for condition in &ruleset.conditions {
+    for condition in &search.conditions {
         // `Compiled::new` refused a condition on a name no field carries, so
         // a miss here is a field that read nothing.
         let kind = parser
@@ -615,16 +615,16 @@ fn claims(
 mod tests {
     use super::{Component, Engine, EngineError, Identity, compose};
     use crate::parser::{Field, FieldKind, Parser};
-    use crate::ruleset::fixture::{self, ENGINE};
-    use crate::ruleset::{Condition, Op, Ruleset};
+    use crate::search::fixture::{self, ENGINE};
+    use crate::search::{Condition, Op, Search};
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
-    /// The resolution the show ruleset requires is absent. The parser reads
-    /// the name and no ruleset admits it.
+    /// The resolution the show search requires is absent. The parser reads
+    /// the name and no search admits it.
     const HOLLOW_720: &str =
         "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
-    /// The same episode from another group. The show ruleset claims it,
+    /// The same episode from another group. The show search claims it,
     /// because it requires 1080p and names no publisher.
     const HOLLOW_OTHER_GROUP: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
@@ -647,21 +647,21 @@ mod tests {
     }
 
     #[test]
-    fn a_ruleset_claims_what_its_conditions_admit() {
+    fn a_search_claims_what_its_conditions_admit() {
         let parsed = ENGINE.parse(HOLLOW_1080).expect("claimed");
 
         assert_eq!(
-            parsed.ruleset, "series-hollow-meridian",
-            "the ruleset whose conditions the title meets is what claims it"
+            parsed.search, "series-hollow-meridian",
+            "the search whose conditions the title meets is what claims it"
         );
     }
 
     #[test]
-    fn claimants_name_rulesets_and_never_a_parser() {
+    fn claimants_name_searches_and_never_a_parser() {
         assert_eq!(
             ENGINE.claimants(HOLLOW_1080),
             vec!["series-hollow-meridian"],
-            "a parser claims nothing, so only the ruleset appears"
+            "a parser claims nothing, so only the search appears"
         );
     }
 
@@ -671,21 +671,21 @@ mod tests {
     }
 
     #[test]
-    fn a_title_the_parser_reads_and_no_ruleset_wants_is_unclaimed() {
+    fn a_title_the_parser_reads_and_no_search_wants_is_unclaimed() {
         assert_eq!(
             ENGINE.parse(HOLLOW_720),
             None,
-            "the parser reads the 720p name, and no ruleset admits that resolution"
+            "the parser reads the 720p name, and no search admits that resolution"
         );
     }
 
     #[test]
-    fn read_names_the_parser_when_no_ruleset_claims() {
+    fn read_names_the_parser_when_no_search_claims() {
         let reading = ENGINE.read(HOLLOW_720).expect("read");
 
         assert_eq!(
             reading.parser, "series-episodes",
-            "the show ruleset requires 1080p, and the parser reads the name all the same"
+            "the show search requires 1080p, and the parser reads the name all the same"
         );
         assert!(
             reading
@@ -740,8 +740,8 @@ mod tests {
         let parsed = ENGINE.parse(HOLLOW_PACK).expect("claimed");
 
         assert_eq!(
-            parsed.ruleset, "series-hollow-meridian",
-            "a pack names its show and resolution, so the ruleset claims it"
+            parsed.search, "series-hollow-meridian",
+            "a pack names its show and resolution, so the search claims it"
         );
         assert_eq!(
             parsed.identity,
@@ -831,7 +831,7 @@ mod tests {
             Engine::new(parsers, vec![on_parser("episodes", parser, Vec::new())])
                 .expect("the fixture patterns compile")
                 .parse(HOLLOW_1080)
-                .expect("a ruleset with no conditions claims what its parser reads")
+                .expect("a search with no conditions claims what its parser reads")
                 .identity
         };
 
@@ -848,10 +848,10 @@ mod tests {
         );
     }
 
-    /// Names a ruleset on `parser` with the conditions given, which is all
+    /// Names a search on `parser` with the conditions given, which is all
     /// the compile step reads.
-    fn on_parser(id: &str, parser: &str, conditions: Vec<Condition>) -> Ruleset {
-        Ruleset {
+    fn on_parser(id: &str, parser: &str, conditions: Vec<Condition>) -> Search {
+        Search {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: false,
@@ -875,17 +875,17 @@ mod tests {
     }
 
     #[test]
-    fn a_ruleset_on_an_absent_parser_is_an_error() {
+    fn a_search_on_an_absent_parser_is_an_error() {
         let Err(error) = Engine::new(Vec::new(), vec![on_parser("derived", "absent", Vec::new())])
         else {
-            panic!("a ruleset with nothing to read titles with never compiles");
+            panic!("a search with nothing to read titles with never compiles");
         };
 
         assert!(
             matches!(
                 error,
-                EngineError::UnknownParser { ref ruleset, ref parser }
-                    if ruleset == "derived" && parser == "absent"
+                EngineError::UnknownParser { ref search, ref parser }
+                    if search == "derived" && parser == "absent"
             ),
             "the message names both ends: {error}"
         );
@@ -955,7 +955,7 @@ mod tests {
         );
     }
 
-    /// Names a condition, so the rulesets below read as a list of
+    /// Names a condition, so the searches below read as a list of
     /// comparisons rather than a page of struct literals.
     fn condition(field: &str, op: Op, value: &str) -> Condition {
         Condition {
@@ -965,7 +965,7 @@ mod tests {
         }
     }
 
-    /// The fixture's episode parser, which the rulesets below narrow.
+    /// The fixture's episode parser, which the searches below narrow.
     fn episodes() -> Parser {
         fixture::parsers()
             .into_iter()
@@ -1013,7 +1013,7 @@ mod tests {
         assert_eq!(
             engine.claimants(HOLLOW_720),
             vec!["either-definition"],
-            "one condition covers both resolutions, where equals needs a ruleset each"
+            "one condition covers both resolutions, where equals needs a search each"
         );
     }
 
@@ -1036,8 +1036,8 @@ mod tests {
         assert!(
             matches!(
                 error,
-                EngineError::UnknownField { ref ruleset, ref field }
-                    if ruleset == "wanted" && field == "resolution"
+                EngineError::UnknownField { ref search, ref field }
+                    if search == "wanted" && field == "resolution"
             ),
             "the message names the field the parser does not read: {error}"
         );
@@ -1062,8 +1062,8 @@ mod tests {
         assert!(
             matches!(
                 error,
-                EngineError::UnorderedField { ref ruleset, ref field }
-                    if ruleset == "wanted" && field == "show"
+                EngineError::UnorderedField { ref search, ref field }
+                    if search == "wanted" && field == "show"
             ),
             "the message names the field that does not rank: {error}"
         );
@@ -1095,7 +1095,7 @@ mod tests {
         assert_eq!(
             engine.claimants("Ashfall.S01E01"),
             Vec::<&str>::new(),
-            "and nothing parses through it, because no ruleset names one yet"
+            "and nothing parses through it, because no search names one yet"
         );
     }
 

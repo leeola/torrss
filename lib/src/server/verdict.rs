@@ -1,6 +1,6 @@
-//! Whether a ruleset still reads a title the way the reader stated.
+//! Whether a search still reads a title the way the reader stated.
 //!
-//! A saved test is the reader's own statement about one title: this ruleset
+//! A saved test is the reader's own statement about one title: this search
 //! claims it, and each named field reads this value out of it. This module
 //! runs that statement against a draft and reports where the two disagree.
 //!
@@ -128,7 +128,7 @@ mod tests {
                 expected: "h 264".to_owned(),
                 actual: None,
             }]),
-            "an expectation on a field the ruleset dropped goes unmet, not unreported"
+            "an expectation on a field the search dropped goes unmet, not unreported"
         );
     }
 

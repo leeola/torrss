@@ -226,8 +226,8 @@ impl ParserStore {
 /// The kind is stored as the same text the editor's form posts, so one
 /// vocabulary serves the form and the table.
 ///
-/// The ruleset store reads its own field rows through this too. Both tables
-/// carry the same columns, because a ruleset still declares fields of its
+/// The search store reads its own field rows through this too. Both tables
+/// carry the same columns, because a search still declares fields of its
 /// own until every one of them runs on a parser.
 pub(crate) fn field(row: &sqlx::sqlite::SqliteRow) -> Result<Field, sqlx::Error> {
     let kind: String = row.try_get("kind")?;

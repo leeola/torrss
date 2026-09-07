@@ -10,8 +10,8 @@ use crate::feed::registry;
 use crate::feed::registry::FeedRegistry;
 use crate::feed::store::FeedStore;
 use crate::parser::store::ParserStore;
-use crate::ruleset::registry::Rulesets;
-use crate::ruleset::store::RulesetStore;
+use crate::search::registry::Searches;
+use crate::search::store::SearchStore;
 use crate::services::Services;
 use crate::torrent::scan;
 use crate::torrent::scan::ScanState;
@@ -63,9 +63,9 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
             .map_err(io::Error::other)?,
     );
 
-    let rulesets = Arc::new(
-        Rulesets::load(
-            RulesetStore::new(services.db.clone()),
+    let searches = Arc::new(
+        Searches::load(
+            SearchStore::new(services.db.clone()),
             ParserStore::new(services.db.clone()),
         )
         .await
@@ -87,7 +87,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
         config.assets.as_deref(),
         services.clone(),
         Arc::clone(&feed_registry),
-        Arc::clone(&rulesets),
+        Arc::clone(&searches),
         Arc::clone(&scan_state),
     )?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
@@ -106,7 +106,7 @@ pub async fn serve(config: &Config, services: Services) -> io::Result<()> {
 
     let scanning = tokio::spawn(scan::poll(
         scan_state,
-        rulesets,
+        searches,
         services.db,
         services.torrents,
         services.clock,

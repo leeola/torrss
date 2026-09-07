@@ -6,7 +6,7 @@
 //! [`Engine::read`](crate::rules::Engine::read) takes the first parser that
 //! reads a name.
 //!
-//! Each names its fields as [`super::PRESETS`] does. An import and a ruleset
+//! Each names its fields as [`super::PRESETS`] does. An import and a search
 //! therefore find `show`, `season`, `episodeNumber`, and `resolution` under
 //! one name, whichever parser read them.
 //!
@@ -376,7 +376,7 @@ mod tests {
 
     use super::parsers;
     use crate::rules::Engine;
-    use crate::ruleset::Ruleset;
+    use crate::search::Search;
 
     /// The shipped set compiled, which is what proves every pattern above is
     /// a valid regex.
@@ -708,10 +708,10 @@ mod tests {
         );
     }
 
-    /// A ruleset on `parser` that writes no condition, so it claims every
+    /// A search on `parser` that writes no condition, so it claims every
     /// title the parser reads.
-    fn claiming(id: &str, parser: &str) -> Ruleset {
-        Ruleset {
+    fn claiming(id: &str, parser: &str) -> Search {
+        Search {
             id: id.to_owned(),
             name: id.to_owned(),
             enabled: true,

@@ -10,4 +10,4 @@ pub mod store;
 pub mod torrent;
 
 mod parser;
-mod ruleset;
+mod search;

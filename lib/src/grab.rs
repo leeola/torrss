@@ -59,10 +59,10 @@ pub(crate) async fn grab(
     item: &StoredItem,
     auth: &FeedAuth,
 ) -> Result<(), GrabError> {
-    let rulesets = engine.claimants(&item.item.title);
+    let searches = engine.claimants(&item.item.title);
 
-    for id in &rulesets {
-        debug!(ruleset.id = id, "ruleset passed");
+    for id in &searches {
+        debug!(search.id = id, "search passed");
     }
 
     let submitted = submit(downloader, client, item, auth).await;
@@ -72,7 +72,7 @@ pub(crate) async fn grab(
         item.id,
         clock.now(),
         submitted.as_ref().err().map(ToString::to_string).as_deref(),
-        &rulesets.iter().map(String::as_str).collect::<Vec<_>>(),
+        &searches.iter().map(String::as_str).collect::<Vec<_>>(),
     )
     .await
     .context(StoreSnafu);
@@ -139,7 +139,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::feed::{FeedAuth, FeedItem, fake};
-    use crate::ruleset::fixture::ENGINE;
+    use crate::search::fixture::ENGINE;
     use crate::services::Services;
     use crate::store;
     use crate::store::grabs::{self, Grab};
@@ -269,7 +269,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the download answered with status 403".to_owned()),
-                    rulesets: Vec::new(),
+                    searches: Vec::new(),
                 }
             )]),
             "a failed attempt is recorded, with the reason"
@@ -307,7 +307,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the torrent client rejected the request: duplicate".to_owned()),
-                    rulesets: Vec::new(),
+                    searches: Vec::new(),
                 }
             )]),
             "the client's own words are what the page shows"
@@ -339,7 +339,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
-                    rulesets: Vec::new(),
+                    searches: Vec::new(),
                 }
             )])
         );
@@ -374,15 +374,15 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
-                    rulesets: vec!["series-hollow-meridian".to_owned()],
+                    searches: vec!["series-hollow-meridian".to_owned()],
                 }
             )]),
-            "a parser claims nothing, so only the show ruleset is recorded"
+            "a parser claims nothing, so only the show search is recorded"
         );
     }
 
     #[sqlx::test]
-    async fn grab_of_unclaimed_title_records_no_ruleset(pool: SqlitePool) {
+    async fn grab_of_unclaimed_title_records_no_search(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let item = stored(
             &services.db,
@@ -410,10 +410,10 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
-                    rulesets: Vec::new(),
+                    searches: Vec::new(),
                 }
             )]),
-            "a title no ruleset claims still grabs, and records nothing"
+            "a title no search claims still grabs, and records nothing"
         );
     }
 

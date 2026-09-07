@@ -1,17 +1,17 @@
-//! Reading the torrents a client holds into the rulesets they imply.
+//! Reading the torrents a client holds into the searches they imply.
 //!
 //! A client full of one subject is the reader saying they follow it. This
-//! reads that statement into a ruleset the reader writes by hand otherwise.
-//! The ruleset names the subject, and every other field those torrents read.
+//! reads that statement into a search the reader writes by hand otherwise.
+//! The search names the subject, and every other field those torrents read.
 //! A field they read several ways carries every value they read, so the
-//! ruleset claims what the client holds rather than anything at all.
+//! search claims what the client holds rather than anything at all.
 //!
 //! The grouping is by the parser's own subject rather than by a field called
 //! `show`, because a parser names its subject as it likes. Only an episodic
 //! parser takes part. A film the client holds suggests nothing, because the
 //! reader already has it and no later release of it follows.
 //!
-//! Nothing here grabs a torrent. A ruleset puts titles on the wanted list,
+//! Nothing here grabs a torrent. A search puts titles on the wanted list,
 //! and the client already holds these.
 
 use std::cmp::Reverse;
@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
-use super::form::RulesetForm;
+use super::form::SearchForm;
 use super::{Condition, Op};
 use crate::parser::{Field, FieldKind, Parser, TitleTest};
 use crate::rules::{Engine, Reading};
@@ -40,7 +40,7 @@ const SKIPPED_FIELDS: &[&str] = &["extension", "checksum", "episodeName"];
 /// torrents that spell one value differently name it once.
 type Captures = BTreeMap<String, (String, String)>;
 
-/// One ruleset an import offers to create.
+/// One search an import offers to create.
 ///
 /// The torrents and the time are what the preview reports about a subject,
 /// so the reader decides from them whether the suggestion is one they want.
@@ -49,7 +49,7 @@ type Captures = BTreeMap<String, (String, String)>;
 /// that carries a progress fraction.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Suggestion {
-    /// [`crate::parser::Parser::id`] the suggested ruleset reads with.
+    /// [`crate::parser::Parser::id`] the suggested search reads with.
     pub(crate) parser: String,
 
     /// The subject as [`FieldKind::normalize`] renders it.
@@ -58,7 +58,7 @@ pub(crate) struct Suggestion {
     /// one spelling two torrents that named the subject differently share.
     pub(crate) key: String,
 
-    /// The subject as the suggested ruleset names it.
+    /// The subject as the suggested search names it.
     pub(crate) show: String,
 
     /// The client's torrents this subject accounts for, in the order the
@@ -72,11 +72,11 @@ pub(crate) struct Suggestion {
     /// list while the reader unchecks torrents.
     pub(crate) newest: Option<DateTime<Utc>>,
 
-    /// What the suggested ruleset compares, the subject first and the fields
+    /// What the suggested search compares, the subject first and the fields
     /// the torrents read after it, in the parser's own order.
     pub(crate) conditions: Vec<Condition>,
 
-    /// The ruleset that already names this subject, when one does.
+    /// The search that already names this subject, when one does.
     pub(crate) collision: Option<Collision>,
 
     /// [`crate::parser::Parser::id`] of the earlier suggestion about this
@@ -92,23 +92,23 @@ pub(crate) struct Suggestion {
 ///
 /// An excluded torrent stays listed so the reader takes it back, and it
 /// feeds no condition while it is out. That is how a name the reader
-/// rejects keeps its values out of the ruleset.
+/// rejects keeps its values out of the search.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Member {
     pub(crate) torrent: Torrent,
     pub(crate) included: bool,
 }
 
-/// A ruleset that already names the subject a suggestion is about.
+/// A search that already names the subject a suggestion is about.
 ///
 /// On the same parser the suggestion is one the reader has, so the preview
 /// shows it and offers nothing. On another parser the preview still offers
-/// it, because each ruleset claims the shape its own parser reads and the
+/// it, because each search claims the shape its own parser reads and the
 /// reader wants both.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Collision {
-    /// [`crate::ruleset::Ruleset::id`] of the ruleset that names the subject.
-    pub(crate) ruleset: String,
+    /// [`crate::search::Search::id`] of the search that names the subject.
+    pub(crate) search: String,
 
     pub(crate) same_parser: bool,
 }
@@ -176,17 +176,17 @@ impl Group {
 ///
 /// A torrent named in `excluded` stays listed among the suggestion's
 /// members and feeds no condition, so a name the reader rejects keeps its
-/// values out of the ruleset. A group whose every torrent is excluded still
+/// values out of the search. A group whose every torrent is excluded still
 /// suggests, with the subject condition alone, and it keeps its place in the
 /// list.
 ///
-/// A subject a ruleset already names carries that ruleset in its
+/// A subject a search already names carries that search in its
 /// [`Suggestion::collision`] rather than dropping out, so the reader sees
 /// that the client holds a show they follow.
 ///
 /// A torrent whose name no parser reads is ignored, as is one read by a
 /// parser with no subject or with nothing episodic about it. Neither says
-/// anything about a ruleset the reader wants.
+/// anything about a search the reader wants.
 ///
 /// One subject read by two parsers yields one suggestion per parser, and
 /// each after the first carries the earlier one in
@@ -308,13 +308,13 @@ fn reading_of(parser: &Parser, reading: &Reading) -> Captures {
         .collect()
 }
 
-/// What a suggested ruleset compares.
+/// What a suggested search compares.
 ///
 /// The subject leads, and every field each included torrent read follows it
 /// in the parser's own order. A field they all read one way becomes an
 /// `equals`. A field they read several ways becomes a `one of` naming every
 /// value, the newest first. The list is what the client holds, so the
-/// ruleset claims that rather than any value at all.
+/// search claims that rather than any value at all.
 ///
 /// An identity field beyond the subject names one release rather than the
 /// set the reader wants, so only the rest take part.
@@ -348,7 +348,7 @@ fn conditions(parser: &Parser, subject: &Field, show: &str, group: &Group) -> Ve
     conditions
 }
 
-/// Reads `title` into the form a ruleset editor starts from.
+/// Reads `title` into the form a search editor starts from.
 ///
 /// A feed title is a group of one, so every field it read names one value
 /// and each becomes a condition. The reader removes the ones they do not
@@ -357,7 +357,7 @@ fn conditions(parser: &Parser, subject: &Field, show: &str, group: &Group) -> Ve
 /// Any parser serves here, unlike an import, because a reader who wants a
 /// film says so from its title. A title no parser reads keeps its place as
 /// the draft's one test, so the reader writes the fields against something.
-pub(crate) fn seed(engine: &Engine, title: &str) -> RulesetForm {
+pub(crate) fn seed(engine: &Engine, title: &str) -> SearchForm {
     let read = engine.read(title).and_then(|reading| {
         let parser = engine.parser(&reading.parser)?;
         let subject = parser.subject()?;
@@ -366,7 +366,7 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> RulesetForm {
     });
 
     let Some((parser, subject, read)) = read else {
-        return RulesetForm {
+        return SearchForm {
             name: String::new(),
             parser: String::new(),
             conditions: Vec::new(),
@@ -397,7 +397,7 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> RulesetForm {
         })
         .collect();
 
-    RulesetForm {
+    SearchForm {
         name: String::new(),
         parser: parser.id.clone(),
         conditions,
@@ -408,16 +408,16 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> RulesetForm {
     }
 }
 
-/// Finds the ruleset that already names `key` under the field `subject`.
+/// Finds the search that already names `key` under the field `subject`.
 ///
 /// The one on `parser` wins over one on another parser, because that is the
-/// ruleset this suggestion repeats. Both sides normalize before they compare,
-/// so a ruleset that spells the subject differently is still found.
+/// search this suggestion repeats. Both sides normalize before they compare,
+/// so a search that spells the subject differently is still found.
 fn collision(engine: &Engine, parser: &str, subject: &str, key: &str) -> Option<Collision> {
     let named = engine
-        .rulesets()
-        .filter(|ruleset| {
-            ruleset.conditions.iter().any(|condition| {
+        .searches()
+        .filter(|search| {
+            search.conditions.iter().any(|condition| {
                 condition.field == subject
                     && condition.op == Op::Equals
                     && FieldKind::Text.normalize(&condition.value) == key
@@ -427,18 +427,18 @@ fn collision(engine: &Engine, parser: &str, subject: &str, key: &str) -> Option<
 
     let found = named
         .iter()
-        .find(|ruleset| ruleset.parser == parser)
+        .find(|search| search.parser == parser)
         .or(named.first())?;
 
     Some(Collision {
-        ruleset: found.id.clone(),
+        search: found.id.clone(),
         same_parser: found.parser == parser,
     })
 }
 
 /// Returns `key` with the first letter of each word in upper case.
 ///
-/// The key is normalized, so it reads `coastal ecology`. A ruleset carries
+/// The key is normalized, so it reads `coastal ecology`. A search carries
 /// the name the reader types by hand, which is `Coastal Ecology`.
 fn titled(key: &str) -> String {
     let mut show = String::with_capacity(key.len());
@@ -468,8 +468,8 @@ mod tests {
     use super::{Collision, Suggestion, plan, seed};
     use crate::parser::{Field, Parser, TitleTest};
     use crate::rules::Engine;
-    use crate::ruleset::fixture::{self, ENGINE};
-    use crate::ruleset::{Condition, Op, Ruleset};
+    use crate::search::fixture::{self, ENGINE};
+    use crate::search::{Condition, Op, Search};
     use crate::torrent::{Torrent, TorrentId, TorrentState};
 
     fn torrent(name: &str, day: u32) -> Torrent {
@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn a_show_a_ruleset_names_is_listed_with_its_collision() {
+    fn a_show_a_search_names_is_listed_with_its_collision() {
         let planned = planned(
             &ENGINE,
             &[torrent(
@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(
             suggestion.collision,
             Some(Collision {
-                ruleset: "series-hollow-meridian".to_owned(),
+                search: "series-hollow-meridian".to_owned(),
                 same_parser: true,
             }),
             "the reader follows this show already, and the preview says so rather than hiding it"
@@ -566,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ruleset_on_another_parser_marks_the_collision() {
+    fn a_search_on_another_parser_marks_the_collision() {
         let copy = Parser {
             id: "series-copy".to_owned(),
             ..fixture::parsers()
@@ -577,7 +577,7 @@ mod tests {
 
         let engine = Engine::new(
             fixture::parsers().into_iter().chain([copy]).collect(),
-            vec![Ruleset {
+            vec![Search {
                 id: "hollow-copy".to_owned(),
                 name: "Hollow copy".to_owned(),
                 enabled: true,
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(
             suggestion.collision,
             Some(Collision {
-                ruleset: "hollow-copy".to_owned(),
+                search: "hollow-copy".to_owned(),
                 same_parser: false,
             }),
             "the other parser claims a different shape, so the reader wants this one too"

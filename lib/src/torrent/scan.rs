@@ -1,11 +1,11 @@
 //! Recording which releases the torrent client already holds.
 //!
 //! A scan is where the three halves of the question meet. The client lists
-//! what it holds, the rulesets turn each name into an identity, and the
+//! what it holds, the searches turn each name into an identity, and the
 //! library table takes the result. The feed page then answers "do I have
 //! this" from one query.
 //!
-//! A name no ruleset claims is skipped rather than stored. A client holds
+//! A name no search claims is skipped rather than stored. A client holds
 //! plenty this application never grabbed, and a row with no identity answers
 //! no question the feed page asks.
 //!
@@ -22,7 +22,7 @@ use tracing::{info, instrument, warn};
 
 use crate::clock::{self, Clock};
 use crate::rules::Engine;
-use crate::ruleset::registry::Rulesets;
+use crate::search::registry::Searches;
 use crate::store::library;
 use crate::store::library::Owned;
 use crate::torrent::{Torrent, TorrentClient};
@@ -68,17 +68,17 @@ pub(crate) struct ScanStatus {
     pub(crate) outcome: Result<ScanReport, String>,
 }
 
-/// How much of the client's queue the rulesets claimed.
+/// How much of the client's queue the searches claimed.
 ///
 /// The gap between the two counts is what a user reads to judge the rules. A
-/// client full of torrents with nothing matched means the rulesets are wrong,
+/// client full of torrents with nothing matched means the searches are wrong,
 /// not that the client is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScanReport {
     /// How many torrents the client holds.
     pub(crate) torrents: usize,
 
-    /// How many of them a ruleset claimed. Two torrents sometimes share one
+    /// How many of them a search claimed. Two torrents sometimes share one
     /// identity, so this counts torrents rather than rows written.
     pub(crate) matched: usize,
 }
@@ -283,7 +283,7 @@ pub(crate) async fn scan_due(
 #[instrument(name = "scan_poll", skip_all, fields(interval_secs = interval.as_secs()))]
 pub(crate) async fn poll(
     state: Arc<ScanState>,
-    rulesets: Arc<Rulesets>,
+    searches: Arc<Searches>,
     pool: SqlitePool,
     client: Arc<dyn TorrentClient>,
     clock: Arc<dyn Clock>,
@@ -295,7 +295,7 @@ pub(crate) async fn poll(
             &pool,
             client.as_ref(),
             clock.as_ref(),
-            &rulesets.engine(),
+            &searches.engine(),
             interval,
         )
         .await;
@@ -304,7 +304,7 @@ pub(crate) async fn poll(
     }
 }
 
-/// Returns what the library stores for `torrent`, or nothing when no ruleset
+/// Returns what the library stores for `torrent`, or nothing when no search
 /// claims its name.
 fn identify(torrent: &Torrent, engine: &Engine) -> Option<Owned> {
     let parsed = engine.parse(&torrent.name)?;
@@ -326,7 +326,7 @@ mod tests {
 
     use super::{ScanReport, ScanState, ScanStatus, scan, scan_due};
     use crate::clock::Clock;
-    use crate::ruleset::fixture::ENGINE;
+    use crate::search::fixture::ENGINE;
     use crate::services::Services;
     use crate::store::library;
     use crate::torrent::TorrentError;
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn scan_skips_names_no_ruleset_claims(pool: SqlitePool) {
+    async fn scan_skips_names_no_search_claims(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW);

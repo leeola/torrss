@@ -1,4 +1,4 @@
-//! The page that turns the torrents a client holds into rulesets.
+//! The page that turns the torrents a client holds into searches.
 //!
 //! The preview lists the client live and stores nothing, as the feed test
 //! page does. Only the Import post writes, and it writes the shows the
@@ -28,11 +28,11 @@ use url::form_urlencoded;
 
 use crate::parser::form as parser_form;
 use crate::rules::Engine;
-use crate::ruleset;
-use crate::ruleset::Condition;
-use crate::ruleset::import::{Collision, Suggestion};
-use crate::ruleset::registry::Rulesets;
-use crate::ruleset::{Ruleset, import};
+use crate::search;
+use crate::search::Condition;
+use crate::search::import::{Collision, Suggestion};
+use crate::search::registry::Searches;
+use crate::search::{Search, import};
 use crate::server::{components, format, handlers};
 use crate::services::Services;
 use crate::torrent::{Torrent, TorrentId};
@@ -43,7 +43,7 @@ use crate::torrent::{Torrent, TorrentId};
 /// Each operation returns the form serialized, which is what the `review`
 /// signal takes and the shard re-plans from.
 ///
-/// A disabled pick names a subject a ruleset on the same parser already
+/// A disabled pick names a subject a search on the same parser already
 /// covers, so the page-wide operations leave it alone. `torrents` falls
 /// back to every pick when it looks one up, because the reader still edits
 /// the torrents of a subject the preview offers no pick for.
@@ -170,10 +170,10 @@ fn condition_value(suggestion: &Suggestion, condition: &Condition) -> String {
     )
 }
 
-/// The conditions the imported ruleset carries.
+/// The conditions the imported search carries.
 ///
-/// The subject leads, because [`crate::ruleset::import`] places it first,
-/// and it never drops. A ruleset with no subject condition claims every
+/// The subject leads, because [`crate::search::import`] places it first,
+/// and it never drops. A search with no subject condition claims every
 /// release its parser reads.
 fn kept(suggestion: &Suggestion, review: Option<&Review>) -> Vec<Condition> {
     let Some((subject, rest)) = suggestion.conditions.split_first() else {
@@ -198,10 +198,10 @@ fn kept(suggestion: &Suggestion, review: Option<&Review>) -> Vec<Condition> {
 struct Row<'a> {
     suggestion: &'a Suggestion,
 
-    /// What the suggested ruleset is called.
+    /// What the suggested search is called.
     name: String,
 
-    /// The ruleset that already names this subject, when one does.
+    /// The search that already names this subject, when one does.
     claimed: Option<Claimed>,
 
     /// What the parser of the earlier suggestion about this subject is
@@ -209,15 +209,15 @@ struct Row<'a> {
     repeats: Option<String>,
 }
 
-/// The ruleset a collision points at, named for the reader.
+/// The search a collision points at, named for the reader.
 ///
-/// The engine is read once per row here, because a badge names the ruleset
+/// The engine is read once per row here, because a badge names the search
 /// and the parser it reads with rather than their ids.
 struct Claimed {
     id: String,
-    ruleset: String,
+    search: String,
 
-    /// What the ruleset's parser is called, which only a collision on
+    /// What the search's parser is called, which only a collision on
     /// another parser renders.
     parser: String,
 
@@ -228,7 +228,7 @@ struct Claimed {
 ///
 /// The heading and the form shell stay put. Everything the review changes
 /// lives in the shard below, so a click re-plans the list in place.
-#[page("/admin/rulesets/import")]
+#[page("/admin/searches/import")]
 async fn import_preview() -> Result {
     view! {
         signal review = String::new();
@@ -239,7 +239,7 @@ async fn import_preview() -> Result {
         <script>(Unescaped::new_unchecked(IMPORT_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin/rulesets" class="hover:text-slate-300">"Rulesets"</a>
+            <a href="/admin/searches" class="hover:text-slate-300">"Searches"</a>
             " / "
             <span class="text-slate-300">"Import"</span>
         </nav>
@@ -253,7 +253,7 @@ async fn import_preview() -> Result {
             id="import-form"
             data-rows="true"
             method="post"
-            action="/admin/rulesets/import"
+            action="/admin/searches/import"
             // A checkbox posts nothing when it is off, so the serialized
             // form is the review, and the shard re-plans from it.
             @change=$(|_e: Event| {
@@ -318,7 +318,7 @@ async fn import_preview() -> Result {
                 >
                     "Import"
                 </button>
-                components::link_button(href: "/admin/rulesets", label: "Cancel")
+                components::link_button(href: "/admin/searches", label: "Cancel")
             </div>
         </form>
     }
@@ -337,7 +337,7 @@ async fn import_preview() -> Result {
 #[shard]
 async fn import_suggestions(cx: &Cx, review: String) -> Result {
     let services = app_context::<Services>(cx);
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
     let now = services.clock.now();
 
     let review = Review::parse(&review);
@@ -401,13 +401,13 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
 
                                 match claimed {
                                     Some(claimed) if claimed.same_parser => <a
-                                        href=(format!("/admin/rulesets/{}", claimed.id))
+                                        href=(format!("/admin/searches/{}", claimed.id))
                                         class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300"
                                     >
-                                        "already a ruleset: " (&claimed.ruleset)
+                                        "already a search: " (&claimed.search)
                                     </a>,
                                     Some(claimed) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
-                                        "also " (&claimed.ruleset) ", read with " (&claimed.parser)
+                                        "also " (&claimed.search) ", read with " (&claimed.parser)
                                     </span>,
                                     None => "",
                                 }
@@ -459,7 +459,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                             <div class="mt-3 flex flex-wrap items-center gap-2">
                                 if let Some((subject, rest)) = suggestion.conditions.split_first() {
                                     // The subject never drops, so it stays a
-                                    // span. A ruleset without it claims every
+                                    // span. A search without it claims every
                                     // release its parser reads.
                                     <span class="rounded-full bg-slate-800/70 px-2 py-0.5 font-mono text-xs text-slate-400">
                                         (&subject.field) " " (subject.op.label()) " " (&subject.value)
@@ -528,13 +528,13 @@ fn picked(review: Option<&Review>, suggestion: &Suggestion) -> bool {
     })
 }
 
-/// Creates a ruleset for each checked show, then returns to the index.
+/// Creates a search for each checked show, then returns to the index.
 ///
-/// The posted form is the review, so the created rulesets carry only the
+/// The posted form is the review, so the created searches carry only the
 /// torrents the reader left checked. Every one is enabled, because a reader
 /// who imported a show asked for its releases.
-#[route(POST "/admin/rulesets/import")]
-async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
+#[route(POST "/admin/searches/import")]
+async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
     let review = {
         let body = str::from_utf8(&body).map_err(|_| bad_request("the form is not valid UTF-8"))?;
 
@@ -542,7 +542,7 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
     };
 
     let services = app_context::<Services>(cx);
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let searches = app_context::<Arc<Searches>>(cx);
 
     let torrents = services
         .torrents
@@ -552,7 +552,7 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
 
     let excluded = excluded(&torrents, Some(&review));
 
-    for suggestion in import::plan(&rulesets.engine(), &torrents, &excluded) {
+    for suggestion in import::plan(&searches.engine(), &torrents, &excluded) {
         if !review
             .picked
             .contains(&format!("{}|{}", suggestion.parser, suggestion.key))
@@ -561,8 +561,8 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
         }
 
         // The preview never offers a subject its own parser already has a
-        // ruleset for, so a post that names one is stale. It creates a second
-        // ruleset over the same releases.
+        // search for, so a post that names one is stale. It creates a second
+        // search over the same releases.
         if suggestion
             .collision
             .as_ref()
@@ -576,10 +576,10 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
         // The engine is read again per suggestion, because each save
         // rebuilds it and the next slug has to see the id just taken.
         let (id, name) = {
-            let engine = rulesets.engine();
+            let engine = searches.engine();
             let name = named(&engine, &suggestion.parser, &conditions);
 
-            let id = parser_form::unique_slug(&name, |id| engine.ruleset(id).is_some())
+            let id = parser_form::unique_slug(&name, |id| engine.search(id).is_some())
                 .ok_or_else(|| {
                     bad_request(format!(
                         "{} has no letters or digits to build an id from",
@@ -590,8 +590,8 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
             (id, name)
         };
 
-        rulesets
-            .save(Ruleset {
+        searches
+            .save(Search {
                 id,
                 name,
                 enabled: true,
@@ -603,38 +603,38 @@ async fn import_rulesets(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
             .map_err(handlers::write_failed)?;
     }
 
-    Ok(see_other("/admin/rulesets"))
+    Ok(see_other("/admin/searches"))
 }
 
 /// Resolves a collision's ids to the names the badge renders.
 ///
-/// A ruleset removed between the plan and the render leaves its id in place
+/// A search removed between the plan and the render leaves its id in place
 /// of a name, which still tells the reader which one to look for.
 fn claimed(engine: &Engine, collision: &Collision) -> Claimed {
-    let found = engine.ruleset(&collision.ruleset);
+    let found = engine.search(&collision.search);
 
     let parser = found
-        .and_then(|ruleset| engine.parser(&ruleset.parser))
+        .and_then(|search| engine.parser(&search.parser))
         .map_or_else(String::new, |parser| parser.name.clone());
 
     Claimed {
-        id: collision.ruleset.clone(),
-        ruleset: found.map_or_else(|| collision.ruleset.clone(), |ruleset| ruleset.name.clone()),
+        id: collision.search.clone(),
+        search: found.map_or_else(|| collision.search.clone(), |search| search.name.clone()),
         parser,
         same_parser: collision.same_parser,
     }
 }
 
-/// Returns the name the suggested ruleset takes.
+/// Returns the name the suggested search takes.
 ///
-/// The conditions name it, as they name a ruleset the reader saved with a
-/// blank name, so an imported ruleset reads the same as a hand-written one.
+/// The conditions name it, as they name a search the reader saved with a
+/// blank name, so an imported search reads the same as a hand-written one.
 fn named(engine: &Engine, parser: &str, conditions: &[Condition]) -> String {
     let named = engine
         .parser(parser)
         .map_or(parser, |parser| parser.name.as_str());
 
-    ruleset::inferred_name(conditions, named)
+    search::inferred_name(conditions, named)
 }
 
 #[cfg(test)]
@@ -644,8 +644,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::{Review, excluded, kept};
-    use crate::ruleset::import::Suggestion;
-    use crate::ruleset::{Condition, Op};
+    use crate::search::import::Suggestion;
+    use crate::search::{Condition, Op};
     use crate::torrent::{Torrent, TorrentId, TorrentState};
 
     fn equals(field: &str, value: &str) -> Condition {
@@ -702,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_condition_leaves_the_ruleset_and_the_subject_stays() {
+    fn a_dropped_condition_leaves_the_search_and_the_subject_stays() {
         let suggestion = Suggestion {
             parser: "series".to_owned(),
             key: "coastal ecology".to_owned(),

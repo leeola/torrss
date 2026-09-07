@@ -1,11 +1,11 @@
-//! What the client holds that a ruleset claims, and which grab put it there.
+//! What the client holds that a search claims, and which grab put it there.
 //!
 //! A torrent and a grab meet on the identity their names parse to. The client
 //! keeps the release name and the store records no hash, so that identity is
 //! the one link the two share. It is the same key the wanted list already
 //! sorts titles by.
 //!
-//! A torrent no ruleset claims is left out, as the scan leaves it out of the
+//! A torrent no search claims is left out, as the scan leaves it out of the
 //! library.
 
 use std::cmp::Reverse;
@@ -24,7 +24,7 @@ pub(super) struct Held {
 
     /// What the claimant made of the name.
     ///
-    /// Its ruleset is the one that claimed the name, rather than the parser
+    /// Its search is the one that claimed the name, rather than the parser
     /// behind it, so the page names the rule the reader wrote.
     ///
     /// It carries the whole parse rather than rendered values, because
@@ -87,7 +87,7 @@ mod tests {
 
     use super::{Held, held};
     use crate::rules::Parsed;
-    use crate::ruleset::fixture::ENGINE;
+    use crate::search::fixture::ENGINE;
     use crate::store::grabs::Accepted;
     use crate::torrent::{Torrent, TorrentId, TorrentState};
 
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(
             held_of(vec![torrent("t1", NONSENSE, 1)], &[]),
             Vec::new(),
-            "no ruleset claims the name, so no rule put it there"
+            "no search claims the name, so no rule put it there"
         );
     }
 

@@ -8,9 +8,9 @@
 //! orders them and nothing more, so a row the reader removed leaves a gap
 //! rather than renumbering every row after it.
 //!
-//! The ruleset editor posts the same field and test rows inside a larger
-//! body, so [`crate::ruleset::form`] reads them through the row types and
-//! resolvers here and adds only what a ruleset carries on top. Both editors
+//! The search editor posts the same field and test rows inside a larger
+//! body, so [`crate::search::form`] reads them through the row types and
+//! resolvers here and adds only what a search carries on top. Both editors
 //! re-render their rows through that one reader, so a parser body reaches it
 //! as a form that carries no condition.
 
@@ -236,13 +236,13 @@ fn read(body: &str) -> Posted {
     posted
 }
 
-/// Why a posted parser or ruleset is not one.
+/// Why a posted parser or search is not one.
 ///
 /// Every variant names what the reader has to change, because the message
 /// reaches them as the body of a 400.
 ///
 /// One type serves both editors, because they post the same field and test
-/// rows. The last two variants describe a condition, which only a ruleset
+/// rows. The last two variants describe a condition, which only a search
 /// writes.
 #[derive(Debug, PartialEq, Eq, Snafu)]
 #[snafu(visibility(pub(crate)))]
@@ -265,7 +265,7 @@ pub(crate) enum FormError {
     #[snafu(display("the condition on {field} needs a value"))]
     MissingValue { field: String },
 
-    #[snafu(display("the ruleset needs a parser"))]
+    #[snafu(display("the search needs a parser"))]
     MissingParser,
 }
 
@@ -325,7 +325,7 @@ pub(crate) fn encode_preset(preset: &Preset) -> String {
     pairs.finish()
 }
 
-/// Turns `name` into the id a ruleset carries in its URL.
+/// Turns `name` into the id a search carries in its URL.
 ///
 /// Every run of characters outside the alphabet and the digits becomes one
 /// `-`, so two names that differ only in punctuation reach the same slug and

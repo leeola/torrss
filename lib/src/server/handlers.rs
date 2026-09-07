@@ -26,11 +26,11 @@ use crate::{
     parser::form as parser_form,
     parser::{Field, Parser, TitleTest},
     rules::Engine,
-    ruleset,
-    ruleset::form::{EditorRows, RulesetForm},
-    ruleset::import,
-    ruleset::registry::{Rulesets, SaveError},
-    ruleset::{Condition, Diff, Ruleset},
+    search,
+    search::form::{EditorRows, SearchForm},
+    search::import,
+    search::registry::{Searches, SaveError},
+    search::{Condition, Diff, Search},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
         format, held,
@@ -45,7 +45,7 @@ use crate::{
     torrent::scan::{self, ScanState},
 };
 
-path_param!(ruleset_id);
+path_param!(search_id);
 path_param!(feed_id);
 
 /// The selection the feed page keeps while the listing re-renders.
@@ -133,7 +133,7 @@ impl FeedView {
 
     /// Which rows the listing shows.
     ///
-    /// `all` is every stored item, `unmatched` is the titles no ruleset
+    /// `all` is every stored item, `unmatched` is the titles no search
     /// claims, and an empty string is the wanted releases. Anything else
     /// reads as the wanted releases, because a view the reader typed by hand
     /// names no rows to show.
@@ -162,7 +162,7 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
 ///
 /// The standing arrives decided, because the page needs it before this to
 /// work out which rows to list at all. The claimant list is a second pass
-/// over the same rulesets: a listing runs to tens of rows, so repeating the
+/// over the same searches: a listing runs to tens of rows, so repeating the
 /// match costs less than threading one result through two shapes.
 fn item_details(
     engine: &Engine,
@@ -175,13 +175,13 @@ fn item_details(
     let title = &item.item.title;
 
     ItemDetails {
-        rulesets: engine
+        searches: engine
             .claimants(title)
             .into_iter()
-            .filter_map(|id| engine.ruleset(&id))
-            .map(|ruleset| Claimant {
-                id: ruleset.id.clone(),
-                name: ruleset.name.clone(),
+            .filter_map(|id| engine.search(&id))
+            .map(|search| Claimant {
+                id: search.id.clone(),
+                name: search.name.clone(),
             })
             .collect(),
         values: standing
@@ -195,7 +195,7 @@ fn item_details(
         grab: grabs.get(&item.id).map(|grab| Grabbed {
             error: grab.error.clone(),
             age: format::age(now, Some(grab.at)),
-            rulesets: grab.rulesets.clone(),
+            searches: grab.searches.clone(),
         }),
     }
 }
@@ -370,11 +370,11 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
     };
 
     let owned = library::identities(&services.db).await?;
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
     let enabled = engine
-        .rulesets()
-        .filter(|ruleset| ruleset.enabled)
-        .map(|ruleset| ruleset.id.clone())
+        .searches()
+        .filter(|search| search.enabled)
+        .map(|search| search.id.clone())
         .collect();
 
     let standings: Vec<Standing> = items
@@ -520,7 +520,7 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
 #[procedure]
 async fn grab_items(cx: &Cx, selected: String) -> Result<f64> {
     let services = app_context::<Services>(cx);
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
     let mut taken = 0.0;
 
     for entry in IdList::new(Some(&selected)).entries() {
@@ -566,7 +566,7 @@ async fn grab_items(cx: &Cx, selected: String) -> Result<f64> {
     Ok(taken)
 }
 
-/// Flips one ruleset between enabled and disabled, and reports the new state.
+/// Flips one search between enabled and disabled, and reports the new state.
 ///
 /// The caller renders from the returned flag rather than from what it sent,
 /// so the label always shows what the store holds.
@@ -575,11 +575,11 @@ async fn grab_items(cx: &Cx, selected: String) -> Result<f64> {
 /// it are two steps either way, and holding the snapshot across the write
 /// widens the gap between them for nothing.
 #[procedure]
-async fn switch_ruleset(cx: &Cx, id: String) -> Result<bool> {
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
-    let enabled = rulesets.engine().ruleset(&id).ok_or_not_found()?.enabled;
+async fn switch_search(cx: &Cx, id: String) -> Result<bool> {
+    let searches = app_context::<Arc<Searches>>(cx);
+    let enabled = searches.engine().search(&id).ok_or_not_found()?.enabled;
 
-    rulesets
+    searches
         .set_enabled(&id, !enabled)
         .await
         .map_err(internal_server_error)?;
@@ -611,45 +611,45 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
     Ok(registry.entries().len() as f64)
 }
 
-#[page("/admin/rulesets")]
-async fn ruleset_index(cx: &Cx) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+#[page("/admin/searches")]
+async fn search_index(cx: &Cx) -> Result {
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     view! {
         <div class="flex flex-wrap items-end justify-between gap-4">
             <div>
-                <h1 class="text-2xl font-semibold tracking-tight">"Rulesets"</h1>
+                <h1 class="text-2xl font-semibold tracking-tight">"Searches"</h1>
                 <p class="mt-1 text-sm text-slate-400">
-                    "A ruleset picks a parser and decides which of the names it reads are wanted.
-                    A disabled ruleset filters nothing, so its releases stay out of the feed."
+                    "A search picks a parser and decides which of the names it reads are wanted.
+                    A disabled search filters nothing, so its releases stay out of the feed."
                 </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
                 <a
-                    href="/admin/rulesets/import"
+                    href="/admin/searches/import"
                     class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
                 >
                     "Import from client"
                 </a>
                 <a
-                    href="/admin/rulesets/new"
+                    href="/admin/searches/new"
                     class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
                 >
-                    "New ruleset"
+                    "New search"
                 </a>
             </div>
         </div>
 
-        if engine.rulesets().next().is_none() {
+        if engine.searches().next().is_none() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No ruleset is declared."
+                "No search is declared."
             </p>
         } else {
-            <ul id="rulesets" class="mt-6 flex scroll-mt-24 flex-col gap-3">
-                for ruleset in engine.rulesets() {
-                    components::ruleset_card(
-                        ruleset: ruleset,
-                        parser: engine.parser_of(ruleset),
+            <ul id="searches" class="mt-6 flex scroll-mt-24 flex-col gap-3">
+                for search in engine.searches() {
+                    components::search_card(
+                        search: search,
+                        parser: engine.parser_of(search),
                     )
                 }
             </ul>
@@ -823,7 +823,7 @@ async fn client() -> Result {
 
         <h2 class="mt-8 text-sm font-semibold text-slate-300">"Torrents"</h2>
         <p class="mt-1 text-sm text-slate-400">
-            "What the client holds that a ruleset claims, and when a grab moved it there."
+            "What the client holds that a search claims, and when a grab moved it there."
         </p>
 
         client_torrents(version: $(version.get()))
@@ -891,7 +891,7 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
                         Ok(report) => {
                             (report.matched) " of "
                             (format::count(report.torrents, "torrent", "torrents"))
-                            " matched a ruleset, scanned "
+                            " matched a search, scanned "
                             (format::age(now, Some(last.at)))
                         },
                         Err(error) => {
@@ -905,8 +905,8 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
     }
 }
 
-/// The torrents the client holds that a ruleset claims, grabbed first, then
-/// by the time the client added them. Each row carries what the ruleset read
+/// The torrents the client holds that a search claims, grabbed first, then
+/// by the time the client added them. Each row carries what the search read
 /// out of the name.
 ///
 /// The list is read from the client rather than from the library table,
@@ -920,7 +920,7 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
 
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let accepted = grabs::accepted(&services.db).await?;
     let listed = match services.torrents.list().await {
@@ -936,12 +936,12 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
             .iter()
             .map(|entry| {
                 let claimant = Claimant {
-                    id: entry.parsed.ruleset.clone(),
-                    // A ruleset removed since the grab shows by its id, as a
+                    id: entry.parsed.search.clone(),
+                    // A search removed since the grab shows by its id, as a
                     // grabbed row does. The record is of what ran.
-                    name: engine.ruleset(&entry.parsed.ruleset).map_or_else(
-                        || entry.parsed.ruleset.clone(),
-                        |ruleset| ruleset.name.clone(),
+                    name: engine.search(&entry.parsed.search).map_or_else(
+                        || entry.parsed.search.clone(),
+                        |search| search.name.clone(),
                     ),
                 };
 
@@ -959,13 +959,13 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                 "the client did not list its torrents: " (error)
             </p>,
             Ok(entries) if entries.is_empty() => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No torrent in the client matches a ruleset."
+                "No torrent in the client matches a search."
             </p>,
             Ok(entries) => <ul class="mt-2 flex flex-col gap-2">
                 for (torrent, claimant, values, age) in entries {
                     components::torrent_row(
                         torrent: torrent,
-                        ruleset: claimant,
+                        search: claimant,
                         values: values.as_slice(),
                         ingested: age.as_deref(),
                     )
@@ -1064,7 +1064,7 @@ async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result {
 async fn scan_now(cx: &Cx) -> Result<f64> {
     let state = app_context::<Arc<ScanState>>(cx);
     let services = app_context::<Services>(cx);
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     scan::scan(
         state,
@@ -1245,27 +1245,27 @@ async fn remove_feed_now(cx: &Cx, id: String) -> Result<bool> {
     Ok(removed)
 }
 
-/// Which stored feed item a new ruleset starts from.
+/// Which stored feed item a new search starts from.
 #[query_params(error = bad_request)]
-struct NewRulesetView {
+struct NewSearchView {
     /// [`StoredItem::id`] of the item whose title seeds the draft, or absent
     /// for an empty one.
     from: Option<String>,
 }
 
-/// Opens the editor on a ruleset nothing has stored yet.
+/// Opens the editor on a search nothing has stored yet.
 ///
 /// A `from` naming a stored item reads its title into a parser, conditions,
 /// and a test, so a reader who met an unmatched title in the feed starts
 /// from what it already says. Anything else opens the editor empty.
-#[page("/admin/rulesets/new")]
-async fn new_ruleset(cx: &Cx) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+#[page("/admin/searches/new")]
+async fn new_search(cx: &Cx) -> Result {
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     // An id naming no row, or naming nothing at all, opens the editor empty
     // rather than reporting itself. A link the reader followed to a row the
     // store dropped still gets them an editor.
-    let seeded = match query_params::<NewRulesetView>(cx)?.from.as_deref() {
+    let seeded = match query_params::<NewSearchView>(cx)?.from.as_deref() {
         Some(from) => match from.parse() {
             Ok(id) => store::item(&app_context::<Services>(cx).db, id).await?,
             Err(_) => None,
@@ -1275,7 +1275,7 @@ async fn new_ruleset(cx: &Cx) -> Result {
 
     let draft = match &seeded {
         Some(stored) => import::seed(&engine, &stored.item.title),
-        None => RulesetForm {
+        None => SearchForm {
             name: String::new(),
             parser: String::new(),
             conditions: Vec::new(),
@@ -1284,35 +1284,35 @@ async fn new_ruleset(cx: &Cx) -> Result {
     };
 
     view! {
-        editor(engine: &engine, ruleset: None, draft: &draft)
+        editor(engine: &engine, search: None, draft: &draft)
     }
 }
 
-#[page("/admin/rulesets/{ruleset_id}")]
-async fn ruleset_editor(cx: &Cx) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
-    let ruleset = engine
-        .ruleset(path_param::<RulesetId>(cx))
+#[page("/admin/searches/{search_id}")]
+async fn search_editor(cx: &Cx) -> Result {
+    let engine = app_context::<Arc<Searches>>(cx).engine();
+    let search = engine
+        .search(path_param::<SearchId>(cx))
         .ok_or_not_found()?;
 
-    let draft = stored_draft(ruleset);
+    let draft = stored_draft(search);
 
     view! {
-        editor(engine: &engine, ruleset: Some(ruleset), draft: &draft)
+        editor(engine: &engine, search: Some(search), draft: &draft)
     }
 }
 
-/// The form a stored ruleset opens its editor on.
+/// The form a stored search opens its editor on.
 ///
 /// A stored test carries what an older draft asserted, which reaches further
 /// than the conditions do. Dropping the rest here keeps the first render and
 /// the first verdict agreed, and the next Save writes the narrowed set back.
-fn stored_draft(ruleset: &Ruleset) -> RulesetForm {
-    RulesetForm {
-        name: ruleset.name.clone(),
-        parser: ruleset.parser.clone(),
-        conditions: ruleset.conditions.clone(),
-        tests: ruleset
+fn stored_draft(search: &Search) -> SearchForm {
+    SearchForm {
+        name: search.name.clone(),
+        parser: search.parser.clone(),
+        conditions: search.conditions.clone(),
+        tests: search
             .tests
             .iter()
             .map(|test| TitleTest {
@@ -1321,7 +1321,7 @@ fn stored_draft(ruleset: &Ruleset) -> RulesetForm {
                     .expected
                     .iter()
                     .filter(|(field, _)| {
-                        ruleset
+                        search
                             .conditions
                             .iter()
                             .any(|condition| &condition.field == *field)
@@ -1333,22 +1333,22 @@ fn stored_draft(ruleset: &Ruleset) -> RulesetForm {
     }
 }
 
-/// The one page that writes a ruleset, whether or not one is stored.
+/// The one page that writes a search, whether or not one is stored.
 ///
-/// A ruleset being created and one being edited differ in what the page
+/// A search being created and one being edited differ in what the page
 /// already knows, not in what the reader does, so both read the same form.
-/// [`None`] shows Create and no switch, because a ruleset nothing has saved
+/// [`None`] shows Create and no switch, because a search nothing has saved
 /// has nothing to switch on.
 #[component]
-async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm) -> Result {
+async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) -> Result {
     let name = draft.name.clone();
 
-    let ruleset_id = ruleset
-        .map(|ruleset| ruleset.id.clone())
+    let search_id = search
+        .map(|search| search.id.clone())
         .unwrap_or_default();
 
-    let stored_id = ruleset_id.clone();
-    let enabled_now = ruleset.is_some_and(|ruleset| ruleset.enabled);
+    let stored_id = search_id.clone();
+    let enabled_now = search.is_some_and(|search| search.enabled);
 
     let parsers: Vec<&Parser> = engine.parsers().collect();
 
@@ -1366,7 +1366,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
 
     // What the browser posts on the first keystroke, so the draft starts
     // where the render left off.
-    let initial_draft = RulesetForm {
+    let initial_draft = SearchForm {
         parser: named_parser.clone(),
         ..draft.clone()
     }
@@ -1380,7 +1380,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
         signal enabled = enabled_now;
         // The name the page shows. A save replaces it, because a blank name
         // stores one read out of the conditions and the reader has to see
-        // what the ruleset is called without loading the page again.
+        // what the search is called without loading the page again.
         signal title = name;
         // The id the switch and the save name. A handler outlives the render
         // that built it, so the argument comes from a signal rather than
@@ -1395,7 +1395,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin/rulesets" class="hover:text-slate-300">"Rulesets"</a>
+            <a href="/admin/searches" class="hover:text-slate-300">"Searches"</a>
             " / "
             <span class="text-slate-300">
                 $(if title.get().is_empty() { "New".to_owned() } else { title.get() })
@@ -1403,15 +1403,15 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
         </nav>
 
         <form
-            id="ruleset-fields"
+            id="search-fields"
             data-rows="true"
             method="post"
             // Only a create posts the form itself. A save runs through the
             // procedure below, and Delete names its own action, so the editor
-            // of a stored ruleset carries none. `method` stays either way,
+            // of a stored search carries none. `method` stays either way,
             // because Delete posts through it.
-            if ruleset.is_none() {
-                action="/admin/rulesets"
+            if search.is_none() {
+                action="/admin/searches"
             }
             // The parser decides which fields the condition and test rows
             // list, so picking one re-renders them. A keystroke moves the
@@ -1463,7 +1463,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                         // signal and both have to agree without a reload.
                         // Each branch is one whole string, because the
                         // Tailwind scanner reads class names out of literals.
-                        if ruleset.is_some() {
+                        if search.is_some() {
                             <span :class=$(if enabled.get() {
                                 "rounded-full px-2 py-0.5 text-xs bg-emerald-500/15 text-emerald-300"
                             } else {
@@ -1475,7 +1475,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                     </div>
                     // The select carries no handler of its own: the form's
                     // delegated one above catches it, where the signals live.
-                    // Every ruleset reads with a parser, so the choice is
+                    // Every search reads with a parser, so the choice is
                     // always shown and never empty while one exists.
                     <label for="parser" class="mt-3 block text-xs text-slate-500">
                         "Reads with"
@@ -1495,8 +1495,8 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
-                    match ruleset {
-                        // Create stays a form post. A ruleset with no id yet
+                    match search {
+                        // Create stays a form post. A search with no id yet
                         // has nowhere to render into, and the redirect to its
                         // own editor is what the write is for.
                         None => <button
@@ -1506,7 +1506,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                         >
                             "Create"
                         </button>,
-                        Some(ruleset) => <div class="contents">
+                        Some(search) => <div class="contents">
                             // A submit button that never submits. Enter inside
                             // a field activates the form's first submit
                             // button, and that has to be Save rather than
@@ -1540,9 +1540,9 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                             <button
                                 type="button"
                                 :title=$(if enabled.get() {
-                                    "Stop this ruleset filtering feed results"
+                                    "Stop this search filtering feed results"
                                 } else {
-                                    "Let this ruleset filter feed results"
+                                    "Let this search filter feed results"
                                 })
                                 :class=$(if enabled.get() {
                                     "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
@@ -1550,7 +1550,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                                     "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600 hover:text-slate-200"
                                 })
                                 @click=$(async |_e: Event| {
-                                    let state = switch_ruleset(switch_id.get()).await;
+                                    let state = switch_search(switch_id.get()).await;
                                     enabled.set(state);
                                 })
                             >
@@ -1563,7 +1563,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                             // rather than saving it.
                             <button
                                 type="submit"
-                                formaction=(format!("/admin/rulesets/{}/remove", ruleset.id))
+                                formaction=(format!("/admin/searches/{}/remove", search.id))
                                 formnovalidate=(true)
                                 class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
                             >
@@ -1581,7 +1581,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                 $(save_error.get())
             </p>
 
-            // A ruleset reads with a parser and there is none to pick, so the
+            // A search reads with a parser and there is none to pick, so the
             // page says where to make one rather than offering an empty
             // select and a Create that always fails.
             if parsers.is_empty() {
@@ -1607,7 +1607,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                 </div>
                 <p class="px-4 pb-3 text-xs text-slate-500">
                     "The fields decide which titles have this shape, and the conditions decide
-                    which of those the ruleset claims. A value compares in its normalized form.
+                    which of those the search claims. A value compares in its normalized form.
                     An ordering compares numbers, so it needs a number, season, or episode
                     field. One of and none of take a comma-separated list, such as
                     720p, 1080p."
@@ -1633,7 +1633,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                 </div>
                 <p class="px-4 pb-3 text-xs text-slate-500">
                     "A test carries one input per field a condition names, because those are
-                    the values this ruleset decides on. The parser's own tests cover what
+                    the values this search decides on. The parser's own tests cover what
                     each field reads. An expected value is compared in its normalized form:
                     a number without leading zeros, text lowercased with separators
                     collapsed to spaces. An empty value asserts nothing."
@@ -1656,7 +1656,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
                 diff.set(e.target.value);
             })>
                 live_matches(
-                    ruleset: $(ruleset_id),
+                    search: $(search_id),
                     diff: $(diff.get()),
                     draft: $(draft.get()),
                     saved: $(saved.get()),
@@ -1668,7 +1668,7 @@ async fn editor(engine: &Engine, ruleset: Option<&Ruleset>, draft: &RulesetForm)
 
 /// Runs the saved rules and the edited rules over every stored title.
 ///
-/// `before` is empty for a ruleset that is not saved yet, so every title the
+/// `before` is empty for a search that is not saved yet, so every title the
 /// draft claims reads as gained rather than unchanged.
 ///
 /// The items arrive from the caller rather than being read here, because a
@@ -1703,7 +1703,7 @@ pub(super) fn compute_matches<'a>(
 /// Re-renders the test rows from the draft the editor holds.
 ///
 /// The inputs follow the draft's conditions, so a condition the reader just
-/// added has an input in the same breath. A ruleset judges nothing but its
+/// added has an input in the same breath. A search judges nothing but its
 /// conditions, so a field none of them names belongs to the parser's own
 /// tests.
 ///
@@ -1711,7 +1711,7 @@ pub(super) fn compute_matches<'a>(
 /// out of the input under the cursor.
 #[shard]
 pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let posted = EditorRows::parse(&rows);
 
@@ -1734,7 +1734,7 @@ pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
 /// breath.
 #[shard]
 async fn condition_rows(cx: &Cx, rows: String) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let posted = EditorRows::parse(&rows);
 
@@ -1759,9 +1759,9 @@ async fn condition_rows(cx: &Cx, rows: String) -> Result {
 /// the same error on the same draft, and one message is enough.
 #[shard]
 pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
-    let Ok(posted) = RulesetForm::parse_draft(&draft) else {
+    let Ok(posted) = SearchForm::parse_draft(&draft) else {
         return view! {};
     };
 
@@ -1793,8 +1793,8 @@ fn parser_fields<'a>(engine: &'a Engine, id: Option<&str>) -> Vec<&'a Field> {
 
 /// The fields some condition names, each with its position among `fields`.
 ///
-/// A ruleset judges nothing but its conditions, so a value it never compares
-/// is the parser's business rather than the ruleset's. The position rides
+/// A search judges nothing but its conditions, so a value it never compares
+/// is the parser's business rather than the search's. The position rides
 /// along because the editor colors a field by where it sits among the
 /// parser's fields, and a narrowed list recolors them all without it.
 ///
@@ -1817,24 +1817,24 @@ fn condition_fields<'a>(fields: &[&'a Field], conditions: &[Condition]) -> Vec<(
 ///
 /// The draft is the form's own body, so what the reader typed reaches the
 /// rules without a save. Every argument crosses the network and none of it
-/// is trusted: the ruleset is looked up rather than taken, and a draft that
+/// is trusted: the search is looked up rather than taken, and a draft that
 /// does not parse reports itself instead of matching anything.
 #[shard]
-async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, saved: f64) -> Result {
+async fn live_matches(cx: &Cx, search: String, diff: String, draft: String, saved: f64) -> Result {
     // This is read for its change alone. A save bumps it so the diff measures
     // the draft against the rules the store now holds.
     let _ = saved;
 
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
-    // An empty id names the ruleset the reader is still creating. Anything
-    // else is looked up, so a spoofed id renders no ruleset but its own.
-    let saved = match ruleset.as_str() {
+    // An empty id names the search the reader is still creating. Anything
+    // else is looked up, so a spoofed id renders no search but its own.
+    let saved = match search.as_str() {
         "" => None,
-        id => Some(engine.ruleset(id).ok_or_not_found()?),
+        id => Some(engine.search(id).ok_or_not_found()?),
     };
 
-    let posted = match RulesetForm::parse_draft(&draft) {
+    let posted = match SearchForm::parse_draft(&draft) {
         Ok(posted) => posted,
         Err(error) => {
             return view! {
@@ -1851,7 +1851,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
     let services = app_context::<Services>(cx);
 
     let items = store::items(&services.db, None).await?;
-    // A ruleset with nothing saved has no rules to lose, so the whole draft
+    // A search with nothing saved has no rules to lose, so the whole draft
     // reads as gained.
     let before = saved.map_or_else(Rules::default, |saved| {
         let fields = parser_fields(&engine, Some(&saved.parser));
@@ -1867,7 +1867,7 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
         &items,
     );
 
-    let editor_path = format!("/admin/rulesets/{ruleset}");
+    let editor_path = format!("/admin/searches/{search}");
 
     view! {
         components::match_section(
@@ -1879,15 +1879,15 @@ async fn live_matches(cx: &Cx, ruleset: String, diff: String, draft: String, sav
     }
 }
 
-/// Reads a posted ruleset, or answers 400 saying what to change.
+/// Reads a posted search, or answers 400 saying what to change.
 ///
 /// The body arrives raw rather than through a typed form, because the editor
 /// adds and removes field rows in the browser and the row count is not known
 /// here.
-fn posted(RawForm(body): &RawForm) -> Result<RulesetForm> {
+fn posted(RawForm(body): &RawForm) -> Result<SearchForm> {
     let body = str::from_utf8(body).map_err(|_| bad_request("the form is not valid UTF-8"))?;
 
-    RulesetForm::parse(body).map_err(|error| bad_request(error.to_string()).into())
+    SearchForm::parse(body).map_err(|error| bad_request(error.to_string()).into())
 }
 
 /// Reports a failed write to the reader.
@@ -1904,33 +1904,33 @@ pub(super) fn write_failed(error: SaveError) -> Error {
     }
 }
 
-/// Creates a ruleset from the new-ruleset form, then opens its editor.
+/// Creates a search from the new-search form, then opens its editor.
 ///
 /// The id comes from the name, counting up past a slug already taken. It
 /// never changes after, so the library rows and the grab records that carry
 /// it survive every later rename.
 ///
-/// A ruleset is stored enabled, so it filters the feed from its first save.
-/// A reader who wrote a working rule meant it to run, and a ruleset that
+/// A search is stored enabled, so it filters the feed from its first save.
+/// A reader who wrote a working rule meant it to run, and a search that
 /// claims nothing until they find the switch reads as a rule that failed.
 
-#[route(POST "/admin/rulesets")]
-async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
+#[route(POST "/admin/searches")]
+async fn create_search(cx: &Cx, form: RawForm) -> Result<SeeOther> {
+    let searches = app_context::<Arc<Searches>>(cx);
     let posted = posted(&form)?;
 
     let (id, name) = {
-        let engine = rulesets.engine();
+        let engine = searches.engine();
         let name = resolve_name(&engine, &posted);
 
-        let id = parser_form::unique_slug(&name, |id| engine.ruleset(id).is_some())
+        let id = parser_form::unique_slug(&name, |id| engine.search(id).is_some())
             .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?;
 
         (id, name)
     };
 
-    rulesets
-        .save(Ruleset {
+    searches
+        .save(Search {
             id: id.clone(),
             name,
             enabled: true,
@@ -1941,13 +1941,13 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
         .await
         .map_err(write_failed)?;
 
-    Ok(see_other(format!("/admin/rulesets/{id}")))
+    Ok(see_other(format!("/admin/searches/{id}")))
 }
 
-/// Saves an edited ruleset, and reports its name or why it was refused.
+/// Saves an edited search, and reports its name or why it was refused.
 ///
 /// The id and the enabled flag stay as they were. The draft carries neither,
-/// because renaming a ruleset never moves it and saving an edit is not a
+/// because renaming a search never moves it and saving an edit is not a
 /// request to start or stop it.
 ///
 /// A refusal arrives inside [`Ok`] rather than as an error. A procedure's
@@ -1959,17 +1959,17 @@ async fn create_ruleset(cx: &Cx, form: RawForm) -> Result<SeeOther> {
 /// did not happen rather than how.
 #[procedure]
 async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String, String>> {
-    let posted = match RulesetForm::parse(&draft) {
+    let posted = match SearchForm::parse(&draft) {
         Ok(posted) => posted,
         Err(error) => return Ok(Err(error.to_string())),
     };
 
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
-    let enabled = rulesets.engine().ruleset(&id).ok_or_not_found()?.enabled;
-    let name = resolve_name(&rulesets.engine(), &posted);
+    let searches = app_context::<Arc<Searches>>(cx);
+    let enabled = searches.engine().search(&id).ok_or_not_found()?.enabled;
+    let name = resolve_name(&searches.engine(), &posted);
 
-    let saved = rulesets
-        .save(Ruleset {
+    let saved = searches
+        .save(Search {
             id,
             name: name.clone(),
             enabled,
@@ -1987,20 +1987,20 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
         Err(error) => {
             error!(error = %error, "save failed");
 
-            Ok(Err("the ruleset was not stored".to_owned()))
+            Ok(Err("the search was not stored".to_owned()))
         }
     }
 }
 
-/// Returns the name a write stores for a posted ruleset.
+/// Returns the name a write stores for a posted search.
 ///
-/// A blank name is the reader asking the conditions to name the ruleset, so
+/// A blank name is the reader asking the conditions to name the search, so
 /// it reads one out of them rather than refusing the write.
 ///
 /// A parser the engine does not carry stands in as its own id. The save then
 /// fails on the engine, so the name never lands and the substitute never
 /// reaches the reader.
-fn resolve_name(engine: &Engine, posted: &RulesetForm) -> String {
+fn resolve_name(engine: &Engine, posted: &SearchForm) -> String {
     if !posted.name.is_empty() {
         return posted.name.clone();
     }
@@ -2009,14 +2009,14 @@ fn resolve_name(engine: &Engine, posted: &RulesetForm) -> String {
         .parser(&posted.parser)
         .map_or(posted.parser.as_str(), |parser| parser.name.as_str());
 
-    ruleset::inferred_name(&posted.conditions, parser)
+    search::inferred_name(&posted.conditions, parser)
 }
 
-/// Deletes a ruleset, then returns to the index.
-#[route(POST "/admin/rulesets/{ruleset_id}/remove")]
-async fn remove_ruleset(cx: &Cx) -> Result<SeeOther> {
-    let removed = app_context::<Arc<Rulesets>>(cx)
-        .remove(path_param::<RulesetId>(cx))
+/// Deletes a search, then returns to the index.
+#[route(POST "/admin/searches/{search_id}/remove")]
+async fn remove_search(cx: &Cx) -> Result<SeeOther> {
+    let removed = app_context::<Arc<Searches>>(cx)
+        .remove(path_param::<SearchId>(cx))
         .await
         .map_err(write_failed)?;
 
@@ -2024,5 +2024,5 @@ async fn remove_ruleset(cx: &Cx) -> Result<SeeOther> {
         return Err(not_found().into());
     }
 
-    Ok(see_other("/admin/rulesets"))
+    Ok(see_other("/admin/searches"))
 }

@@ -2,10 +2,10 @@
 //!
 //! A parser is the half of the job that reads a filename apart. It decides
 //! nothing about whether anyone wants the release, so this editor carries
-//! the field rows and the tests and no switch. The ruleset editor beside it
+//! the field rows and the tests and no switch. The search editor beside it
 //! carries the conditions, and the two share the test row component and the
 //! Matches section. Each editor re-renders its rows from its own form,
-//! because a parser draft holds its fields where a ruleset draft names a
+//! because a parser draft holds its fields where a search draft names a
 //! stored parser.
 
 use std::sync::Arc;
@@ -30,8 +30,8 @@ use tracing::error;
 use crate::feed::registry::FeedRegistry;
 use crate::parser::form::{self as parser_form, ParserForm, ParserRows};
 use crate::parser::{PRESETS, Parser, Tint};
-use crate::ruleset::Diff;
-use crate::ruleset::registry::{Rulesets, SaveError};
+use crate::search::Diff;
+use crate::search::registry::{Searches, SaveError};
 use crate::server::handlers::compute_matches;
 use crate::server::matches::{Edits, Rules};
 use crate::server::verdict;
@@ -43,7 +43,7 @@ path_param!(parser_id);
 
 #[page("/admin/parsers")]
 async fn parser_index(cx: &Cx) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     view! {
         <div class="flex flex-wrap items-end justify-between gap-4">
@@ -85,7 +85,7 @@ async fn new_parser() -> Result {
 
 #[page("/admin/parsers/{parser_id}")]
 async fn parser_editor_page(cx: &Cx) -> Result {
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
     let parser = engine
         .parser(path_param::<ParserId>(cx))
         .ok_or_not_found()?;
@@ -351,7 +351,7 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
 
 /// Shows a parser the binary carries, which no save reaches.
 ///
-/// [`Rulesets::save_parser`] refuses a built-in id, so the editor's Save and
+/// [`Searches::save_parser`] refuses a built-in id, so the editor's Save and
 /// Delete have nothing to write. The reader sees what the parser reads and
 /// takes a copy under their own name to change it.
 #[component]
@@ -467,7 +467,7 @@ async fn parser_matches(
     // the draft against the fields the store now holds.
     let _ = saved;
 
-    let engine = app_context::<Arc<Rulesets>>(cx).engine();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
 
     // An empty id names the parser the reader is still creating. Anything
     // else is looked up, so a spoofed id renders no parser but its own.
@@ -528,17 +528,17 @@ async fn parser_matches(
 /// every rename.
 #[route(POST "/admin/parsers")]
 async fn create_parser(cx: &Cx, form: RawForm) -> Result<SeeOther> {
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let searches = app_context::<Arc<Searches>>(cx);
     let posted = posted(&form)?;
 
     let id = {
-        let engine = rulesets.engine();
+        let engine = searches.engine();
 
         parser_form::unique_slug(&posted.name, |id| engine.parser(id).is_some())
             .ok_or_else(|| bad_request("the name has no letters or digits to build an id from"))?
     };
 
-    rulesets
+    searches
         .save_parser(Parser {
             id: id.clone(),
             name: posted.name,
@@ -566,10 +566,10 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
         Err(error) => return Ok(Err(error.to_string())),
     };
 
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let searches = app_context::<Arc<Searches>>(cx);
     let name = posted.name.clone();
 
-    let saved = rulesets
+    let saved = searches
         .save_parser(Parser {
             id,
             name: posted.name,
@@ -596,14 +596,14 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
 ///
 /// This is how a reader changes a parser the binary carries, which no save
 /// reaches. It checks nothing about `built_in`, because a stored parser
-/// copies the same way and [`Rulesets::save_parser`] refuses a write to a
+/// copies the same way and [`Searches::save_parser`] refuses a write to a
 /// shipped id on its own.
 #[route(POST "/admin/parsers/{parser_id}/copy")]
 async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
-    let rulesets = app_context::<Arc<Rulesets>>(cx);
+    let searches = app_context::<Arc<Searches>>(cx);
 
     let copy = {
-        let engine = rulesets.engine();
+        let engine = searches.engine();
         let parser = engine
             .parser(path_param::<ParserId>(cx))
             .ok_or_not_found()?;
@@ -622,7 +622,7 @@ async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
     };
 
     let id = copy.id.clone();
-    rulesets.save_parser(copy).await.map_err(write_failed)?;
+    searches.save_parser(copy).await.map_err(write_failed)?;
 
     Ok(see_other(format!("/admin/parsers/{id}")))
 }
@@ -630,7 +630,7 @@ async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
 /// Deletes a parser, then returns to the index.
 #[route(POST "/admin/parsers/{parser_id}/remove")]
 async fn remove_parser(cx: &Cx) -> Result<SeeOther> {
-    let removed = app_context::<Arc<Rulesets>>(cx)
+    let removed = app_context::<Arc<Searches>>(cx)
         .remove_parser(path_param::<ParserId>(cx))
         .await
         .map_err(write_failed)?;

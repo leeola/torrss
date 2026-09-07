@@ -10,7 +10,7 @@ use super::verdict::Verdict;
 use crate::feed::store::FeedCheck;
 use crate::parser::{Field, FieldKind, Parser, Segment, Tint, TitleTest};
 use crate::rules::Engine;
-use crate::ruleset::{Condition, Diff, Op, Ruleset};
+use crate::search::{Condition, Diff, Op, Search};
 use crate::store::StoredItem;
 use crate::torrent::{Torrent, TorrentState};
 use url::form_urlencoded;
@@ -20,7 +20,7 @@ use url::form_urlencoded;
 ///
 /// Each claimed run links to that field's row, anchored inside the page
 /// `editor` names, so a reader jumps from a value to the rule behind it. A
-/// parser and a ruleset each read a name through their own fields, so the
+/// parser and a search each read a name through their own fields, so the
 /// caller passes the path of the editor the runs belong to.
 #[component]
 pub(crate) async fn filename(segments: &[Segment<'_>], editor: &str) -> Result {
@@ -67,10 +67,10 @@ pub(crate) async fn filter_chip(name: &str, value: &str, label: &str, current: b
     }
 }
 
-/// One ruleset that claims a listed title.
+/// One search that claims a listed title.
 ///
 /// A row links a claimant by id and shows its name, and it holds nothing
-/// else of the ruleset. Borrowing the whole ruleset would tie every row to
+/// else of the search. Borrowing the whole search would tie every row to
 /// the engine that resolved it, which outlives no request.
 pub(crate) struct Claimant {
     pub id: String,
@@ -107,7 +107,7 @@ pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current:
 /// typing the answer back in.
 ///
 /// A row the draft does not claim saves too. It carries no expectations and
-/// fails until the ruleset claims it, which is how a reader says "make this
+/// fails until the search claims it, which is how a reader says "make this
 /// match".
 #[component]
 pub(crate) async fn match_row(matched: &Match<'_>, editor: &str) -> Result {
@@ -159,19 +159,19 @@ pub(crate) async fn match_row(matched: &Match<'_>, editor: &str) -> Result {
 /// What the page worked out about one listed release.
 ///
 /// The values arrive rendered rather than raw. The clock, the feed registry,
-/// and the rulesets all live outside this module, so the page resolves them
+/// and the searches all live outside this module, so the page resolves them
 /// and this carries the answers.
 pub(crate) struct ItemDetails {
-    /// Every ruleset that claims the title, in declaration order.
+    /// Every search that claims the title, in declaration order.
     ///
-    /// A parser claims nothing, so it never appears. Two rulesets that both
+    /// A parser claims nothing, so it never appears. Two searches that both
     /// claim one release do, and the first declared is the one that parsed
     /// it, so listing all of them shows the reader the overlap they wrote.
-    pub rulesets: Vec<Claimant>,
+    pub searches: Vec<Claimant>,
 
-    /// What the claiming ruleset read out of the title, in its field order.
+    /// What the claiming search read out of the title, in its field order.
     ///
-    /// Empty when no ruleset claims the row. This is what a reader checks
+    /// Empty when no search claims the row. This is what a reader checks
     /// when a rule misfires: which run of the name became which part.
     pub values: Vec<ParsedValue>,
 
@@ -204,13 +204,13 @@ pub(crate) struct Grabbed {
     /// How long ago the attempt was made.
     pub age: String,
 
-    /// The ids of the rulesets that claimed the release when it was
+    /// The ids of the searches that claimed the release when it was
     /// grabbed, in declaration order.
     ///
-    /// Kept apart from [`ItemDetails::rulesets`], which says what claims the
-    /// title now. The two agree while the rulesets are static, and they part
+    /// Kept apart from [`ItemDetails::searches`], which says what claims the
+    /// title now. The two agree while the searches are static, and they part
     /// the moment a rule changes.
-    pub rulesets: Vec<String>,
+    pub searches: Vec<String>,
 }
 
 /// One stored feed item, prefixed by the checkbox that selects it.
@@ -223,7 +223,7 @@ pub(crate) struct Grabbed {
 /// who asked to see everything still has to tell it from what they want.
 ///
 /// The title renders as plain monospace rather than tinted by part. Tinting
-/// needs the segments the ruleset editor works from, which are checked-in
+/// needs the segments the search editor works from, which are checked-in
 /// data rather than anything the engine produces from a real title.
 #[component]
 pub(crate) async fn item_row(
@@ -277,21 +277,21 @@ pub(crate) async fn item_row(
                 }
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    if details.rulesets.is_empty() {
+                    if details.searches.is_empty() {
                         <span class="text-slate-600">"unmatched"</span>
                         <a
-                            href=(format!("/admin/rulesets/new?from={}", item.id))
+                            href=(format!("/admin/searches/new?from={}", item.id))
                             class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                         >
-                            "Import ruleset"
+                            "Import search"
                         </a>
                     } else {
-                        for ruleset in &details.rulesets {
+                        for search in &details.searches {
                             <a
-                                href=(format!("/admin/rulesets/{}", ruleset.id))
+                                href=(format!("/admin/searches/{}", search.id))
                                 class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                             >
-                                (&ruleset.name)
+                                (&search.name)
                             </a>
                         }
                     }
@@ -309,10 +309,10 @@ pub(crate) async fn item_row(
 
                 if let Some(grabbed) = &details.grab {
                     <p class="mt-1 text-xs text-slate-500">
-                        if grabbed.rulesets.is_empty() {
-                            "passed no ruleset"
+                        if grabbed.searches.is_empty() {
+                            "passed no search"
                         } else {
-                            "passed " (passed(engine, &grabbed.rulesets))
+                            "passed " (passed(engine, &grabbed.searches))
                         }
                     </p>
                 }
@@ -321,18 +321,18 @@ pub(crate) async fn item_row(
     }
 }
 
-/// Names the rulesets a grab passed, in the order they were recorded.
+/// Names the searches a grab passed, in the order they were recorded.
 ///
-/// A ruleset removed since the grab shows by its id instead of its name. The
+/// A search removed since the grab shows by its id instead of its name. The
 /// record is of what ran, and hiding a line because a rule no longer exists
 /// loses exactly the case a reader opened the page to look into.
-fn passed(engine: &Engine, rulesets: &[String]) -> String {
-    rulesets
+fn passed(engine: &Engine, searches: &[String]) -> String {
+    searches
         .iter()
         .map(|id| {
             engine
-                .ruleset(id)
-                .map_or(id.as_str(), |ruleset| ruleset.name.as_str())
+                .search(id)
+                .map_or(id.as_str(), |search| search.name.as_str())
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -350,7 +350,7 @@ pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
             id=(format!("field-{index}"))
             class="grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center"
             // The replace button copies these into a new own row, so an
-            // inherited field becomes one this ruleset holds.
+            // inherited field becomes one this search holds.
             data-name=(&field.name)
             data-kind=(field.kind.label())
             data-pattern=(field.matcher().unwrap_or_default())
@@ -477,7 +477,7 @@ pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
     }
 }
 
-/// One saved test inside the ruleset editor.
+/// One saved test inside the search editor.
 ///
 /// The row is anchored by its index rather than its title, because the title
 /// is what the reader types and an anchor that moves with every keystroke
@@ -542,7 +542,7 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, &
 /// Every saved test's verdict against the draft.
 ///
 /// Both editors render this. A parser draft carries its own fields and a
-/// ruleset draft names a stored parser, and a verdict reads the same either
+/// search draft names a stored parser, and a verdict reads the same either
 /// way. It names the title the reader wrote, whether the rules claim it, and
 /// every field the two disagree about.
 #[component]
@@ -599,18 +599,18 @@ pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
     }
 }
 
-/// One condition inside the ruleset editor.
+/// One condition inside the search editor.
 ///
 /// The field is a select rather than an input, because a condition on a name
 /// no rule reads never compiles. The list is the draft's own fields, so the
-/// reader picks from what the ruleset actually produces.
+/// reader picks from what the search actually produces.
 ///
 /// The value input renders under every operator. The two that ask about
 /// presence alone ignore what it holds, so a reader who switches to one and
 /// back finds their text where they left it.
 ///
 /// The arrows trade the row with its neighbor, and the order they set is the
-/// one the ruleset stores.
+/// one the search stores.
 #[component]
 pub(crate) async fn condition_row(
     index: usize,
@@ -734,27 +734,27 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
     }
 }
 
-/// One ruleset on the admin index.
+/// One search on the admin index.
 ///
 /// The whole card is one link, so the badge here reports the state rather than
 /// changing it. An anchor inside an anchor is not something a browser resolves
-/// the way a reader expects, and the switch belongs beside the ruleset's other
+/// the way a reader expects, and the switch belongs beside the search's other
 /// actions in the editor.
 ///
-/// `parser` is the one this ruleset reads with, which an engine that compiled
+/// `parser` is the one this search reads with, which an engine that compiled
 /// always answers. [`None`] renders no badge rather than an error, because a
 /// missing one is a set the process refused to run.
 #[component]
-pub(crate) async fn ruleset_card(ruleset: &Ruleset, parser: Option<&Parser>) -> Result {
+pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Result {
     view! {
-        <li id=(format!("ruleset-{}", ruleset.id)) class="scroll-mt-24">
+        <li id=(format!("search-{}", search.id)) class="scroll-mt-24">
             <a
-                href=(format!("/admin/rulesets/{}", ruleset.id))
+                href=(format!("/admin/searches/{}", search.id))
                 class="block rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700"
             >
                 <div class="flex flex-wrap items-center gap-3">
-                    <h2 class="text-sm font-semibold text-slate-100">(&ruleset.name)</h2>
-                    status_badge(enabled: ruleset.enabled)
+                    <h2 class="text-sm font-semibold text-slate-100">(&search.name)</h2>
+                    status_badge(enabled: search.enabled)
                     match parser {
                         Some(parser) => <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
                             "reads with " (&parser.name)
@@ -765,7 +765,7 @@ pub(crate) async fn ruleset_card(ruleset: &Ruleset, parser: Option<&Parser>) -> 
 
                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                     <span>
-                        (format::count(ruleset.conditions.len(), "condition", "conditions"))
+                        (format::count(search.conditions.len(), "condition", "conditions"))
                     </span>
                 </div>
             </a>
@@ -798,7 +798,7 @@ pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result {
     }
 }
 
-/// Reports whether a ruleset runs, without changing it.
+/// Reports whether a search runs, without changing it.
 ///
 /// Used where the badge sits inside a larger link, which holds no control of
 /// its own.
@@ -815,7 +815,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
     }
 }
 
-/// One torrent the client holds that a ruleset claims.
+/// One torrent the client holds that a search claims.
 ///
 /// The ingest age arrives rendered, because the row has no clock. That matches
 /// [`ItemDetails::age`], which is rendered for the same reason.
@@ -823,12 +823,12 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 /// A torrent with no age was in the client before the store recorded any grab,
 /// so the row says so rather than leaving a gap.
 ///
-/// The row also shows what the ruleset read out of the name, as a release on
+/// The row also shows what the search read out of the name, as a release on
 /// the home page does.
 #[component]
 pub(crate) async fn torrent_row(
     torrent: &Torrent,
-    ruleset: &Claimant,
+    search: &Claimant,
     values: &[ParsedValue],
     ingested: Option<&str>,
 ) -> Result {
@@ -866,10 +866,10 @@ pub(crate) async fn torrent_row(
 
             <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                 <a
-                    href=(format!("/admin/rulesets/{}", ruleset.id))
+                    href=(format!("/admin/searches/{}", search.id))
                     class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                 >
-                    (&ruleset.name)
+                    (&search.name)
                 </a>
                 <span>(format::size(Some(torrent.size)))</span>
                 if let TorrentState::Error(reason) = &torrent.state {
@@ -886,7 +886,7 @@ pub(crate) async fn torrent_row(
     }
 }
 
-/// The values a ruleset read out of one name, one chip per field.
+/// The values a search read out of one name, one chip per field.
 ///
 /// Each chip is tinted by its field's position and ringed when that field
 /// decides whether two releases are the same. The field's name is on hover,
@@ -922,10 +922,10 @@ pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result {
 #[cfg(test)]
 mod tests {
     use super::passed;
-    use crate::ruleset::fixture::ENGINE;
+    use crate::search::fixture::ENGINE;
 
     #[test]
-    fn passed_names_declared_rulesets_and_keeps_the_rest_by_id() {
+    fn passed_names_declared_searches_and_keeps_the_rest_by_id() {
         assert_eq!(
             passed(
                 &ENGINE,
@@ -935,7 +935,7 @@ mod tests {
                 ]
             ),
             "The Hollow Meridian, removed-since-the-grab",
-            "a ruleset no longer declared still shows, by the id that was recorded"
+            "a search no longer declared still shows, by the id that was recorded"
         );
     }
 }
@@ -967,7 +967,7 @@ mod tests {
 /// Two move pairs trade one row's keys with its neighbor's: `move-up` and
 /// `move-down` on a field row, `move-condition-up` and
 /// `move-condition-down` on a condition row. The rows are keyed by their
-/// index and both `RulesetForm::parse` and `ParserForm::parse` order by it,
+/// index and both `SearchForm::parse` and `ParserForm::parse` order by it,
 /// so a move renames two rows' keys and touches nothing else. A move off
 /// either end returns the form unchanged, because the neighbor row on that
 /// side does not exist.

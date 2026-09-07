@@ -9,10 +9,10 @@ use std::collections::HashSet;
 
 use crate::rules::{Engine, Parsed};
 
-/// Where one title stands against the rulesets and the library.
+/// Where one title stands against the searches and the library.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Standing {
-    /// Claimed by an enabled ruleset and absent from the library.
+    /// Claimed by an enabled search and absent from the library.
     Wanted(Parsed),
 
     /// The library already holds this identity, so another copy adds nothing.
@@ -21,7 +21,7 @@ pub(super) enum Standing {
     /// The claimant is switched off.
     Disabled(Parsed),
 
-    /// No ruleset claims the title, so nothing is known about it.
+    /// No search claims the title, so nothing is known about it.
     Unmatched,
 }
 
@@ -52,7 +52,7 @@ impl Standing {
     }
 }
 
-/// One value the claiming ruleset read out of a title.
+/// One value the claiming search read out of a title.
 ///
 /// The position and the identity flag come from the field that captured the
 /// value, so a row tints each value and marks the ones that decide sameness
@@ -117,7 +117,7 @@ pub(super) fn standing(
         return Standing::Unmatched;
     };
 
-    if !enabled.contains(&parsed.ruleset) {
+    if !enabled.contains(&parsed.search) {
         return Standing::Disabled(parsed);
     }
 
@@ -138,7 +138,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{Standing, parsed_values, standing};
-    use crate::ruleset::fixture::ENGINE;
+    use crate::search::fixture::ENGINE;
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_ruleset_hides_what_it_claims() {
+    fn a_disabled_search_hides_what_it_claims() {
         let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
             unreachable!()
         };
@@ -232,21 +232,21 @@ mod tests {
         assert_eq!(
             standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_1080),
             Standing::Disabled(expected),
-            "the ruleset that claims this title is switched off"
+            "the search that claims this title is switched off"
         );
     }
 
     #[test]
-    fn a_title_no_ruleset_wants_is_unmatched() {
+    fn a_title_no_search_wants_is_unmatched() {
         assert_eq!(
             standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_720),
             Standing::Unmatched,
-            "the parser reads the 720p name, and no ruleset admits that resolution"
+            "the parser reads the 720p name, and no search admits that resolution"
         );
     }
 
     #[test]
-    fn title_no_ruleset_claims_is_unmatched() {
+    fn title_no_search_claims_is_unmatched() {
         assert_eq!(
             standing(&ENGINE, &HashSet::new(), &HashSet::new(), NONSENSE),
             Standing::Unmatched,

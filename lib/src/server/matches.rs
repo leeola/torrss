@@ -1,4 +1,4 @@
-//! What an in-progress ruleset edit does to the titles the feeds carry.
+//! What an in-progress search edit does to the titles the feeds carry.
 //!
 //! An authored example teaches nothing about a reader's own feeds. The
 //! editor instead runs the saved rules and the edited rules over the stored
@@ -25,7 +25,7 @@ use url::form_urlencoded;
 // `rules` function below takes that name in this scope.
 use crate::parser::{Field, FieldKind, Segment};
 use crate::rules::{Component, compose};
-use crate::ruleset::{Condition, Diff};
+use crate::search::{Condition, Diff};
 
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
@@ -79,7 +79,7 @@ pub(super) struct Rule {
 /// available at all, so a draft the reader is still fixing claims nothing
 /// rather than claiming everything.
 ///
-/// The default claims nothing too, which is what an unsaved ruleset offers as
+/// The default claims nothing too, which is what an unsaved search offers as
 /// the rules an edit is measured against.
 #[derive(Debug, Default)]
 pub(super) struct Rules {
@@ -89,7 +89,7 @@ pub(super) struct Rules {
     /// Every comparison the draft makes on a value its regex read.
     ///
     /// One that names a field the draft does not carry claims nothing, which
-    /// is the same refusal the engine makes of a saved ruleset.
+    /// is the same refusal the engine makes of a saved search.
     conditions: Vec<Condition>,
 }
 
@@ -194,7 +194,7 @@ impl Edits {
 /// too, or the field turns optional.
 ///
 /// An edit carries no tight flag. Every caller passes [`Edits::default`], and
-/// the live draft reaches here as fields `RulesetForm::parse_draft` already
+/// the live draft reaches here as fields `SearchForm::parse_draft` already
 /// read, so the flag arrives on the field rather than beside it.
 pub(super) fn rules(
     fields: &[&Field],
@@ -455,7 +455,7 @@ pub(super) mod tests {
         Field, FieldKind,
         FieldKind::{Season, Text},
     };
-    use crate::ruleset::{Condition, Diff, Op};
+    use crate::search::{Condition, Diff, Op};
 
     fn field(
         name: &str,
