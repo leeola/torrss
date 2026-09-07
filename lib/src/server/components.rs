@@ -810,7 +810,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
             "bg-emerald-500/15 text-emerald-300" if enabled
                 else "bg-slate-700/40 text-slate-400",
         ))>
-            if enabled { "enabled" } else { "disabled" }
+            if enabled { "active" } else { "paused" }
         </span>
     }
 }

@@ -47,7 +47,7 @@ impl Standing {
         match self {
             Self::Wanted(_) => None,
             Self::Owned(_) => Some("owned"),
-            Self::Disabled(_) => Some("disabled"),
+            Self::Disabled(_) => Some("paused"),
             Self::Unmatched => Some("unmatched"),
         }
     }
@@ -337,7 +337,7 @@ mod tests {
             [
                 (true, None),
                 (false, Some("owned")),
-                (false, Some("disabled")),
+                (false, Some("paused")),
                 (false, Some("unmatched")),
             ],
         );

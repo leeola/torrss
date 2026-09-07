@@ -471,7 +471,7 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
             if wanted && hidden_count > 0 {
                 ", hidden: "
                 (owned_count) " owned, "
-                (disabled_count) " disabled, "
+                (disabled_count) " paused, "
                 (unmatched_count) " unmatched"
             }
             "."
@@ -1468,7 +1468,7 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
                             } else {
                                 "rounded-full px-2 py-0.5 text-xs bg-slate-700/40 text-slate-400"
                             })>
-                                $(if enabled.get() { "enabled" } else { "disabled" })
+                                $(if enabled.get() { "active" } else { "paused" })
                             </span>
                         }
                     </div>
