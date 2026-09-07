@@ -34,7 +34,7 @@ pub(crate) async fn filename(segments: &[Segment<'_>], editor: &str) -> Result {
                             "rounded-sm px-0.5 py-px hover:underline hover:decoration-dotted",
                             Tint::at(position).classes(),
                         ))
-                        title="edit the rule that claimed this"
+                        title="edit the search that matched this"
                     >(segment.text)</a>,
                     None => <span class="text-slate-500">(segment.text)</span>,
                 }
@@ -283,7 +283,7 @@ pub(crate) async fn item_row(
                             href=(format!("/searches/new?from={}", item.id))
                             class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                         >
-                            "Import search"
+                            "Save as search"
                         </a>
                     } else {
                         for search in &details.searches {
@@ -310,9 +310,9 @@ pub(crate) async fn item_row(
                 if let Some(grabbed) = &details.grab {
                     <p class="mt-1 text-xs text-slate-500">
                         if grabbed.searches.is_empty() {
-                            "passed no search"
+                            "matched no search"
                         } else {
-                            "passed " (passed(engine, &grabbed.searches))
+                            "matched " (passed(engine, &grabbed.searches))
                         }
                     </p>
                 }
@@ -566,7 +566,7 @@ pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
                                 ))>
                                     match verdict {
                                         Verdict::Pass => "pass",
-                                        Verdict::Unmatched => "not claimed",
+                                        Verdict::Unmatched => "not matched",
                                         Verdict::Failed(_) => "failed",
                                     }
                                 </span>

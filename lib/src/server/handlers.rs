@@ -219,7 +219,7 @@ async fn feed(cx: &Cx) -> Result {
 
         <script>(Unescaped::new_unchecked(FEED_ACTIONS))</script>
 
-        <h1 class="text-2xl font-semibold tracking-tight">"Feed results"</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">"Results"</h1>
 
         <div
             id="listing"
@@ -621,8 +621,9 @@ async fn search_index(cx: &Cx) -> Result {
             <div>
                 <h1 class="text-2xl font-semibold tracking-tight">"Searches"</h1>
                 <p class="mt-1 text-sm text-slate-400">
-                    "A search picks a parser and decides which of the names it reads are wanted.
-                    A disabled search filters nothing, so its releases stay out of the feed."
+                    "A search picks a parser and names the values it wants.
+                    The results page lists every release a search matches.
+                    A paused search matches nothing."
                 </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
@@ -630,7 +631,7 @@ async fn search_index(cx: &Cx) -> Result {
                     href="/searches/import"
                     class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
                 >
-                    "Import from client"
+                    "Searches from torrents"
                 </a>
                 <a
                     href="/searches/new"
@@ -643,7 +644,7 @@ async fn search_index(cx: &Cx) -> Result {
 
         if engine.searches().next().is_none() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No search is declared."
+                "No search yet."
             </p>
         } else {
             <ul id="searches" class="mt-6 flex scroll-mt-24 flex-col gap-3">
@@ -824,7 +825,7 @@ async fn client() -> Result {
 
         <h2 class="mt-8 text-sm font-semibold text-slate-300">"Torrents"</h2>
         <p class="mt-1 text-sm text-slate-400">
-            "What the client holds that a search claims, and when a grab moved it there."
+            "What the client holds that a search matches, and when a grab moved it there."
         </p>
 
         client_torrents(version: $(version.get()))
@@ -1538,9 +1539,9 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
                             <button
                                 type="button"
                                 :title=$(if enabled.get() {
-                                    "Stop this search filtering feed results"
+                                    "Pause this search"
                                 } else {
-                                    "Let this search filter feed results"
+                                    "Resume this search"
                                 })
                                 :class=$(if enabled.get() {
                                     "cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
