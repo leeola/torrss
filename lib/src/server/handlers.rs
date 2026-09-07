@@ -978,10 +978,6 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
 /// The torrents the client holds that a search claims, grabbed first, then
 /// by the time the client added them. Each row carries what the search read
 /// out of the name.
-///
-/// The list is read from the client rather than from the library table,
-/// because the state and the progress live only in the client, and the block
-/// beside it already asks the client live.
 #[shard]
 async fn client_torrents(cx: &Cx, version: f64) -> Result {
     // This is read for its change alone. A scan bumps it so the list reports
@@ -993,44 +989,37 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let accepted = grabs::accepted(&services.db).await?;
-    let listed = match services.torrents.list().await {
-        Ok(torrents) => Ok(held::held(&engine, torrents, &accepted)),
-        Err(error) => Err(error.to_string()),
-    };
+    let torrents = index::all(&services.db).await?;
+    let listed = held::held(&engine, torrents, &accepted);
 
     // The matched search and the age are resolved here rather than in the view,
     // because a row borrows both and an argument built inline dies before
     // the component reads it.
-    let rows = listed.as_ref().map(|entries| {
-        entries
-            .iter()
-            .map(|entry| {
-                let matched = Matched {
-                    id: entry.parsed.search.clone(),
-                    // A search removed since the grab shows by its id, as a
-                    // grabbed row does. The record is of what ran.
-                    name: engine
-                        .search(&entry.parsed.search)
-                        .map_or_else(|| entry.parsed.search.clone(), |search| search.name.clone()),
-                };
+    let rows = listed
+        .iter()
+        .map(|entry| {
+            let matched = Matched {
+                id: entry.parsed.search.clone(),
+                // A search removed since the grab shows by its id, as a
+                // grabbed row does. The record is of what ran.
+                name: engine
+                    .search(&entry.parsed.search)
+                    .map_or_else(|| entry.parsed.search.clone(), |search| search.name.clone()),
+            };
 
-                let values = listing::parsed_values(&engine, &entry.parsed);
-                let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
+            let values = listing::parsed_values(&engine, &entry.parsed);
+            let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
 
-                (&entry.torrent, matched, values, age)
-            })
-            .collect::<Vec<_>>()
-    });
+            (&entry.torrent, matched, values, age)
+        })
+        .collect::<Vec<_>>();
 
     view! {
         match &rows {
-            Err(error) => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "the client did not list its torrents: " (error)
-            </p>,
-            Ok(entries) if entries.is_empty() => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+            entries if entries.is_empty() => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No torrent in the client matches a search."
             </p>,
-            Ok(entries) => <ul class="mt-2 flex flex-col gap-2">
+            entries => <ul class="mt-2 flex flex-col gap-2">
                 for (torrent, matched, values, age) in entries {
                     components::torrent_row(
                         torrent: torrent,
