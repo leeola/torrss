@@ -22,7 +22,7 @@ use crate::torrent::Torrent;
 pub(super) struct Held {
     pub(super) torrent: Torrent,
 
-    /// What the claimant made of the name.
+    /// What the matched search made of the name.
     ///
     /// Its search is the one that claimed the name, rather than the parser
     /// behind it, so the page names the rule the reader wrote.

@@ -21,7 +21,7 @@ pub(super) enum Verdict {
     /// Kept apart from a failure, because the two send the reader to
     /// different places. This one says a rule stopped matching the name;
     /// a failure says the rules read it and read it differently.
-    Unclaimed,
+    Unmatched,
 
     /// The rules claim the title and disagree about what it holds.
     Failed(Vec<Mismatch>),
@@ -48,7 +48,7 @@ pub(super) struct Mismatch {
 /// value the reader cares about and stays silent about the rest.
 pub(super) fn verdict(rules: &Rules, test: &TitleTest) -> Verdict {
     let Some(values) = matches::values(rules, &test.title) else {
-        return Verdict::Unclaimed;
+        return Verdict::Unmatched;
     };
 
     let mismatches: Vec<Mismatch> = test
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn a_title_the_rules_refuse_is_unclaimed() {
+    fn a_title_the_rules_refuse_is_unmatched() {
         let declared = declared();
         let test = TitleTest {
             title: "just some words".to_owned(),
@@ -142,7 +142,7 @@ mod tests {
 
         assert_eq!(
             verdict(&saved(&resolved(&declared)), &test),
-            Verdict::Unclaimed,
+            Verdict::Unmatched,
             "a rule stopped matching the name, which is not the same as reading it wrong"
         );
     }

@@ -26,7 +26,7 @@ pub(crate) struct Parsed {
     /// that does.
     pub(crate) search: String,
 
-    /// [`crate::parser::Parser::id`] of the parser the claimant read with.
+    /// [`crate::parser::Parser::id`] of the parser the search read with.
     ///
     /// The identity names the fields rather than the parser, so this is what
     /// the library row records to say which parser claimed a torrent.
@@ -356,7 +356,7 @@ impl Engine {
     ///
     /// A parser claims nothing, so one never appears here even when a
     /// search reading with it does.
-    pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
+    pub(crate) fn matching(&self, title: &str) -> Vec<String> {
         self.searches
             .iter()
             .filter(|search| claims(search, &self.compiled_parsers[search.parser], title).is_some())
@@ -655,17 +655,17 @@ mod tests {
     }
 
     #[test]
-    fn claimants_name_searches_and_never_a_parser() {
+    fn matching_names_searches_and_never_a_parser() {
         assert_eq!(
-            ENGINE.claimants(HOLLOW_1080),
+            ENGINE.matching(HOLLOW_1080),
             vec!["series-hollow-meridian"],
             "a parser claims nothing, so only the search appears"
         );
     }
 
     #[test]
-    fn claimants_of_unmatched_name_is_empty() {
-        assert_eq!(ENGINE.claimants(NONSENSE), Vec::<&str>::new());
+    fn matching_of_unmatched_name_is_empty() {
+        assert_eq!(ENGINE.matching(NONSENSE), Vec::<&str>::new());
     }
 
     #[test]
@@ -984,12 +984,12 @@ mod tests {
         .expect("a condition on a field the parser reads");
 
         assert_eq!(
-            engine.claimants(HOLLOW_1080),
+            engine.matching(HOLLOW_1080),
             vec!["high-definition"],
             "the parser reads the resolution and the condition wants this one"
         );
         assert_eq!(
-            engine.claimants(HOLLOW_720),
+            engine.matching(HOLLOW_720),
             Vec::<&str>::new(),
             "the same parser reads the other resolution, and the condition refuses it"
         );
@@ -1007,9 +1007,9 @@ mod tests {
         )
         .expect("a list condition on a field the parser reads");
 
-        assert_eq!(engine.claimants(HOLLOW_1080), vec!["either-definition"]);
+        assert_eq!(engine.matching(HOLLOW_1080), vec!["either-definition"]);
         assert_eq!(
-            engine.claimants(HOLLOW_720),
+            engine.matching(HOLLOW_720),
             vec!["either-definition"],
             "one condition covers both resolutions, where equals needs a search each"
         );
@@ -1091,7 +1091,7 @@ mod tests {
         );
         assert_eq!(engine.parser("series"), Some(&series));
         assert_eq!(
-            engine.claimants("Ashfall.S01E01"),
+            engine.matching("Ashfall.S01E01"),
             Vec::<&str>::new(),
             "and nothing parses through it, because no search names one yet"
         );

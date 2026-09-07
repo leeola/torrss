@@ -18,7 +18,7 @@ pub(super) enum Standing {
     /// The library already holds this identity, so another copy adds nothing.
     Owned(Parsed),
 
-    /// The claimant is switched off.
+    /// The matched search is switched off.
     Disabled(Parsed),
 
     /// No search claims the title, so nothing is known about it.
@@ -26,7 +26,8 @@ pub(super) enum Standing {
 }
 
 impl Standing {
-    /// What the claimant made of the title, or nothing when none claimed it.
+    /// What the matched search made of the title, or nothing when none
+    /// claimed it.
     pub(super) fn parsed(&self) -> Option<&Parsed> {
         match self {
             Self::Wanted(parsed) | Self::Owned(parsed) | Self::Disabled(parsed) => Some(parsed),
@@ -100,8 +101,8 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 
 /// Decides where `title` stands.
 ///
-/// Interest follows the claimant alone. A parser claims nothing, so it never
-/// appears among the claimants and the enabled set never names one.
+/// Interest follows the matched search alone. A parser claims nothing, so it
+/// never appears among the matches and the enabled set never names one.
 ///
 /// A release counts as owned when the library holds it or any span around it.
 /// A stored season pack therefore owns each episode of that season, while a
@@ -162,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_claimant_and_empty_library_is_wanted() {
+    fn enabled_search_and_empty_library_is_wanted() {
         assert_eq!(
             standing(
                 &ENGINE,

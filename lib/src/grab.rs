@@ -59,7 +59,7 @@ pub(crate) async fn grab(
     item: &StoredItem,
     auth: &FeedAuth,
 ) -> Result<(), GrabError> {
-    let searches = engine.claimants(&item.item.title);
+    let searches = engine.matching(&item.item.title);
 
     for id in &searches {
         debug!(search.id = id, "search passed");
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn grab_records_every_claimant(pool: SqlitePool) {
+    async fn grab_records_every_matching_search(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let item = stored(
             &services.db,
@@ -382,7 +382,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn grab_of_unclaimed_title_records_no_search(pool: SqlitePool) {
+    async fn grab_of_unmatched_title_records_no_search(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let item = stored(
             &services.db,

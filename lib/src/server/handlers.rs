@@ -32,7 +32,7 @@ use crate::{
     search::registry::{SaveError, Searches},
     search::{Condition, Diff, Search},
     server::{
-        components::{self, Claimant, Grabbed, ItemDetails},
+        components::{self, Grabbed, ItemDetails, Matched},
         format, held,
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
@@ -161,9 +161,10 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
 /// Builds everything the feed page shows about one release.
 ///
 /// The standing arrives decided, because the page needs it before this to
-/// work out which rows to list at all. The claimant list is a second pass
-/// over the same searches: a listing runs to tens of rows, so repeating the
-/// match costs less than threading one result through two shapes.
+/// work out which rows to list at all. The list of matched searches is a
+/// second pass over the same searches: a listing runs to tens of rows, so
+/// repeating the match costs less than threading one result through two
+/// shapes.
 fn item_details(
     engine: &Engine,
     registry: &FeedRegistry,
@@ -176,10 +177,10 @@ fn item_details(
 
     ItemDetails {
         searches: engine
-            .claimants(title)
+            .matching(title)
             .into_iter()
             .filter_map(|id| engine.search(&id))
-            .map(|search| Claimant {
+            .map(|search| Matched {
                 id: search.id.clone(),
                 name: search.name.clone(),
             })
@@ -928,14 +929,14 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
         Err(error) => Err(error.to_string()),
     };
 
-    // The claimant and the age are resolved here rather than in the view,
+    // The matched search and the age are resolved here rather than in the view,
     // because a row borrows both and an argument built inline dies before
     // the component reads it.
     let rows = listed.as_ref().map(|entries| {
         entries
             .iter()
             .map(|entry| {
-                let claimant = Claimant {
+                let matched = Matched {
                     id: entry.parsed.search.clone(),
                     // A search removed since the grab shows by its id, as a
                     // grabbed row does. The record is of what ran.
@@ -947,7 +948,7 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                 let values = listing::parsed_values(&engine, &entry.parsed);
                 let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
 
-                (&entry.torrent, claimant, values, age)
+                (&entry.torrent, matched, values, age)
             })
             .collect::<Vec<_>>()
     });
@@ -961,10 +962,10 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                 "No torrent in the client matches a search."
             </p>,
             Ok(entries) => <ul class="mt-2 flex flex-col gap-2">
-                for (torrent, claimant, values, age) in entries {
+                for (torrent, matched, values, age) in entries {
                     components::torrent_row(
                         torrent: torrent,
-                        search: claimant,
+                        search: matched,
                         values: values.as_slice(),
                         ingested: age.as_deref(),
                     )

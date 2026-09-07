@@ -69,10 +69,10 @@ pub(crate) async fn filter_chip(name: &str, value: &str, label: &str, current: b
 
 /// One search that claims a listed title.
 ///
-/// A row links a claimant by id and shows its name, and it holds nothing
+/// A row links a matched search by id and shows its name, and it holds nothing
 /// else of the search. Borrowing the whole search would tie every row to
 /// the engine that resolved it, which outlives no request.
-pub(crate) struct Claimant {
+pub(crate) struct Matched {
     pub id: String,
     pub name: String,
 }
@@ -167,7 +167,7 @@ pub(crate) struct ItemDetails {
     /// A parser claims nothing, so it never appears. Two searches that both
     /// claim one release do, and the first declared is the one that parsed
     /// it, so listing all of them shows the reader the overlap they wrote.
-    pub searches: Vec<Claimant>,
+    pub searches: Vec<Matched>,
 
     /// What the claiming search read out of the title, in its field order.
     ///
@@ -566,7 +566,7 @@ pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
                                 ))>
                                     match verdict {
                                         Verdict::Pass => "pass",
-                                        Verdict::Unclaimed => "not claimed",
+                                        Verdict::Unmatched => "not claimed",
                                         Verdict::Failed(_) => "failed",
                                     }
                                 </span>
@@ -828,7 +828,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 #[component]
 pub(crate) async fn torrent_row(
     torrent: &Torrent,
-    search: &Claimant,
+    search: &Matched,
     values: &[ParsedValue],
     ingested: Option<&str>,
 ) -> Result {
