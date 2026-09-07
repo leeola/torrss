@@ -14,8 +14,8 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::clock::Clock;
 use crate::download::{DownloadError, Downloader};
+use crate::engine::Engine;
 use crate::feed::FeedAuth;
-use crate::rules::Engine;
 use crate::store::StoredItem;
 use crate::store::grabs;
 use crate::torrent::{AddTorrent, TorrentClient, TorrentError, TorrentSource};

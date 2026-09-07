@@ -1,4 +1,8 @@
-//! Running the searches over a release name.
+//! Running the parsers and the searches over a release name.
+//!
+//! A parser reads a filename apart into fields. A search judges what the
+//! parser read and decides whether it wants the release. The engine holds
+//! both and runs a name through them together.
 //!
 //! A tracker announces a filename and a torrent client reports another. This
 //! module decides whether the two name the same release, which is the whole

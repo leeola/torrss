@@ -26,8 +26,8 @@ use topcoat::{
 };
 use url::form_urlencoded;
 
+use crate::engine::Engine;
 use crate::parser::form as parser_form;
-use crate::rules::Engine;
 use crate::search;
 use crate::search::Condition;
 use crate::search::import::{Collision, Suggestion};

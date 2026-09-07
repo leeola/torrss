@@ -23,8 +23,8 @@ use url::form_urlencoded;
 
 // `compose` is imported directly rather than through its module, because the
 // `rules` function below takes that name in this scope.
+use crate::engine::{Component, compose};
 use crate::parser::{Field, FieldKind, Segment};
-use crate::rules::{Component, compose};
 use crate::search::{Condition, Diff};
 
 /// Every field attribute the editor's form carries, keyed by field name.

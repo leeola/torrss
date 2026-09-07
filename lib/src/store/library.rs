@@ -18,7 +18,7 @@ use crate::torrent::TorrentId;
 /// One release the client holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Owned {
-    /// The rendered [`Identity`](crate::rules::Identity), which is the key.
+    /// The rendered [`Identity`](crate::engine::Identity), which is the key.
     pub(crate) identity: String,
 
     /// The parser the identity came from, kept so a reader sees which rules

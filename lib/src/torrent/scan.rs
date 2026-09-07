@@ -21,7 +21,7 @@ use sqlx::SqlitePool;
 use tracing::{info, instrument, warn};
 
 use crate::clock::{self, Clock};
-use crate::rules::Engine;
+use crate::engine::Engine;
 use crate::search::registry::Searches;
 use crate::store::library;
 use crate::store::library::Owned;

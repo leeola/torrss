@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::rules::{Engine, Parsed};
+use crate::engine::{Engine, Parsed};
 use crate::store::grabs::Accepted;
 use crate::torrent::Torrent;
 
@@ -86,7 +86,7 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
 
     use super::{Held, held};
-    use crate::rules::Parsed;
+    use crate::engine::Parsed;
     use crate::search::fixture::ENGINE;
     use crate::store::grabs::Accepted;
     use crate::torrent::{Torrent, TorrentId, TorrentState};

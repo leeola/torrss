@@ -21,8 +21,8 @@ use chrono::{DateTime, Utc};
 
 use super::form::SearchForm;
 use super::{Condition, Op};
+use crate::engine::{Engine, Reading};
 use crate::parser::{Field, FieldKind, Parser, TitleTest};
-use crate::rules::{Engine, Reading};
 use crate::torrent::{Torrent, TorrentId};
 
 /// Fields a suggested condition never names.
@@ -466,8 +466,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::{Collision, Suggestion, plan, seed};
+    use crate::engine::Engine;
     use crate::parser::{Field, Parser, TitleTest};
-    use crate::rules::Engine;
     use crate::search::fixture::{self, ENGINE};
     use crate::search::{Condition, Op, Search};
     use crate::torrent::{Torrent, TorrentId, TorrentState};

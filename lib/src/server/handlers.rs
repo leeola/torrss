@@ -21,11 +21,11 @@ use tracing::error;
 use url::Url;
 
 use crate::{
+    engine::Engine,
     feed::registry::{self, FeedRegistry},
     grab,
     parser::form as parser_form,
     parser::{Field, Parser, TitleTest},
-    rules::Engine,
     search,
     search::form::{EditorRows, SearchForm},
     search::import,

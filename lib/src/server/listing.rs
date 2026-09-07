@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::rules::{Engine, Parsed};
+use crate::engine::{Engine, Parsed};
 
 /// Where one title stands against the searches and the library.
 #[derive(Debug, PartialEq, Eq)]

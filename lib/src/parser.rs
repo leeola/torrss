@@ -271,7 +271,7 @@ impl FieldKind {
     /// Each names its capture group after the preset that carries it, so a
     /// field started from that preset reads the number alone. A field of this
     /// kind under another name reads the whole component, prefix included,
-    /// because `compose` in [`crate::rules`] wraps it in a group under that
+    /// because `compose` in [`crate::engine`] wraps it in a group under that
     /// name.
     pub(crate) fn pattern(self) -> Option<&'static str> {
         match self {
@@ -332,7 +332,7 @@ pub(crate) struct Preset {
 ///
 /// Each names its capture group after its preset, because that is the name the
 /// row starts with. A reader who renames the field keeps a working rule,
-/// because `compose` in [`crate::rules`] then wraps the whole component in a
+/// because `compose` in [`crate::engine`] then wraps the whole component in a
 /// group under the new name.
 ///
 /// The show, movie, season, episode number, and year decide what a release
@@ -466,7 +466,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{Field, FieldKind, PRESETS, Parser};
-    use crate::rules::{Component, Engine, compose};
+    use crate::engine::{Component, Engine, compose};
     use crate::search::Search;
 
     /// Reads `title` through the pattern `kind` supplies, as the engine does.

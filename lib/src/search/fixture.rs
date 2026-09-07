@@ -17,12 +17,12 @@
 use std::sync::LazyLock;
 
 use super::{Condition, Op, Search};
+use crate::engine::Engine;
 use crate::parser::{
     Field, FieldKind,
     FieldKind::{Enum, Episode, Number, Season, Text},
     Parser,
 };
-use crate::rules::Engine;
 
 /// Builds one field, so a parser below reads as a list of rules rather
 /// than a page of struct literals.

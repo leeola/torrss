@@ -3,7 +3,7 @@
 //! A fresh database stores none, so these are what read a title until the
 //! reader writes one of their own. They are declared in the order the engine
 //! tries them, most specific first, because
-//! [`Engine::read`](crate::rules::Engine::read) takes the first parser that
+//! [`Engine::read`](crate::engine::Engine::read) takes the first parser that
 //! reads a name.
 //!
 //! Each names its fields as [`super::PRESETS`] does. An import and a search
@@ -375,7 +375,7 @@ mod tests {
     use std::sync::LazyLock;
 
     use super::parsers;
-    use crate::rules::Engine;
+    use crate::engine::Engine;
     use crate::search::Search;
 
     /// The shipped set compiled, which is what proves every pattern above is

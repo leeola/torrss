@@ -15,10 +15,10 @@ use snafu::{ResultExt, Snafu};
 
 use super::Search;
 use super::store::SearchStore;
+use crate::engine::{Engine, EngineError};
 use crate::parser::Parser;
 use crate::parser::shipped;
 use crate::parser::store::ParserStore;
-use crate::rules::{Engine, EngineError};
 
 /// The compiled parsers and searches, rebuilt after every write.
 pub(crate) struct Searches {
