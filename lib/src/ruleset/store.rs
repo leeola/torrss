@@ -6,7 +6,7 @@
 //! a restart must not lose.
 //!
 //! Keyed by a slug the application fixes when the ruleset is created.
-//! `grab_rulesets.ruleset` carries that slug, so a rename changes the name a
+//! `grab_searches.search` carries that slug, so a rename changes the name a
 //! page shows and orphans nothing.
 
 // FIXME: Nothing outside the tests holds a RulesetStore, so every item here
@@ -26,7 +26,7 @@ use crate::parser::TitleTest;
 /// runtime decision about a ruleset, not part of the rules they edit, so
 /// saving an edit never turns a running ruleset off.
 const UPSERT: &str = "
-    INSERT INTO rulesets (id, name, parser, enabled)
+    INSERT INTO searches (id, name, parser, enabled)
     VALUES (?1, ?2, ?3, ?4)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
@@ -38,20 +38,20 @@ const UPSERT: &str = "
 /// The name orders them rather than the id. The id is a slug the reader
 /// never sees, and ordering by it leaves a renamed ruleset where its old
 /// name sorted.
-const SELECT_RULESETS: &str = "SELECT id, name, parser, enabled FROM rulesets ORDER BY name";
+const SELECT_RULESETS: &str = "SELECT id, name, parser, enabled FROM searches ORDER BY name";
 
 /// Reads every condition of every ruleset, grouped by ruleset and in order.
 const SELECT_CONDITIONS: &str = "
-    SELECT ruleset, field, op, value
-    FROM ruleset_conditions
-    ORDER BY ruleset, position
+    SELECT search, field, op, value
+    FROM search_conditions
+    ORDER BY search, position
 ";
 
 /// Reads every saved test of every ruleset, grouped by ruleset and in order.
 const SELECT_TESTS: &str = "
-    SELECT ruleset, position, title
-    FROM ruleset_tests
-    ORDER BY ruleset, position
+    SELECT search, position, title
+    FROM search_tests
+    ORDER BY search, position
 ";
 
 /// Reads every expectation of every saved test.
@@ -59,9 +59,9 @@ const SELECT_TESTS: &str = "
 /// Ordered by field so a listed test reads the same way twice, which is what
 /// the round-trip comparison rests on.
 const SELECT_TEST_VALUES: &str = "
-    SELECT ruleset, position, field, expected
-    FROM ruleset_test_values
-    ORDER BY ruleset, position, field
+    SELECT search, position, field, expected
+    FROM search_test_values
+    ORDER BY search, position, field
 ";
 
 /// The stored rulesets, read and written through one pool.
@@ -98,7 +98,7 @@ impl RulesetStore {
             .collect::<Vec<_>>();
 
         for row in sqlx::query(SELECT_CONDITIONS).fetch_all(&self.pool).await? {
-            let owner: String = row.try_get("ruleset")?;
+            let owner: String = row.try_get("search")?;
 
             let Some(ruleset) = rulesets.iter_mut().find(|ruleset| ruleset.id == owner) else {
                 continue;
@@ -115,7 +115,7 @@ impl RulesetStore {
         }
 
         for row in sqlx::query(SELECT_TESTS).fetch_all(&self.pool).await? {
-            let owner: String = row.try_get("ruleset")?;
+            let owner: String = row.try_get("search")?;
 
             let Some(ruleset) = rulesets.iter_mut().find(|ruleset| ruleset.id == owner) else {
                 continue;
@@ -134,7 +134,7 @@ impl RulesetStore {
             .fetch_all(&self.pool)
             .await?
         {
-            let owner: String = row.try_get("ruleset")?;
+            let owner: String = row.try_get("search")?;
             let position: i64 = row.try_get("position")?;
 
             let Some(test) = rulesets
@@ -173,14 +173,14 @@ impl RulesetStore {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query("DELETE FROM ruleset_conditions WHERE ruleset = ?1")
+        sqlx::query("DELETE FROM search_conditions WHERE search = ?1")
             .bind(&ruleset.id)
             .execute(&mut *tx)
             .await?;
 
         for (position, condition) in ruleset.conditions.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO ruleset_conditions (ruleset, position, field, op, value)
+                "INSERT INTO search_conditions (search, position, field, op, value)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )
             .bind(&ruleset.id)
@@ -193,7 +193,7 @@ impl RulesetStore {
         }
 
         // The values cascade from the tests, so one delete clears both.
-        sqlx::query("DELETE FROM ruleset_tests WHERE ruleset = ?1")
+        sqlx::query("DELETE FROM search_tests WHERE search = ?1")
             .bind(&ruleset.id)
             .execute(&mut *tx)
             .await?;
@@ -201,7 +201,7 @@ impl RulesetStore {
         for (position, test) in ruleset.tests.iter().enumerate() {
             let position = position as i64;
 
-            sqlx::query("INSERT INTO ruleset_tests (ruleset, position, title) VALUES (?1, ?2, ?3)")
+            sqlx::query("INSERT INTO search_tests (search, position, title) VALUES (?1, ?2, ?3)")
                 .bind(&ruleset.id)
                 .bind(position)
                 .bind(&test.title)
@@ -210,7 +210,7 @@ impl RulesetStore {
 
             for (field, expected) in &test.expected {
                 sqlx::query(
-                    "INSERT INTO ruleset_test_values (ruleset, position, field, expected)
+                    "INSERT INTO search_test_values (search, position, field, expected)
                      VALUES (?1, ?2, ?3, ?4)",
                 )
                 .bind(&ruleset.id)
@@ -228,7 +228,7 @@ impl RulesetStore {
     /// Removes the ruleset `id` with its conditions and tests, and reports
     /// whether one was there.
     pub(crate) async fn remove(&self, id: &str) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM rulesets WHERE id = ?1")
+        let result = sqlx::query("DELETE FROM searches WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -238,7 +238,7 @@ impl RulesetStore {
 
     /// Switches the ruleset `id` on or off, and reports whether one was there.
     pub(crate) async fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query("UPDATE rulesets SET enabled = ?2 WHERE id = ?1")
+        let result = sqlx::query("UPDATE searches SET enabled = ?2 WHERE id = ?1")
             .bind(id)
             .bind(enabled)
             .execute(&self.pool)
@@ -392,7 +392,7 @@ mod tests {
         // is the far end of the chain and the one a single delete has to
         // reach.
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM ruleset_test_values")
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM search_test_values")
                 .fetch_one(&pool)
                 .await
                 .expect("count"),
@@ -400,7 +400,7 @@ mod tests {
             "and the expectations go with the tests that named them"
         );
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM ruleset_conditions")
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM search_conditions")
                 .fetch_one(&pool)
                 .await
                 .expect("count"),

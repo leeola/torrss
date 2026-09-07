@@ -16,7 +16,7 @@ use sqlx::{Row, SqlitePool};
 /// Records the attempt, keeping the row a retry lands on.
 ///
 /// An update rather than a replace. A replace deletes the row first, and a
-/// cascading reference loses its own rows to that delete. `grab_rulesets` is
+/// cascading reference loses its own rows to that delete. `grab_searches` is
 /// rewritten immediately after this either way, so the two forms agree today.
 /// The update form is what keeps them agreeing once a second table references
 /// a grab.
@@ -37,9 +37,9 @@ const UPSERT: &str = "
 /// sorts by `position` rather than leaving the join to answer in its own
 /// order.
 const SELECT: &str = "
-    SELECT g.item_id, g.grabbed_at, g.error, r.ruleset
+    SELECT g.item_id, g.grabbed_at, g.error, r.search
     FROM grabs g
-    LEFT JOIN grab_rulesets r ON r.item_id = g.item_id
+    LEFT JOIN grab_searches r ON r.item_id = g.item_id
     ORDER BY g.item_id, r.position
 ";
 
@@ -106,14 +106,14 @@ pub(crate) async fn record(
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query("DELETE FROM grab_rulesets WHERE item_id = ?1")
+    sqlx::query("DELETE FROM grab_searches WHERE item_id = ?1")
         .bind(item_id)
         .execute(&mut *tx)
         .await?;
 
     for (position, ruleset) in rulesets.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO grab_rulesets (item_id, ruleset, position)
+            "INSERT INTO grab_searches (item_id, search, position)
              VALUES (?1, ?2, ?3)",
         )
         .bind(item_id)
@@ -150,7 +150,7 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::E
             }),
         };
 
-        if let Some(ruleset) = row.try_get::<Option<String>, _>("ruleset")? {
+        if let Some(ruleset) = row.try_get::<Option<String>, _>("search")? {
             grab.rulesets.push(ruleset);
         }
     }
