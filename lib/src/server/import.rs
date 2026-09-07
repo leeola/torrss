@@ -1,11 +1,10 @@
 //! The page that turns the torrents a client holds into searches.
 //!
-//! The preview lists the client live and stores nothing, as the feed test
-//! page does. Only the Import post writes, and it writes the shows the
-//! reader left checked.
+//! The preview reads the torrent index and stores nothing. Only the Import
+//! post writes, and it writes the shows the reader left checked.
 //!
 //! The plan is computed again at post time rather than carried in the form.
-//! The client is the source, and a change between the two requests costs one
+//! The index is the source, and a scan between the two requests costs one
 //! stale row at most.
 
 use std::collections::{BTreeSet, HashSet};
@@ -35,6 +34,7 @@ use crate::search::registry::Searches;
 use crate::search::{Search, import};
 use crate::server::{components, format, handlers};
 use crate::services::Services;
+use crate::torrent::index;
 use crate::torrent::{Torrent, TorrentId};
 
 /// Flips the review's checkboxes in a group, either the whole page or one
@@ -324,15 +324,11 @@ async fn import_preview() -> Result {
     }
 }
 
-/// Lists every subject the client holds, re-planned from what the reader
+/// Lists every subject the index holds, re-planned from what the reader
 /// left checked.
 ///
-/// A client that does not answer renders its refusal here rather than as an
-/// error status. The request itself succeeded, and the client is what did
-/// not answer.
-///
 /// The review crosses the network and none of it is trusted. Every id in it
-/// is compared against what the client just listed, so an id naming nothing
+/// is compared against what the index holds, so an id naming nothing
 /// excludes nothing.
 #[shard]
 async fn import_suggestions(cx: &Cx, review: String) -> Result {
@@ -342,49 +338,49 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
 
     let review = Review::parse(&review);
 
-    let listed = match services.torrents.list().await {
-        Ok(torrents) => {
-            let excluded = excluded(&torrents, review.as_ref());
-
-            Ok(import::plan(&engine, &torrents, &excluded))
-        }
-        Err(error) => Err(error.to_string()),
-    };
+    let torrents = index::all(&services.db).await?;
+    let excluded = excluded(&torrents, review.as_ref());
+    let suggestions = import::plan(&engine, &torrents, &excluded);
 
     // The names are resolved here rather than in the view, because a row
     // borrows them and a value built inline dies before the row reads it.
-    let rows = listed.as_ref().map(|suggestions| {
-        suggestions
-            .iter()
-            .map(|suggestion| Row {
-                name: named(
-                    &engine,
-                    &suggestion.parser,
-                    &kept(suggestion, review.as_ref()),
-                ),
-                claimed: suggestion
-                    .collision
-                    .as_ref()
-                    .map(|collision| claimed(&engine, collision)),
-                repeats: suggestion.repeats.as_ref().map(|id| {
-                    engine
-                        .parser(id)
-                        .map_or_else(|| id.clone(), |parser| parser.name.clone())
-                }),
-                suggestion,
-            })
-            .collect::<Vec<_>>()
-    });
+    let rows = suggestions
+        .iter()
+        .map(|suggestion| Row {
+            name: named(
+                &engine,
+                &suggestion.parser,
+                &kept(suggestion, review.as_ref()),
+            ),
+            claimed: suggestion
+                .collision
+                .as_ref()
+                .map(|collision| claimed(&engine, collision)),
+            repeats: suggestion.repeats.as_ref().map(|id| {
+                engine
+                    .parser(id)
+                    .map_or_else(|| id.clone(), |parser| parser.name.clone())
+            }),
+            suggestion,
+        })
+        .collect::<Vec<_>>();
 
     view! {
         match &rows {
-            Err(error) => <p class="mt-6 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
-                "failed: " (error)
+            _ if torrents.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "No torrent is indexed. Scan the client from the "
+                <a
+                    href="/torrents"
+                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                >
+                    "Torrents"
+                </a>
+                " page."
             </p>,
-            Ok(entries) if entries.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+            entries if entries.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "The client holds no show a parser reads."
             </p>,
-            Ok(entries) => <ul class="mt-6 flex flex-col gap-2">
+            entries => <ul class="mt-6 flex flex-col gap-2">
                 for Row { suggestion, name, claimed, repeats } in entries {
                     <li>
                         <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4">
@@ -544,9 +540,7 @@ async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
     let services = app_context::<Services>(cx);
     let searches = app_context::<Arc<Searches>>(cx);
 
-    let torrents = services
-        .torrents
-        .list()
+    let torrents = index::all(&services.db)
         .await
         .map_err(internal_server_error)?;
 
