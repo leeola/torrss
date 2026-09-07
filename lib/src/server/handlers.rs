@@ -102,8 +102,12 @@ window.torrssFeed = {
     window.torrssFeed.view.set('show', value);
     window.torrssFeed.sync();
   },
+  search: (id) => {
+    window.torrssFeed.view.set('search', id);
+    window.torrssFeed.sync();
+  },
   sync: () => {
-    for (const key of ['feed', 'show']) {
+    for (const key of ['feed', 'show', 'search']) {
       if (!window.torrssFeed.view.get(key)) {
         window.torrssFeed.view.delete(key);
       }
@@ -124,11 +128,19 @@ struct FeedView {
 
     /// Which rows the listing shows, or absent for the wanted ones.
     show: Option<String>,
+
+    /// [`Search::id`](crate::search::Search::id) of the only search whose
+    /// matches to list, or absent for every search.
+    search: Option<String>,
 }
 
 impl FeedView {
     fn active(&self) -> Option<&str> {
         self.feed.as_deref().filter(|id| !id.is_empty())
+    }
+
+    fn active_search(&self) -> Option<&str> {
+        self.search.as_deref().filter(|id| !id.is_empty())
     }
 
     /// Which rows the listing shows.
@@ -160,26 +172,22 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
 
 /// Builds everything the feed page shows about one release.
 ///
-/// The standing arrives decided, because the page needs it before this to
-/// work out which rows to list at all. The list of matched searches is a
-/// second pass over the same searches: a listing runs to tens of rows, so
-/// repeating the match costs less than threading one result through two
-/// shapes.
+/// The standing and the matched search ids both arrive decided, because the
+/// page needs each to work out which rows to list at all. Resolving the ids
+/// to names is all that is left here.
 fn item_details(
     engine: &Engine,
     registry: &FeedRegistry,
     standing: &Standing,
+    matched: &[String],
     grabs: &HashMap<i64, Grab>,
     now: DateTime<Utc>,
     item: &StoredItem,
 ) -> ItemDetails {
-    let title = &item.item.title;
-
     ItemDetails {
-        searches: engine
-            .matching(title)
-            .into_iter()
-            .filter_map(|id| engine.search(&id))
+        searches: matched
+            .iter()
+            .filter_map(|id| engine.search(id))
             .map(|search| Matched {
                 id: search.id.clone(),
                 name: search.name.clone(),
@@ -206,10 +214,12 @@ async fn feed(cx: &Cx) -> Result {
     let view = query_params::<FeedView>(cx)?;
     let active_id = view.active().unwrap_or_default().to_owned();
     let mode = view.mode().to_owned();
+    let active_search = view.active_search().unwrap_or_default().to_owned();
 
     view! {
         signal filter = active_id;
         signal show = mode;
+        signal search = active_search;
         signal selected = String::new();
         signal kept = String::new();
         signal count = 0.0;
@@ -249,6 +259,12 @@ async fn feed(cx: &Cx) -> Result {
                     kept.set(selected.get());
                     show.set(e.target.value);
                     raw!("window.torrssFeed.mode(String(${e}.target.value))");
+                }
+
+                if e.target.name == "search-filter" {
+                    kept.set(selected.get());
+                    search.set(e.target.value);
+                    raw!("window.torrssFeed.search(String(${e}.target.value))");
                 }
             })
         >
@@ -331,6 +347,7 @@ async fn feed(cx: &Cx) -> Result {
             feed_listing(
                 filter: $(filter.get()),
                 show: $(show.get()),
+                search: $(search.get()),
                 kept: $(kept.get()),
                 version: $(version.get()),
             )
@@ -343,8 +360,18 @@ async fn feed(cx: &Cx) -> Result {
 /// `kept` is the selection the browser holds, which the rows read their
 /// checked state from. `version` is unread here and exists so a grab forces
 /// a re-render once the rows it took are gone.
+///
+/// `search` narrows the rows to one search's matches before the counts run,
+/// so the sentence above the list describes the set the reader sees.
 #[shard]
-async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, version: f64) -> Result {
+async fn feed_listing(
+    cx: &Cx,
+    filter: String,
+    show: String,
+    search: String,
+    kept: String,
+    version: f64,
+) -> Result {
     // Read for its change alone: a grab bumps it so the rows it took leave
     // the listing.
     let _ = version;
@@ -374,44 +401,62 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let enabled = engine
         .searches()
-        .filter(|search| search.enabled)
-        .map(|search| search.id.clone())
+        .filter(|saved| saved.enabled)
+        .map(|saved| saved.id.clone())
         .collect();
 
-    let standings: Vec<Standing> = items
+    let standings = items
         .iter()
-        .map(|item| listing::standing(&engine, &enabled, &owned, &item.item.title))
-        .collect();
+        .map(|item| listing::standing(&engine, &enabled, &owned, &item.item.title));
+    let matching = items.iter().map(|item| engine.matching(&item.item.title));
 
-    let owned_count = standings
+    // The search narrows the rows before they are counted, so the sentence
+    // above the list describes the search's rows rather than every row. An id
+    // that names no search holds no row, which is how a stale bookmark lists
+    // nothing without a branch of its own.
+    let mut listed: Vec<(&StoredItem, Standing, Vec<String>)> = items
         .iter()
-        .filter(|standing| matches!(standing, Standing::Owned(_)))
+        .zip(standings)
+        .zip(matching)
+        .map(|((item, standing), matched)| (item, standing, matched))
+        .collect();
+    if !search.is_empty() {
+        listed.retain(|(_, _, matched)| matched.contains(&search));
+    }
+
+    let owned_count = listed
+        .iter()
+        .filter(|(_, standing, _)| matches!(standing, Standing::Owned(_)))
         .count();
-    let disabled_count = standings
+    let disabled_count = listed
         .iter()
-        .filter(|standing| matches!(standing, Standing::Disabled(_)))
+        .filter(|(_, standing, _)| matches!(standing, Standing::Disabled(_)))
         .count();
-    let unmatched_count = standings
+    let unmatched_count = listed
         .iter()
-        .filter(|standing| matches!(standing, Standing::Unmatched))
+        .filter(|(_, standing, _)| matches!(standing, Standing::Unmatched))
         .count();
     let hidden_count = owned_count + disabled_count + unmatched_count;
 
     let wanted = show != "all" && show != "unmatched";
 
-    let mut listed: Vec<(&StoredItem, Standing)> = items.iter().zip(standings).collect();
     match show.as_str() {
         "all" => {}
-        "unmatched" => listed.retain(|(_, standing)| matches!(standing, Standing::Unmatched)),
-        _ => listed.retain(|(_, standing)| standing.is_wanted()),
+        "unmatched" => listed.retain(|(_, standing, _)| matches!(standing, Standing::Unmatched)),
+        _ => listed.retain(|(_, standing, _)| standing.is_wanted()),
     }
 
-    let ids: Vec<String> = listed.iter().map(|(item, _)| item.id.to_string()).collect();
+    let ids: Vec<String> = listed
+        .iter()
+        .map(|(item, _, _)| item.id.to_string())
+        .collect();
 
     let grabbed = grabs::all(&services.db).await?;
     let details: Vec<ItemDetails> = listed
         .iter()
-        .map(|(item, standing)| item_details(&engine, registry, standing, &grabbed, now, item))
+        .map(|(item, standing, matched)| {
+            item_details(&engine, registry, standing, matched, &grabbed, now, item)
+        })
         .collect();
 
     view! {
@@ -459,11 +504,33 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
             )
         </nav>
 
+        // A paused search gets a chip too. Its rows sit outside the wanted
+        // view, so the reader picks the All mode to see them.
+        <nav class="mt-2 flex flex-wrap gap-2">
+            components::filter_chip(
+                name: "search-filter",
+                value: "",
+                label: "All searches",
+                current: search.is_empty(),
+            )
+            for saved in engine.searches() {
+                components::filter_chip(
+                    name: "search-filter",
+                    value: saved.id.as_str(),
+                    label: saved.name.as_str(),
+                    current: search == saved.id,
+                )
+            }
+        </nav>
+
         <p class="mt-3 text-sm text-slate-400">
             match show.as_str() {
                 "all" => (format::count(ids.len(), "item", "items")),
                 "unmatched" => (format::count(ids.len(), "unmatched title", "unmatched titles")),
                 _ => (format::count(ids.len(), "wanted release", "wanted releases")),
+            }
+            if let Some(named) = engine.search(&search) {
+                " matching " (&named.name)
             }
             " from " (format::count(registered.len(), "feed", "feeds"))
             // Only the wanted view leaves rows out, so only it says what it
@@ -496,7 +563,7 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
-                for ((item, _), (id, shown)) in listed.iter().zip(ids.iter().zip(&details)) {
+                for ((item, _, _), (id, shown)) in listed.iter().zip(ids.iter().zip(&details)) {
                     components::item_row(
                         engine: &engine,
                         item: item,
