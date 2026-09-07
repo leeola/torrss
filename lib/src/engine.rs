@@ -33,7 +33,7 @@ pub(crate) struct Parsed {
     /// [`crate::parser::Parser::id`] of the parser the search read with.
     ///
     /// The identity names the fields rather than the parser, so this is what
-    /// the library row records to say which parser claimed a torrent.
+    /// a page reads to say which parser claimed a torrent.
     pub(crate) parser: String,
 
     /// Every field that matched, in the search's own order.
@@ -117,7 +117,7 @@ impl Identity {
 }
 
 impl Display for Identity {
-    /// Renders the form the library table stores.
+    /// Renders the form the owned set compares by.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.namespace)?;
 
@@ -816,9 +816,9 @@ mod tests {
         assert_eq!(ENGINE.parse(NONSENSE), None);
     }
 
-    /// The rendered form is what the library table stores. A row written
-    /// under an older form needs no migration, because `library::replace`
-    /// rewrites the table whole from the next scan.
+    /// The rendered form is what a stored identity compares against. It is
+    /// built from the indexed name on every read, so a change to the form
+    /// needs no migration and no rescan.
     #[test]
     fn identity_renders_as_the_stored_key() {
         assert_eq!(

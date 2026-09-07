@@ -6,7 +6,6 @@
 //! poll happened to catch.
 
 pub(crate) mod grabs;
-pub(crate) mod library;
 
 use chrono::{DateTime, Utc};
 use sqlx::migrate::MigrateError;

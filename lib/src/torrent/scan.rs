@@ -1,15 +1,15 @@
-//! Recording which releases the torrent client already holds.
+//! Recording what the torrent client holds.
 //!
-//! A scan is where the three halves of the question meet. The client lists
-//! what it holds, the searches turn each name into an identity, and the
-//! library table takes the result. The feed page then answers "do I have
-//! this" from one query.
+//! The client lists its torrents and the index takes the whole list, names
+//! and all. The feed page then answers "do I have this" from one query
+//! rather than one client call per request.
 //!
-//! A name no search claims is skipped rather than stored. A client holds
-//! plenty this application never grabbed, and a row with no identity answers
-//! no question the feed page asks.
+//! A name no search claims is indexed with the rest. The engine reads the
+//! names at query time, so a parser edit changes what counts as owned with
+//! no rescan, and a name that reads as nothing today may read as something
+//! after the next edit.
 //!
-//! The library and the status of the scan that wrote it both persist, so a
+//! The index and the status of the scan that wrote it both persist, so a
 //! restart reads what the last process found rather than listing the whole
 //! client again at once.
 
@@ -23,9 +23,8 @@ use tracing::{info, instrument, warn};
 use crate::clock::{self, Clock};
 use crate::engine::Engine;
 use crate::search::registry::Searches;
-use crate::store::library;
-use crate::store::library::Owned;
-use crate::torrent::{Torrent, TorrentClient};
+use crate::torrent::TorrentClient;
+use crate::torrent::index;
 
 /// Replaces the recorded scan, or writes the first one.
 ///
@@ -44,7 +43,7 @@ const RECORD: &str = "
 /// Reads the recorded scan, which is absent until one runs.
 const LAST: &str = "SELECT scanned_at, torrents, matched, error FROM scan_status WHERE id = 1";
 
-/// The result of the last library scan.
+/// The result of the last scan.
 ///
 /// The status persists, so the client page reads it after a restart and the
 /// scan loop knows how old it is rather than listing the whole client at
@@ -104,8 +103,8 @@ impl ScanState {
                 outcome: match error {
                     Some(error) => Err(error),
                     None => Ok(ScanReport {
-                        torrents: index(torrents)?,
-                        matched: index(matched)?,
+                        torrents: narrow(torrents)?,
+                        matched: narrow(matched)?,
                     }),
                 },
             }),
@@ -129,19 +128,19 @@ impl ScanState {
     }
 }
 
-/// Rebuilds the library from what the client holds, and records the outcome.
+/// Rebuilds the index from what the client holds, and records the outcome.
 ///
 /// Returns the status it stored, so a handler that asked for the scan renders
 /// the result without reading the state back.
 ///
-/// A client that fails to answer leaves the previous library alone. Stale
-/// rows are the better wrong answer, because an empty library marks every
-/// release as missing and invites grabbing the lot a second time.
+/// A client that fails to answer leaves the previous index alone. Stale rows
+/// are the better wrong answer, because an empty index marks every release as
+/// missing and invites grabbing the lot a second time.
 ///
 /// The clock is read once, at the start. The same instant stamps the written
 /// rows and the recorded status, so a page never shows the two disagreeing by
 /// the length of a scan.
-#[instrument(name = "scan_library", skip_all)]
+#[instrument(name = "scan_torrents", skip_all)]
 pub(crate) async fn scan(
     state: &ScanState,
     pool: &SqlitePool,
@@ -153,17 +152,15 @@ pub(crate) async fn scan(
 
     let outcome = match client.list().await {
         Ok(torrents) => {
-            let owned = torrents
-                .iter()
-                .filter_map(|torrent| identify(torrent, engine))
-                .collect::<Vec<_>>();
-
             let report = ScanReport {
                 torrents: torrents.len(),
-                matched: owned.len(),
+                matched: torrents
+                    .iter()
+                    .filter(|torrent| engine.parse(&torrent.name).is_some())
+                    .count(),
             };
 
-            library::replace(pool, at, &owned)
+            index::replace(pool, at, &torrents)
                 .await
                 .map(|()| report)
                 .map_err(|error| error.to_string())
@@ -186,7 +183,7 @@ pub(crate) async fn scan(
     *state.lock() = Some(status.clone());
 
     // Memory first, as the feed check does. A loop that reads an unscanned
-    // library scans again at once, so a refused write costs less than a state
+    // index scans again at once, so a refused write costs less than a state
     // that forgot the scan it just ran. The scan itself succeeded either way,
     // and only the next restart reads the gap.
     if let Err(error) = record(pool, &status).await {
@@ -223,7 +220,7 @@ async fn record(pool: &SqlitePool, status: &ScanStatus) -> Result<(), sqlx::Erro
 
 /// Narrows a stored count to the machine's index type, treating a missing
 /// one as zero.
-fn index(count: Option<i64>) -> Result<usize, sqlx::Error> {
+fn narrow(count: Option<i64>) -> Result<usize, sqlx::Error> {
     usize::try_from(count.unwrap_or(0)).map_err(sqlx::Error::decode)
 }
 
@@ -232,15 +229,15 @@ fn count(value: usize) -> Result<i64, sqlx::Error> {
     i64::try_from(value).map_err(|error| sqlx::Error::Encode(Box::new(error)))
 }
 
-/// Scans the library when the last scan is older than `interval`, and returns
+/// Scans the client when the last scan is older than `interval`, and returns
 /// how long to wait before the next one falls due.
 ///
-/// A library never scanned is due at once. The status persists, so this reads
+/// A client never scanned is due at once. The status persists, so this reads
 /// what the last process already did, which is what makes a restart cheap.
 ///
 /// The wait is measured after the pass, over the status it just wrote, so a
 /// pass that took minutes shortens the wait by what it spent. It never drops
-/// below [`clock::MIN_PAUSE`]. A status that fails to store leaves the library
+/// below [`clock::MIN_PAUSE`]. A status that fails to store leaves the scan
 /// due forever, and the floor is what keeps that from spinning the loop.
 pub(crate) async fn scan_due(
     state: &ScanState,
@@ -267,7 +264,7 @@ pub(crate) async fn scan_due(
         .max(clock::MIN_PAUSE)
 }
 
-/// Scans the library forever, waiting until the next scan falls due.
+/// Scans the client forever, waiting until the next scan falls due.
 ///
 /// The first turn skips a scan the last process ran within `interval`, and
 /// the wait ends when that scan reaches it. A restart therefore neither lists
@@ -304,19 +301,6 @@ pub(crate) async fn poll(
     }
 }
 
-/// Returns what the library stores for `torrent`, or nothing when no search
-/// claims its name.
-fn identify(torrent: &Torrent, engine: &Engine) -> Option<Owned> {
-    let parsed = engine.parse(&torrent.name)?;
-
-    Some(Owned {
-        identity: parsed.identity.to_string(),
-        parser: parsed.parser,
-        torrent_id: torrent.id.clone(),
-        name: torrent.name.clone(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -328,8 +312,8 @@ mod tests {
     use crate::clock::Clock;
     use crate::search::fixture::ENGINE;
     use crate::services::Services;
-    use crate::store::library;
     use crate::torrent::TorrentError;
+    use crate::torrent::index;
 
     const HOLLOW: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -381,9 +365,9 @@ mod tests {
             "the returned status is the recorded one"
         );
         assert_eq!(
-            library::identities(&services.db).await.expect("identities"),
+            index::identities(&ENGINE, &index::all(&services.db).await.expect("torrents")),
             set(&[HOLLOW_KEY, FILM_KEY]),
-            "each name reaches the library under its own identity"
+            "each name reaches the index under its own identity"
         );
     }
 
@@ -484,7 +468,7 @@ mod tests {
         assert_eq!(
             state.last().map(|last| last.at),
             Some(fakes.clock.now()),
-            "a library never scanned is due at once"
+            "a client never scanned is due at once"
         );
     }
 
@@ -504,14 +488,14 @@ mod tests {
         .await;
 
         assert_eq!(
-            library::identities(&services.db).await.expect("identities"),
+            index::identities(&ENGINE, &index::all(&services.db).await.expect("torrents")),
             set(&[PACK_KEY]),
             "the empty episode part is what makes the stored key a span"
         );
     }
 
     #[sqlx::test]
-    async fn scan_skips_names_no_search_claims(pool: SqlitePool) {
+    async fn scan_indexes_a_name_no_search_claims(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW);
@@ -534,15 +518,26 @@ mod tests {
             }),
             "an unclaimed torrent counts against the total, not the match"
         );
+
+        let indexed = index::all(&services.db).await.expect("torrents");
+
         assert_eq!(
-            library::identities(&services.db).await.expect("identities"),
+            indexed
+                .iter()
+                .map(|torrent| torrent.name.as_str())
+                .collect::<HashSet<_>>(),
+            HashSet::from([HOLLOW, UNCLAIMED]),
+            "the index holds every name the client reported"
+        );
+        assert_eq!(
+            index::identities(&ENGINE, &indexed),
             set(&[HOLLOW_KEY]),
-            "an unclaimed name stores no row"
+            "and an unclaimed name contributes no identity"
         );
     }
 
     #[sqlx::test]
-    async fn scan_records_client_error_and_keeps_library(pool: SqlitePool) {
+    async fn scan_records_client_error_and_keeps_the_index(pool: SqlitePool) {
         let (services, fakes) = Services::fake(pool);
         let state = ScanState::load(&services.db).await.expect("load");
         fakes.torrents.seed(HOLLOW);
@@ -571,7 +566,7 @@ mod tests {
             Err("the torrent client rejected the credentials".to_owned())
         );
         assert_eq!(
-            library::identities(&services.db).await.expect("identities"),
+            index::identities(&ENGINE, &index::all(&services.db).await.expect("torrents")),
             set(&[HOLLOW_KEY]),
             "a client that cannot answer leaves the last snapshot standing"
         );
@@ -612,9 +607,9 @@ mod tests {
             })
         );
         assert_eq!(
-            library::identities(&services.db).await.expect("identities"),
+            index::identities(&ENGINE, &index::all(&services.db).await.expect("torrents")),
             set(&[NEXT_KEY]),
-            "a torrent gone from the client drops out of the library"
+            "a torrent gone from the client drops out of the index"
         );
     }
 }

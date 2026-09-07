@@ -41,7 +41,8 @@ use crate::{
     },
     services::Services,
     store::grabs::{self, Grab},
-    store::{self, StoredItem, library},
+    store::{self, StoredItem},
+    torrent::index,
     torrent::scan::{self, ScanState},
 };
 
@@ -397,8 +398,8 @@ async fn feed_listing(
         store::items(&services.db, chosen.as_ref().map(|entry| &entry.url)).await?
     };
 
-    let owned = library::identities(&services.db).await?;
     let engine = app_context::<Arc<Searches>>(cx).engine();
+    let owned = index::identities(&engine, &index::all(&services.db).await?);
     let enabled = engine
         .searches()
         .filter(|saved| saved.enabled)

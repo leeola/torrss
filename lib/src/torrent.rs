@@ -22,6 +22,7 @@ use serde::Deserialize;
 use snafu::Snafu;
 use url::Url;
 
+pub(crate) mod index;
 mod qbit;
 pub(crate) mod scan;
 pub mod store;
