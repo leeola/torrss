@@ -50,6 +50,11 @@ async fn site_header(cx: &Cx) -> Result {
                         current: path.starts_with("/searches"),
                     )
                     nav_link(
+                        href: "/preferences",
+                        label: "Preferences",
+                        current: path.starts_with("/preferences"),
+                    )
+                    nav_link(
                         href: "/torrents",
                         label: "Torrents",
                         current: path == "/torrents",

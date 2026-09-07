@@ -14,6 +14,7 @@ mod import;
 mod listing;
 mod matches;
 mod parsers;
+mod preferences;
 mod query;
 mod router;
 mod serve;
