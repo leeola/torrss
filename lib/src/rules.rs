@@ -359,9 +359,7 @@ impl Engine {
     pub(crate) fn claimants(&self, title: &str) -> Vec<String> {
         self.searches
             .iter()
-            .filter(|search| {
-                claims(search, &self.compiled_parsers[search.parser], title).is_some()
-            })
+            .filter(|search| claims(search, &self.compiled_parsers[search.parser], title).is_some())
             .map(|search| search.id.clone())
             .collect()
     }

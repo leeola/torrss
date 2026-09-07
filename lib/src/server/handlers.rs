@@ -29,7 +29,7 @@ use crate::{
     search,
     search::form::{EditorRows, SearchForm},
     search::import,
-    search::registry::{Searches, SaveError},
+    search::registry::{SaveError, Searches},
     search::{Condition, Diff, Search},
     server::{
         components::{self, Claimant, Grabbed, ItemDetails},
@@ -939,10 +939,9 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                     id: entry.parsed.search.clone(),
                     // A search removed since the grab shows by its id, as a
                     // grabbed row does. The record is of what ran.
-                    name: engine.search(&entry.parsed.search).map_or_else(
-                        || entry.parsed.search.clone(),
-                        |search| search.name.clone(),
-                    ),
+                    name: engine
+                        .search(&entry.parsed.search)
+                        .map_or_else(|| entry.parsed.search.clone(), |search| search.name.clone()),
                 };
 
                 let values = listing::parsed_values(&engine, &entry.parsed);
@@ -1343,9 +1342,7 @@ fn stored_draft(search: &Search) -> SearchForm {
 async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) -> Result {
     let name = draft.name.clone();
 
-    let search_id = search
-        .map(|search| search.id.clone())
-        .unwrap_or_default();
+    let search_id = search.map(|search| search.id.clone()).unwrap_or_default();
 
     let stored_id = search_id.clone();
     let enabled_now = search.is_some_and(|search| search.enabled);

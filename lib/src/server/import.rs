@@ -579,13 +579,14 @@ async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
             let engine = searches.engine();
             let name = named(&engine, &suggestion.parser, &conditions);
 
-            let id = parser_form::unique_slug(&name, |id| engine.search(id).is_some())
-                .ok_or_else(|| {
+            let id = parser_form::unique_slug(&name, |id| engine.search(id).is_some()).ok_or_else(
+                || {
                     bad_request(format!(
                         "{} has no letters or digits to build an id from",
                         suggestion.show
                     ))
-                })?;
+                },
+            )?;
 
             (id, name)
         };

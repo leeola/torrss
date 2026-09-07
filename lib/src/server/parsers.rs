@@ -31,7 +31,7 @@ use crate::feed::registry::FeedRegistry;
 use crate::parser::form::{self as parser_form, ParserForm, ParserRows};
 use crate::parser::{PRESETS, Parser, Tint};
 use crate::search::Diff;
-use crate::search::registry::{Searches, SaveError};
+use crate::search::registry::{SaveError, Searches};
 use crate::server::handlers::compute_matches;
 use crate::server::matches::{Edits, Rules};
 use crate::server::verdict;

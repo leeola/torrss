@@ -299,7 +299,7 @@ fn with_shipped(stored: Vec<Parser>) -> Vec<Parser> {
 mod tests {
     use sqlx::SqlitePool;
 
-    use super::{Searches, SaveError, shipped};
+    use super::{SaveError, Searches, shipped};
     use crate::parser::store::ParserStore;
     use crate::parser::{Field, FieldKind, Parser};
     use crate::search::Search;
