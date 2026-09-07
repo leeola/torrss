@@ -1309,21 +1309,28 @@ struct NewSearchView {
     /// [`StoredItem::id`] of the item whose title seeds the draft, or absent
     /// for an empty one.
     from: Option<String>,
+
+    /// A release name that seeds the draft directly, or absent for an empty
+    /// one.
+    ///
+    /// A torrent row links with this rather than with [`Self::from`],
+    /// because a torrent is no stored item and carries no id the store
+    /// knows.
+    title: Option<String>,
 }
 
 /// Opens the editor on a search nothing has stored yet.
 ///
 /// A `from` naming a stored item reads its title into a parser, conditions,
 /// and a test, so a reader who met an unmatched title in the feed starts
-/// from what it already says. Anything else opens the editor empty.
+/// from what it already says. A `title` seeds the same way from a name the
+/// store holds no row for. Anything else opens the editor empty.
 #[page("/searches/new")]
 async fn new_search(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
+    let view = query_params::<NewSearchView>(cx)?;
 
-    // An id naming no row, or naming nothing at all, opens the editor empty
-    // rather than reporting itself. A link the reader followed to a row the
-    // store dropped still gets them an editor.
-    let seeded = match query_params::<NewSearchView>(cx)?.from.as_deref() {
+    let seeded = match view.from.as_deref() {
         Some(from) => match from.parse() {
             Ok(id) => store::item(&app_context::<Services>(cx).db, id).await?,
             Err(_) => None,
@@ -1331,9 +1338,14 @@ async fn new_search(cx: &Cx) -> Result {
         None => None,
     };
 
-    let draft = match &seeded {
-        Some(stored) => import::seed(&engine, &stored.item.title),
-        None => SearchForm {
+    // A stored item wins, and its title is the one the reader picked. An id
+    // naming no row falls through to `title` and then to an empty editor
+    // rather than reporting itself, so a link to a row the store dropped
+    // still gets the reader somewhere.
+    let draft = match (&seeded, view.title.as_deref().filter(|t| !t.is_empty())) {
+        (Some(stored), _) => import::seed(&engine, &stored.item.title),
+        (None, Some(title)) => import::seed(&engine, title),
+        (None, None) => SearchForm {
             name: String::new(),
             parser: String::new(),
             conditions: Vec::new(),
