@@ -2,8 +2,9 @@
 //!
 //! A client full of one subject is the reader saying they follow it. This
 //! reads that statement into a ruleset the reader writes by hand otherwise.
-//! The ruleset names the subject, and every other field those torrents agree
-//! on.
+//! The ruleset names the subject, and every other field those torrents read.
+//! A field they read several ways carries every value they read, so the
+//! ruleset claims what the client holds rather than anything at all.
 //!
 //! The grouping is by the parser's own subject rather than by a field called
 //! `show`, because a parser names its subject as it likes. Only an episodic
@@ -13,6 +14,7 @@
 //! Nothing here grabs a torrent. A ruleset puts titles on the wanted list,
 //! and the client already holds these.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Utc};
@@ -29,6 +31,14 @@ use crate::torrent::{Torrent, TorrentId};
 /// either claims nothing the feed announces. A condition on the episode name
 /// claims one episode, where a suggestion is about a whole show.
 const SKIPPED_FIELDS: &[&str] = &["extension", "checksum", "episodeName"];
+
+/// What one torrent's name read, each field's raw capture beside its
+/// normalized form.
+///
+/// A condition carries the raw capture, because that is the spelling the
+/// reader sees. The normalized form is what two readings compare on, so two
+/// torrents that spell one value differently name it once.
+type Captures = BTreeMap<String, (String, String)>;
 
 /// One ruleset an import offers to create.
 ///
@@ -63,7 +73,7 @@ pub(crate) struct Suggestion {
     pub(crate) newest: Option<DateTime<Utc>>,
 
     /// What the suggested ruleset compares, the subject first and the fields
-    /// the torrents agree on after it, in the parser's own order.
+    /// the torrents read after it, in the parser's own order.
     pub(crate) conditions: Vec<Condition>,
 
     /// The ruleset that already names this subject, when one does.
@@ -82,7 +92,7 @@ pub(crate) struct Suggestion {
 ///
 /// An excluded torrent stays listed so the reader takes it back, and it
 /// feeds no condition while it is out. That is how a name the reader
-/// rejects stops holding an agreement back.
+/// rejects keeps its values out of the ruleset.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Member {
     pub(crate) torrent: Torrent,
@@ -110,47 +120,63 @@ struct Group {
     /// excluded ones among them.
     members: Vec<Member>,
 
-    /// One entry per included torrent, each field's raw capture beside its
-    /// normalized form.
-    readings: Vec<BTreeMap<String, (String, String)>>,
+    /// One entry per included torrent, when the client added it beside what
+    /// its name read.
+    readings: Vec<(Option<DateTime<Utc>>, Captures)>,
 
     /// When the client added the newest member, excluded ones among them,
     /// so a review moves no suggestion in the list.
     newest: Option<DateTime<Utc>>,
-
-    /// When the client added the torrent that seeded `newest_values`.
-    ///
-    /// It runs over included torrents alone, where `newest` runs over every
-    /// member, because an excluded torrent feeds no condition.
-    values_at: Option<DateTime<Utc>>,
-
-    /// What the newest included torrent read, which is where an agreed
-    /// condition takes its value from.
-    newest_values: BTreeMap<String, (String, String)>,
 }
 
 impl Group {
-    /// Returns the newest torrent's raw capture for `field`, when every
-    /// torrent in the group read the field and read the same value.
+    /// Returns every value the group read for `field`, newest first.
     ///
-    /// The comparison is on the normalized readings, so two torrents that
-    /// spell one value differently still agree. The raw capture is what the
-    /// condition carries, because that is the spelling the reader sees.
-    fn agreed(&self, field: &str) -> Option<String> {
-        let (raw, normalized) = self.newest_values.get(field)?;
+    /// Two torrents that spell one value differently name it once. The
+    /// comparison is on the normalized readings, and the spelling is the
+    /// newest torrent's raw capture, because that is what the reader sees.
+    /// A tie on the time keeps the spelling of the torrent the client
+    /// listed first.
+    ///
+    /// A field one torrent of the group did not read gives nothing. A
+    /// condition on a list of values fails on a name that carries no value,
+    /// and the client holds such a name.
+    ///
+    /// A group that includes no torrent gives nothing too, because it read
+    /// no value at all.
+    fn values(&self, field: &str) -> Option<Vec<String>> {
+        if self.readings.is_empty() {
+            return None;
+        }
 
-        self.readings
-            .iter()
-            .all(|read| read.get(field).is_some_and(|(_, read)| read == normalized))
-            .then(|| raw.clone())
+        let mut values: Vec<(Option<DateTime<Utc>>, &str, &str)> = Vec::new();
+
+        for (added_at, read) in &self.readings {
+            let (raw, normalized) = read.get(field)?;
+
+            match values.iter_mut().find(|(_, seen, _)| seen == normalized) {
+                Some(value) if *added_at > value.0 => *value = (*added_at, normalized, raw),
+                Some(_) => {}
+                None => values.push((*added_at, normalized, raw)),
+            }
+        }
+
+        values.sort_by_key(|value| Reverse(value.0));
+
+        Some(
+            values
+                .into_iter()
+                .map(|(_, _, raw)| raw.to_owned())
+                .collect(),
+        )
     }
 }
 
 /// Returns one suggestion per subject the client holds.
 ///
 /// A torrent named in `excluded` stays listed among the suggestion's
-/// members and feeds no condition, so a name the reader rejects stops
-/// holding an agreement back. A group whose every torrent is excluded still
+/// members and feeds no condition, so a name the reader rejects keeps its
+/// values out of the ruleset. A group whose every torrent is excluded still
 /// suggests, with the subject condition alone, and it keeps its place in the
 /// list.
 ///
@@ -218,16 +244,7 @@ pub(crate) fn plan(
             continue;
         }
 
-        // A torrent the client named no time for counts as the oldest for
-        // `values_at` too. The first included torrent seeds the values even
-        // so, because a group of nothing but those still suggests
-        // conditions.
-        if group.readings.is_empty() || torrent.added_at > group.values_at {
-            group.values_at = torrent.added_at;
-            group.newest_values = read.clone();
-        }
-
-        group.readings.push(read);
+        group.readings.push((torrent.added_at, read));
     }
 
     let mut suggestions = groups
@@ -274,12 +291,12 @@ pub(crate) fn plan(
     suggestions
 }
 
-/// What one reading captured, each field's raw value beside its normalized
-/// form.
+/// Reads one [`Reading`] into the captures a condition takes its value
+/// from.
 ///
 /// A capture no field of `parser` carries is dropped, which the composed
 /// regex never produces.
-fn reading_of(parser: &Parser, reading: &Reading) -> BTreeMap<String, (String, String)> {
+fn reading_of(parser: &Parser, reading: &Reading) -> Captures {
     reading
         .values
         .iter()
@@ -293,8 +310,11 @@ fn reading_of(parser: &Parser, reading: &Reading) -> BTreeMap<String, (String, S
 
 /// What a suggested ruleset compares.
 ///
-/// The subject leads, and every field the group agrees on follows it in the
-/// parser's own order.
+/// The subject leads, and every field each included torrent read follows it
+/// in the parser's own order. A field they all read one way becomes an
+/// `equals`. A field they read several ways becomes a `one of` naming every
+/// value, the newest first. The list is what the client holds, so the
+/// ruleset claims that rather than any value at all.
 ///
 /// An identity field beyond the subject names one release rather than the
 /// set the reader wants, so only the rest take part.
@@ -311,10 +331,16 @@ fn conditions(parser: &Parser, subject: &Field, show: &str, group: &Group) -> Ve
             .iter()
             .filter(|field| !field.identity && !SKIPPED_FIELDS.contains(&field.name.as_str()))
             .filter_map(|field| {
+                let values = group.values(&field.name)?;
+
                 Some(Condition {
                     field: field.name.clone(),
-                    op: Op::Equals,
-                    value: group.agreed(&field.name)?,
+                    op: if values.len() == 1 {
+                        Op::Equals
+                    } else {
+                        Op::OneOf
+                    },
+                    value: values.join(", "),
                 })
             }),
     );
@@ -324,9 +350,9 @@ fn conditions(parser: &Parser, subject: &Field, show: &str, group: &Group) -> Ve
 
 /// Reads `title` into the form a ruleset editor starts from.
 ///
-/// A feed title is a group of one, so every field it read agrees and each
-/// becomes a condition. The reader removes the ones they do not want, which
-/// is quicker than typing the ones they do.
+/// A feed title is a group of one, so every field it read names one value
+/// and each becomes a condition. The reader removes the ones they do not
+/// want, which is quicker than typing the ones they do.
 ///
 /// Any parser serves here, unlike an import, because a reader who wants a
 /// film says so from its title. A title no parser reads keeps its place as
@@ -356,8 +382,7 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> RulesetForm {
         .map_or_else(String::new, |(raw, _)| raw.clone());
 
     let group = Group {
-        newest_values: read.clone(),
-        readings: vec![read.clone()],
+        readings: vec![(None, read.clone())],
         ..Group::default()
     };
 
@@ -472,8 +497,16 @@ mod tests {
         }
     }
 
+    fn one_of(field: &str, value: &str) -> Condition {
+        Condition {
+            field: field.to_owned(),
+            op: Op::OneOf,
+            value: value.to_owned(),
+        }
+    }
+
     #[test]
-    fn unanimous_fields_become_conditions() {
+    fn a_field_read_one_way_equals_and_read_two_ways_lists_both() {
         let planned = planned(
             &ENGINE,
             &[
@@ -502,8 +535,9 @@ mod tests {
                 equals("source", "Broadcast"),
                 equals("audio", "AAC.Stereo"),
                 equals("codec", "H.264"),
+                one_of("publisher", "OtherGroup, PublicWave"),
             ],
-            "the two names disagree on the publisher alone, and no condition names it"
+            "the two names read one publisher each, and the condition lists both"
         );
     }
 
@@ -621,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn an_excluded_torrent_stays_listed_and_leaves_the_agreement() {
+    fn an_excluded_torrent_stays_listed_and_feeds_no_condition() {
         let torrents = [
             torrent(
                 "Coastal.Ecology.S01E01.720p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
@@ -640,8 +674,11 @@ mod tests {
         };
 
         assert!(
-            !whole.conditions.contains(&equals("resolution", "1080p")),
-            "the two disagree on the resolution, so no condition names it"
+            whole
+                .conditions
+                .contains(&one_of("resolution", "1080p, 720p"))
+                && !whole.conditions.contains(&equals("resolution", "1080p")),
+            "both resolutions are listed, the newest first"
         );
 
         let excluded = HashSet::from([torrents[0].id.clone()]);
@@ -655,7 +692,7 @@ mod tests {
             suggestion
                 .conditions
                 .contains(&equals("resolution", "1080p")),
-            "the one that disagreed is out, so the rest agree: {:?}",
+            "the one that read 720p is out, so the list names 1080p alone: {:?}",
             suggestion.conditions
         );
         assert_eq!(
@@ -666,6 +703,40 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(&*torrents[0].name, false), (&*torrents[1].name, true),],
             "an excluded torrent stays listed, in the order the client gave"
+        );
+    }
+
+    #[test]
+    fn a_field_one_torrent_did_not_read_names_no_condition() {
+        let planned = planned(
+            &ENGINE,
+            &[
+                torrent(
+                    "Coastal.Ecology.S01E01.1080p.Broadcast.AAC.Stereo-PublicWave.mkv",
+                    4,
+                ),
+                torrent(
+                    "Coastal.Ecology.S01E02.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                    6,
+                ),
+            ],
+        );
+
+        let [suggestion] = planned.as_slice() else {
+            panic!("one show, one suggestion, found {}", planned.len());
+        };
+
+        assert_eq!(suggestion.members.len(), 2, "one show, both torrents");
+        assert_eq!(
+            suggestion.conditions,
+            [
+                equals("show", "Coastal Ecology"),
+                equals("resolution", "1080p"),
+                equals("source", "Broadcast"),
+                equals("audio", "AAC.Stereo"),
+                equals("publisher", "PublicWave"),
+            ],
+            "the first name carries no codec, and a list naming H.264 would reject it"
         );
     }
 
