@@ -5,9 +5,10 @@
 //! answers which part that is, and names the reason for every title it turns
 //! away, so a page reports what it hid rather than dropping rows in silence.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::engine::{Engine, Parsed};
+use crate::preference::Preferences;
 
 /// Where one title stands against the searches and the library.
 #[derive(Debug, PartialEq, Eq)]
@@ -21,6 +22,13 @@ pub(super) enum Standing {
     /// The matched search is switched off.
     Disabled(Parsed),
 
+    /// A better copy of this identity is wanted, so this one is not.
+    ///
+    /// The reader stated which values they prefer, and another release of
+    /// the same episode reads better ones. Both are wanted by the same
+    /// search, so only the ranking separates them.
+    Outranked(Parsed),
+
     /// No search claims the title, so nothing is known about it.
     Unmatched,
 }
@@ -30,7 +38,10 @@ impl Standing {
     /// claimed it.
     pub(super) fn parsed(&self) -> Option<&Parsed> {
         match self {
-            Self::Wanted(parsed) | Self::Owned(parsed) | Self::Disabled(parsed) => Some(parsed),
+            Self::Wanted(parsed)
+            | Self::Owned(parsed)
+            | Self::Disabled(parsed)
+            | Self::Outranked(parsed) => Some(parsed),
             Self::Unmatched => None,
         }
     }
@@ -48,6 +59,7 @@ impl Standing {
             Self::Wanted(_) => None,
             Self::Owned(_) => Some("owned"),
             Self::Disabled(_) => Some("paused"),
+            Self::Outranked(_) => Some("outranked"),
             Self::Unmatched => Some("unmatched"),
         }
     }
@@ -134,11 +146,59 @@ pub(super) fn standing(
     Standing::Wanted(parsed)
 }
 
+/// Demotes every wanted release a better copy of its identity outranks.
+///
+/// A tracker announces one episode in several qualities, and one search
+/// wants them all. The reader stated which values they prefer, so only the
+/// best copy stays wanted and the rest say why they are hidden.
+///
+/// A release is outranked only by a strictly better one. Two copies the
+/// lists rank alike both stay wanted, because nothing the reader stated
+/// separates them.
+///
+/// Only a wanted release takes part. An owned copy is hidden for a better
+/// reason already, and ranking a paused or unmatched row answers a question
+/// the reader never asked.
+pub(super) fn demote_outranked(
+    engine: &Engine,
+    preferences: &Preferences,
+    standings: &mut [Standing],
+) {
+    // Keyed in order, so one listing demotes the same rows every time.
+    let mut ranked: BTreeMap<String, Vec<(usize, Vec<usize>)>> = BTreeMap::new();
+
+    for (index, standing) in standings.iter().enumerate() {
+        let Standing::Wanted(parsed) = standing else {
+            continue;
+        };
+
+        ranked
+            .entry(parsed.identity.to_string())
+            .or_default()
+            .push((index, preferences.rank(engine, parsed)));
+    }
+
+    for group in ranked.values() {
+        let Some(best) = group.iter().map(|(_, rank)| rank).min() else {
+            continue;
+        };
+
+        for (index, _) in group.iter().filter(|(_, rank)| rank > best) {
+            if let Standing::Wanted(parsed) = &standings[*index] {
+                let parsed = parsed.clone();
+
+                standings[*index] = Standing::Outranked(parsed);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
-    use super::{Standing, parsed_values, standing};
+    use super::{Standing, demote_outranked, parsed_values, standing};
+    use crate::preference::Preferences;
     use crate::search::fixture::ENGINE;
 
     const HOLLOW_1080: &str =
@@ -262,6 +322,7 @@ mod tests {
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
             Standing::Disabled(claimed.clone()),
+            Standing::Outranked(claimed.clone()),
         ] {
             assert_eq!(standing.parsed(), Some(&claimed));
         }
@@ -325,7 +386,8 @@ mod tests {
         let labels: Vec<(bool, Option<&str>)> = [
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
-            Standing::Disabled(claimed),
+            Standing::Disabled(claimed.clone()),
+            Standing::Outranked(claimed),
             Standing::Unmatched,
         ]
         .iter()
@@ -338,8 +400,101 @@ mod tests {
                 (true, None),
                 (false, Some("owned")),
                 (false, Some("paused")),
+                (false, Some("outranked")),
                 (false, Some("unmatched")),
             ],
+        );
+    }
+
+    /// Two invented copies of one film, which the film search claims
+    /// whatever their resolution because it writes no condition.
+    const FILM_UHD: &str = "Coastal.Drift.2024.2160p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
+    const FILM_HD: &str = "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
+
+    /// A different film, so a different identity.
+    const OTHER_FILM: &str = "Tidal.Register.2019.1080p.Archive.AAC.Stereo.H.264-MeridianPress.mkv";
+
+    fn prefers(field: &str, values: &[&str]) -> Preferences {
+        Preferences::new(BTreeMap::from([(
+            field.to_owned(),
+            values.iter().map(|one| (*one).to_owned()).collect(),
+        )]))
+    }
+
+    fn outranked(title: &str) -> Standing {
+        Standing::Outranked(ENGINE.parse(title).expect("matched"))
+    }
+
+    fn demoted(preferences: &Preferences, titles: &[&str]) -> Vec<Standing> {
+        let mut standings: Vec<Standing> = titles.iter().map(|title| parsed(title)).collect();
+
+        demote_outranked(&ENGINE, preferences, &mut standings);
+
+        standings
+    }
+
+    #[test]
+    fn a_better_copy_of_one_identity_demotes_the_worse() {
+        assert_eq!(
+            demoted(
+                &prefers("resolution", &["2160p", "1080p"]),
+                &[FILM_HD, FILM_UHD]
+            ),
+            vec![outranked(FILM_HD), parsed(FILM_UHD)],
+            "one film in two resolutions, and only the preferred one stays wanted"
+        );
+    }
+
+    #[test]
+    fn two_copies_the_lists_rank_alike_both_stay_wanted() {
+        assert_eq!(
+            demoted(&prefers("resolution", &["4320p"]), &[FILM_HD, FILM_UHD]),
+            vec![parsed(FILM_HD), parsed(FILM_UHD)],
+            "neither resolution is named, so nothing the reader stated separates them"
+        );
+    }
+
+    #[test]
+    fn an_owned_copy_neither_demotes_nor_is_demoted() {
+        let mut standings = vec![
+            Standing::Owned(ENGINE.parse(FILM_UHD).expect("matched")),
+            parsed(FILM_HD),
+        ];
+
+        demote_outranked(
+            &ENGINE,
+            &prefers("resolution", &["2160p", "1080p"]),
+            &mut standings,
+        );
+
+        assert_eq!(
+            standings,
+            vec![
+                Standing::Owned(ENGINE.parse(FILM_UHD).expect("matched")),
+                parsed(FILM_HD),
+            ],
+            "the owned copy is hidden for a better reason and takes no part"
+        );
+    }
+
+    #[test]
+    fn two_identities_never_outrank_each_other() {
+        assert_eq!(
+            demoted(
+                &prefers("resolution", &["2160p", "1080p"]),
+                &[FILM_UHD, OTHER_FILM]
+            ),
+            vec![parsed(FILM_UHD), parsed(OTHER_FILM)],
+            "a better resolution of one film says nothing about another film"
+        );
+    }
+
+    #[test]
+    fn empty_preferences_demote_nothing() {
+        assert_eq!(
+            demoted(&Preferences::default(), &[FILM_HD, FILM_UHD]),
+            vec![parsed(FILM_HD), parsed(FILM_UHD)],
+            "a reader who stated nothing sees every copy"
         );
     }
 }

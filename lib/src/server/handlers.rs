@@ -26,7 +26,7 @@ use crate::{
     grab,
     parser::form as parser_form,
     parser::{Field, Parser, TitleTest},
-    search,
+    preference, search,
     search::form::{EditorRows, SearchForm},
     search::import,
     search::registry::{SaveError, Searches},
@@ -400,15 +400,23 @@ async fn feed_listing(
 
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let owned = index::identities(&engine, &index::all(&services.db).await?);
+    let preferences = preference::store::all(&services.db).await?;
     let enabled = engine
         .searches()
         .filter(|saved| saved.enabled)
         .map(|saved| saved.id.clone())
         .collect();
 
-    let standings = items
+    let mut standings: Vec<Standing> = items
         .iter()
-        .map(|item| listing::standing(&engine, &enabled, &owned, &item.item.title));
+        .map(|item| listing::standing(&engine, &enabled, &owned, &item.item.title))
+        .collect();
+
+    // The demotion runs over every standing, before the search chip narrows
+    // the list. Outranking is about one identity, so which chip is pressed
+    // must not change which copy wins.
+    listing::demote_outranked(&engine, &preferences, &mut standings);
+
     let matching = items.iter().map(|item| engine.matching(&item.item.title));
 
     // The search narrows the rows before they are counted, so the sentence
@@ -433,11 +441,15 @@ async fn feed_listing(
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Disabled(_)))
         .count();
+    let outranked_count = listed
+        .iter()
+        .filter(|(_, standing, _)| matches!(standing, Standing::Outranked(_)))
+        .count();
     let unmatched_count = listed
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Unmatched))
         .count();
-    let hidden_count = owned_count + disabled_count + unmatched_count;
+    let hidden_count = owned_count + disabled_count + outranked_count + unmatched_count;
 
     let wanted = show != "all" && show != "unmatched";
 
@@ -540,6 +552,7 @@ async fn feed_listing(
                 ", hidden: "
                 (owned_count) " owned, "
                 (disabled_count) " paused, "
+                (outranked_count) " outranked, "
                 (unmatched_count) " unmatched"
             }
             "."
