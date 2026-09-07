@@ -998,16 +998,20 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
     let rows = listed
         .iter()
         .map(|entry| {
-            let matched = Matched {
-                id: entry.parsed.search.clone(),
+            let matched = entry.parsed.as_ref().map(|parsed| Matched {
+                id: parsed.search.clone(),
                 // A search removed since the grab shows by its id, as a
                 // grabbed row does. The record is of what ran.
                 name: engine
-                    .search(&entry.parsed.search)
-                    .map_or_else(|| entry.parsed.search.clone(), |search| search.name.clone()),
-            };
+                    .search(&parsed.search)
+                    .map_or_else(|| parsed.search.clone(), |search| search.name.clone()),
+            });
 
-            let values = listing::parsed_values(&engine, &entry.parsed);
+            let values = entry
+                .parsed
+                .as_ref()
+                .map(|parsed| listing::parsed_values(&engine, parsed))
+                .unwrap_or_default();
             let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
 
             (&entry.torrent, matched, values, age)
@@ -1017,13 +1021,13 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
     view! {
         match &rows {
             entries if entries.is_empty() => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                "No torrent in the client matches a search."
+                "No torrent is indexed."
             </p>,
             entries => <ul class="mt-2 flex flex-col gap-2">
                 for (torrent, matched, values, age) in entries {
                     components::torrent_row(
                         torrent: torrent,
-                        search: matched,
+                        search: matched.as_ref(),
                         values: values.as_slice(),
                         ingested: age.as_deref(),
                     )

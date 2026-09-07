@@ -1,12 +1,13 @@
-//! What the client holds that a search claims, and which grab put it there.
+//! What the client holds, and which grab put each torrent there.
 //!
 //! A torrent and a grab meet on the identity their names parse to. The client
 //! keeps the release name and the store records no hash, so that identity is
 //! the one link the two share. It is the same key the wanted list already
 //! sorts titles by.
 //!
-//! A torrent no search claims is left out, as the scan leaves it out of the
-//! library.
+//! A torrent no search matches is listed too, with no parse of its own. A
+//! reader starts a search from such a name, so hiding it hides the rows
+//! most worth acting on.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -22,7 +23,8 @@ use crate::torrent::Torrent;
 pub(super) struct Held {
     pub(super) torrent: Torrent,
 
-    /// What the matched search made of the name.
+    /// What the matched search made of the name, or nothing when no search
+    /// matches it.
     ///
     /// Its search is the one that claimed the name, rather than the parser
     /// behind it, so the page names the rule the reader wrote.
@@ -30,17 +32,21 @@ pub(super) struct Held {
     /// It carries the whole parse rather than rendered values, because
     /// `Standing` on the home page does the same and the handler resolves the
     /// values at render.
-    pub(super) parsed: Parsed,
+    pub(super) parsed: Option<Parsed>,
 
     /// When the client accepted the grab, or nothing for a torrent it held
     /// before the store recorded any.
     pub(super) grabbed_at: Option<DateTime<Utc>>,
 }
 
-/// Pairs each claimed torrent with the grab that moved it.
+/// Pairs each torrent with the grab that moved it, when one did.
 ///
-/// Every torrent a grab moved leads, then the rest. Each group orders by the
-/// time the client added the torrent, newest first.
+/// Every torrent a grab moved leads, then the rest a search matches, then
+/// the rest. Each group orders by the time the client added the torrent,
+/// newest first.
+///
+/// A name that does not parse has no identity, so no grab can name it and
+/// its time is always absent.
 pub(super) fn held(engine: &Engine, torrents: Vec<Torrent>, accepted: &[Accepted]) -> Vec<Held> {
     let mut grabbed: HashMap<String, DateTime<Utc>> = HashMap::new();
 
@@ -59,24 +65,32 @@ pub(super) fn held(engine: &Engine, torrents: Vec<Torrent>, accepted: &[Accepted
 
     let mut held: Vec<Held> = torrents
         .into_iter()
-        .filter_map(|torrent| {
-            let parsed = engine.parse(&torrent.name)?;
+        .map(|torrent| {
+            let parsed = engine.parse(&torrent.name);
 
-            Some(Held {
+            Held {
                 // Above `parsed`, because the lookup borrows the parse that
                 // the next field moves.
-                grabbed_at: grabbed.get(&parsed.identity.to_string()).copied(),
+                grabbed_at: parsed
+                    .as_ref()
+                    .and_then(|parsed| grabbed.get(&parsed.identity.to_string()).copied()),
                 parsed,
                 torrent,
-            })
+            }
         })
         .collect();
 
     // `false` sorts before `true`, so a grabbed torrent leads whatever its
-    // date. `Reverse(None)` sorts last and the sort is stable, so a torrent
-    // the client gave no added time for trails its own group in the client's
-    // order.
-    held.sort_by_key(|held| (held.grabbed_at.is_none(), Reverse(held.torrent.added_at)));
+    // date and a matched one leads an unmatched one. `Reverse(None)` sorts
+    // last and the sort is stable, so a torrent the client gave no added time
+    // for trails its own group in the client's order.
+    held.sort_by_key(|held| {
+        (
+            held.grabbed_at.is_none(),
+            held.parsed.is_none(),
+            Reverse(held.torrent.added_at),
+        )
+    });
 
     held
 }
@@ -131,9 +145,9 @@ mod tests {
         }
     }
 
-    /// What the engine makes of `name`, which every claimed row carries.
-    fn parsed(name: &str) -> Parsed {
-        ENGINE.parse(name).expect("claimed")
+    /// What the engine makes of `name`, which every matched row carries.
+    fn parsed(name: &str) -> Option<Parsed> {
+        Some(ENGINE.parse(name).expect("matched"))
     }
 
     fn held_of(torrents: Vec<Torrent>, accepted: &[Accepted]) -> Vec<Held> {
@@ -141,11 +155,34 @@ mod tests {
     }
 
     #[test]
-    fn unclaimed_torrent_is_left_out() {
+    fn unmatched_torrent_trails_the_matched() {
         assert_eq!(
-            held_of(vec![torrent("t1", NONSENSE, 1)], &[]),
-            Vec::new(),
-            "no search claims the name, so no rule put it there"
+            held_of(
+                vec![
+                    torrent("t1", NONSENSE, 9),
+                    torrent("t2", HOLLOW_E07, 8),
+                    torrent("t3", HOLLOW_E06, 7),
+                ],
+                &[accepted(HOLLOW_E06, 2)],
+            ),
+            vec![
+                Held {
+                    torrent: torrent("t3", HOLLOW_E06, 7),
+                    parsed: parsed(HOLLOW_E06),
+                    grabbed_at: Some(at(2)),
+                },
+                Held {
+                    torrent: torrent("t2", HOLLOW_E07, 8),
+                    parsed: parsed(HOLLOW_E07),
+                    grabbed_at: None,
+                },
+                Held {
+                    torrent: torrent("t1", NONSENSE, 9),
+                    parsed: None,
+                    grabbed_at: None,
+                },
+            ],
+            "the newest added trails both, because a match outranks the date"
         );
     }
 

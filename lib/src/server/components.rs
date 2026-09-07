@@ -815,7 +815,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
     }
 }
 
-/// One torrent the client holds that a search claims.
+/// One torrent the client holds.
 ///
 /// The ingest age arrives rendered, because the row has no clock. That matches
 /// [`ItemDetails::age`], which is rendered for the same reason.
@@ -823,12 +823,16 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
 /// A torrent with no age was in the client before the store recorded any grab,
 /// so the row says so rather than leaving a gap.
 ///
+/// A row with no search is dimmed and badged as unmatched, and offers the name
+/// to the editor instead of a search to open. It reads like a hidden row on
+/// the home page, which is the same kind of row for the same kind of reason.
+///
 /// The row also shows what the search read out of the name, as a release on
 /// the home page does.
 #[component]
 pub(crate) async fn torrent_row(
     torrent: &Torrent,
-    search: &Matched,
+    search: Option<&Matched>,
     values: &[ParsedValue],
     ingested: Option<&str>,
 ) -> Result {
@@ -845,10 +849,18 @@ pub(crate) async fn torrent_row(
     let percent = format::percent(torrent.progress);
 
     view! {
-        <li class="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+        <li class=(class!(
+            "rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3",
+            "opacity-60" if search.is_none(),
+        ))>
             <div class="flex flex-wrap items-center gap-2">
                 <span class="font-mono text-sm break-all">(&torrent.name)</span>
                 <span class=(format!("rounded-full px-2 py-0.5 text-xs {tint}"))>(word)</span>
+                if search.is_none() {
+                    <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                        "unmatched"
+                    </span>
+                }
             </div>
 
             if !values.is_empty() {
@@ -865,12 +877,25 @@ pub(crate) async fn torrent_row(
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                <a
-                    href=(format!("/searches/{}", search.id))
-                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                >
-                    (&search.name)
-                </a>
+                match search {
+                    Some(search) => <a
+                        href=(format!("/searches/{}", search.id))
+                        class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                    >
+                        (&search.name)
+                    </a>,
+                    None => <a
+                        href=(format!(
+                            "/searches/new?{}",
+                            form_urlencoded::Serializer::new(String::new())
+                                .append_pair("title", &torrent.name)
+                                .finish()
+                        ))
+                        class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                    >
+                        "Save as search"
+                    </a>,
+                }
                 <span>(format::size(Some(torrent.size)))</span>
                 if let TorrentState::Error(reason) = &torrent.state {
                     <span>(reason)</span>
