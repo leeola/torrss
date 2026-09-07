@@ -356,7 +356,7 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
     let services = app_context::<Services>(cx);
     let now = services.clock.now();
     // Named `registered` rather than `feeds`, because the `#[page]` attribute
-    // on the `/admin/feeds` page below puts a unit struct named `feeds` in
+    // on the `/feeds` page below puts a unit struct named `feeds` in
     // this scope.
     let registered = registry.entries();
 
@@ -478,7 +478,7 @@ async fn feed_listing(cx: &Cx, filter: String, show: String, kept: String, versi
             if registered.is_empty() {
                 " "
                 <a
-                    href="/admin/feeds"
+                    href="/feeds"
                     class="underline decoration-slate-700 underline-offset-2 hover:text-slate-200"
                 >
                     "Add a feed to get started."
@@ -612,7 +612,7 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
     Ok(registry.entries().len() as f64)
 }
 
-#[page("/admin/searches")]
+#[page("/searches")]
 async fn search_index(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
@@ -627,13 +627,13 @@ async fn search_index(cx: &Cx) -> Result {
             </div>
             <div class="flex flex-wrap items-center gap-2">
                 <a
-                    href="/admin/searches/import"
+                    href="/searches/import"
                     class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
                 >
                     "Import from client"
                 </a>
                 <a
-                    href="/admin/searches/new"
+                    href="/searches/new"
                     class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
                 >
                     "New search"
@@ -658,7 +658,7 @@ async fn search_index(cx: &Cx) -> Result {
     }
 }
 
-#[page("/admin/feeds")]
+#[page("/feeds")]
 async fn feeds() -> Result {
     view! {
         signal version = 0.0;
@@ -769,7 +769,7 @@ async fn feed_list(cx: &Cx, version: f64) -> Result {
 
                         <div class="flex items-center gap-2">
                             components::link_button(
-                                href: format!("/admin/feeds/{}/test", entry.id),
+                                href: format!("/feeds/{}/test", entry.id),
                                 label: "Test",
                             )
                             <button
@@ -788,7 +788,7 @@ async fn feed_list(cx: &Cx, version: f64) -> Result {
     }
 }
 
-#[page("/admin/client")]
+#[page("/torrents")]
 async fn client() -> Result {
     view! {
         signal version = 0.0;
@@ -994,7 +994,7 @@ async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result {
             <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No feed is registered. "
                 <a
-                    href="/admin/feeds"
+                    href="/feeds"
                     class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                 >
                     "Add a feed."
@@ -1110,7 +1110,7 @@ async fn check_feed_now(cx: &Cx, id: String) -> Result<bool> {
 /// succeeded: the tracker is what did not answer.
 ///
 /// An id that names no feed is a 404.
-#[page("/admin/feeds/{feed_id}/test")]
+#[page("/feeds/{feed_id}/test")]
 async fn test_feed(cx: &Cx) -> Result {
     let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
@@ -1125,7 +1125,7 @@ async fn test_feed(cx: &Cx) -> Result {
 
     view! {
         <nav class="text-sm text-slate-500">
-            <a href="/admin/feeds" class="hover:text-slate-300">"Feeds"</a>
+            <a href="/feeds" class="hover:text-slate-300">"Feeds"</a>
             " / "
             <span class="text-slate-300">(&entry.name)</span>
         </nav>
@@ -1258,7 +1258,7 @@ struct NewSearchView {
 /// A `from` naming a stored item reads its title into a parser, conditions,
 /// and a test, so a reader who met an unmatched title in the feed starts
 /// from what it already says. Anything else opens the editor empty.
-#[page("/admin/searches/new")]
+#[page("/searches/new")]
 async fn new_search(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
@@ -1288,7 +1288,7 @@ async fn new_search(cx: &Cx) -> Result {
     }
 }
 
-#[page("/admin/searches/{search_id}")]
+#[page("/searches/{search_id}")]
 async fn search_editor(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let search = engine
@@ -1393,7 +1393,7 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin/searches" class="hover:text-slate-300">"Searches"</a>
+            <a href="/searches" class="hover:text-slate-300">"Searches"</a>
             " / "
             <span class="text-slate-300">
                 $(if title.get().is_empty() { "New".to_owned() } else { title.get() })
@@ -1409,7 +1409,7 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
             // of a stored search carries none. `method` stays either way,
             // because Delete posts through it.
             if search.is_none() {
-                action="/admin/searches"
+                action="/searches"
             }
             // The parser decides which fields the condition and test rows
             // list, so picking one re-renders them. A keystroke moves the
@@ -1561,7 +1561,7 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
                             // rather than saving it.
                             <button
                                 type="submit"
-                                formaction=(format!("/admin/searches/{}/remove", search.id))
+                                formaction=(format!("/searches/{}/remove", search.id))
                                 formnovalidate=(true)
                                 class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
                             >
@@ -1865,7 +1865,7 @@ async fn live_matches(cx: &Cx, search: String, diff: String, draft: String, save
         &items,
     );
 
-    let editor_path = format!("/admin/searches/{search}");
+    let editor_path = format!("/searches/{search}");
 
     view! {
         components::match_section(
@@ -1912,7 +1912,7 @@ pub(super) fn write_failed(error: SaveError) -> Error {
 /// A reader who wrote a working rule meant it to run, and a search that
 /// claims nothing until they find the switch reads as a rule that failed.
 
-#[route(POST "/admin/searches")]
+#[route(POST "/searches")]
 async fn create_search(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     let searches = app_context::<Arc<Searches>>(cx);
     let posted = posted(&form)?;
@@ -1939,7 +1939,7 @@ async fn create_search(cx: &Cx, form: RawForm) -> Result<SeeOther> {
         .await
         .map_err(write_failed)?;
 
-    Ok(see_other(format!("/admin/searches/{id}")))
+    Ok(see_other(format!("/searches/{id}")))
 }
 
 /// Saves an edited search, and reports its name or why it was refused.
@@ -2011,7 +2011,7 @@ fn resolve_name(engine: &Engine, posted: &SearchForm) -> String {
 }
 
 /// Deletes a search, then returns to the index.
-#[route(POST "/admin/searches/{search_id}/remove")]
+#[route(POST "/searches/{search_id}/remove")]
 async fn remove_search(cx: &Cx) -> Result<SeeOther> {
     let removed = app_context::<Arc<Searches>>(cx)
         .remove(path_param::<SearchId>(cx))
@@ -2022,5 +2022,5 @@ async fn remove_search(cx: &Cx) -> Result<SeeOther> {
         return Err(not_found().into());
     }
 
-    Ok(see_other("/admin/searches"))
+    Ok(see_other("/searches"))
 }

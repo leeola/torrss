@@ -43,26 +43,26 @@ async fn site_header(cx: &Cx) -> Result {
                     "torrss"
                 </a>
                 <nav class="flex items-center gap-1 text-sm">
-                    nav_link(href: "/", label: "Feed", current: path == "/")
+                    nav_link(href: "/", label: "Results", current: path == "/")
                     nav_link(
-                        href: "/admin/searches",
+                        href: "/searches",
                         label: "Searches",
-                        current: path.starts_with("/admin/searches"),
+                        current: path.starts_with("/searches"),
                     )
                     nav_link(
-                        href: "/admin/parsers",
-                        label: "Parsers",
-                        current: path.starts_with("/admin/parsers"),
+                        href: "/torrents",
+                        label: "Torrents",
+                        current: path == "/torrents",
                     )
                     nav_link(
-                        href: "/admin/client",
-                        label: "Client",
-                        current: path == "/admin/client",
-                    )
-                    nav_link(
-                        href: "/admin/feeds",
+                        href: "/feeds",
                         label: "Feeds",
-                        current: path.starts_with("/admin/feeds"),
+                        current: path.starts_with("/feeds"),
+                    )
+                    nav_link(
+                        href: "/parsers",
+                        label: "Parsers",
+                        current: path.starts_with("/parsers"),
                     )
                 </nav>
             </div>

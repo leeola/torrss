@@ -41,7 +41,7 @@ use crate::store;
 
 path_param!(parser_id);
 
-#[page("/admin/parsers")]
+#[page("/parsers")]
 async fn parser_index(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
@@ -55,7 +55,7 @@ async fn parser_index(cx: &Cx) -> Result {
                 </p>
             </div>
             <a
-                href="/admin/parsers/new"
+                href="/parsers/new"
                 class="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-white"
             >
                 "New parser"
@@ -76,14 +76,14 @@ async fn parser_index(cx: &Cx) -> Result {
     }
 }
 
-#[page("/admin/parsers/new")]
+#[page("/parsers/new")]
 async fn new_parser() -> Result {
     view! {
         parser_editor(parser: None)
     }
 }
 
-#[page("/admin/parsers/{parser_id}")]
+#[page("/parsers/{parser_id}")]
 async fn parser_editor_page(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let parser = engine
@@ -142,7 +142,7 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin/parsers" class="hover:text-slate-300">"Parsers"</a>
+            <a href="/parsers" class="hover:text-slate-300">"Parsers"</a>
             " / "
             <span class="text-slate-300">
                 if name.is_empty() { "New" } else { (&name) }
@@ -158,7 +158,7 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
             // of a stored parser carries none. `method` stays either way,
             // because Delete posts through it.
             if parser.is_none() {
-                action="/admin/parsers"
+                action="/parsers"
             }
             // A keystroke moves the draft alone, because re-rendering a row
             // under the cursor takes the focus with it. A `raw!` result
@@ -245,7 +245,7 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
                             // rather than saving it.
                             <button
                                 type="submit"
-                                formaction=(format!("/admin/parsers/{}/remove", parser.id))
+                                formaction=(format!("/parsers/{}/remove", parser.id))
                                 formnovalidate=(true)
                                 class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
                             >
@@ -371,7 +371,7 @@ async fn built_in_parser(parser: &Parser) -> Result {
         signal diff = String::new();
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin/parsers" class="hover:text-slate-300">"Parsers"</a>
+            <a href="/parsers" class="hover:text-slate-300">"Parsers"</a>
             " / "
             <span class="text-slate-300">(&parser.name)</span>
         </nav>
@@ -390,7 +390,7 @@ async fn built_in_parser(parser: &Parser) -> Result {
                 </p>
             </div>
 
-            <form method="post" action=(format!("/admin/parsers/{}/copy", parser.id))>
+            <form method="post" action=(format!("/parsers/{}/copy", parser.id))>
                 <button
                     type="submit"
                     class="cursor-pointer rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600 hover:text-slate-100"
@@ -509,7 +509,7 @@ async fn parser_matches(
         &items,
     );
 
-    let editor_path = format!("/admin/parsers/{parser}");
+    let editor_path = format!("/parsers/{parser}");
 
     view! {
         components::match_section(
@@ -526,7 +526,7 @@ async fn parser_matches(
 /// The id comes from the name, counting up past a slug already taken. It
 /// never changes after, so anything that later names the parser survives
 /// every rename.
-#[route(POST "/admin/parsers")]
+#[route(POST "/parsers")]
 async fn create_parser(cx: &Cx, form: RawForm) -> Result<SeeOther> {
     let searches = app_context::<Arc<Searches>>(cx);
     let posted = posted(&form)?;
@@ -549,7 +549,7 @@ async fn create_parser(cx: &Cx, form: RawForm) -> Result<SeeOther> {
         .await
         .map_err(write_failed)?;
 
-    Ok(see_other(format!("/admin/parsers/{id}")))
+    Ok(see_other(format!("/parsers/{id}")))
 }
 
 /// Saves an edited parser, and reports its name or why it was refused.
@@ -598,7 +598,7 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
 /// reaches. It checks nothing about `built_in`, because a stored parser
 /// copies the same way and [`Searches::save_parser`] refuses a write to a
 /// shipped id on its own.
-#[route(POST "/admin/parsers/{parser_id}/copy")]
+#[route(POST "/parsers/{parser_id}/copy")]
 async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
     let searches = app_context::<Arc<Searches>>(cx);
 
@@ -624,11 +624,11 @@ async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
     let id = copy.id.clone();
     searches.save_parser(copy).await.map_err(write_failed)?;
 
-    Ok(see_other(format!("/admin/parsers/{id}")))
+    Ok(see_other(format!("/parsers/{id}")))
 }
 
 /// Deletes a parser, then returns to the index.
-#[route(POST "/admin/parsers/{parser_id}/remove")]
+#[route(POST "/parsers/{parser_id}/remove")]
 async fn remove_parser(cx: &Cx) -> Result<SeeOther> {
     let removed = app_context::<Arc<Searches>>(cx)
         .remove_parser(path_param::<ParserId>(cx))
@@ -639,7 +639,7 @@ async fn remove_parser(cx: &Cx) -> Result<SeeOther> {
         return Err(not_found().into());
     }
 
-    Ok(see_other("/admin/parsers"))
+    Ok(see_other("/parsers"))
 }
 
 /// Reads a posted parser, or answers 400 saying what to change.

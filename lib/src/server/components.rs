@@ -280,7 +280,7 @@ pub(crate) async fn item_row(
                     if details.searches.is_empty() {
                         <span class="text-slate-600">"unmatched"</span>
                         <a
-                            href=(format!("/admin/searches/new?from={}", item.id))
+                            href=(format!("/searches/new?from={}", item.id))
                             class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                         >
                             "Import search"
@@ -288,7 +288,7 @@ pub(crate) async fn item_row(
                     } else {
                         for search in &details.searches {
                             <a
-                                href=(format!("/admin/searches/{}", search.id))
+                                href=(format!("/searches/{}", search.id))
                                 class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                             >
                                 (&search.name)
@@ -749,7 +749,7 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
     view! {
         <li id=(format!("search-{}", search.id)) class="scroll-mt-24">
             <a
-                href=(format!("/admin/searches/{}", search.id))
+                href=(format!("/searches/{}", search.id))
                 class="block rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700"
             >
                 <div class="flex flex-wrap items-center gap-3">
@@ -866,7 +866,7 @@ pub(crate) async fn torrent_row(
 
             <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                 <a
-                    href=(format!("/admin/searches/{}", search.id))
+                    href=(format!("/searches/{}", search.id))
                     class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                 >
                     (&search.name)
@@ -1191,7 +1191,7 @@ pub(crate) async fn parser_card(parser: &Parser) -> Result {
     view! {
         <li id=(format!("parser-{}", parser.id)) class="scroll-mt-24">
             <a
-                href=(format!("/admin/parsers/{}", parser.id))
+                href=(format!("/parsers/{}", parser.id))
                 class="block rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-4 transition-colors hover:border-slate-700"
             >
                 <div class="flex flex-wrap items-center gap-3">

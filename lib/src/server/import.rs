@@ -228,7 +228,7 @@ struct Claimed {
 ///
 /// The heading and the form shell stay put. Everything the review changes
 /// lives in the shard below, so a click re-plans the list in place.
-#[page("/admin/searches/import")]
+#[page("/searches/import")]
 async fn import_preview() -> Result {
     view! {
         signal review = String::new();
@@ -239,7 +239,7 @@ async fn import_preview() -> Result {
         <script>(Unescaped::new_unchecked(IMPORT_ACTIONS))</script>
 
         <nav class="text-sm text-slate-500">
-            <a href="/admin/searches" class="hover:text-slate-300">"Searches"</a>
+            <a href="/searches" class="hover:text-slate-300">"Searches"</a>
             " / "
             <span class="text-slate-300">"Import"</span>
         </nav>
@@ -253,7 +253,7 @@ async fn import_preview() -> Result {
             id="import-form"
             data-rows="true"
             method="post"
-            action="/admin/searches/import"
+            action="/searches/import"
             // A checkbox posts nothing when it is off, so the serialized
             // form is the review, and the shard re-plans from it.
             @change=$(|_e: Event| {
@@ -318,7 +318,7 @@ async fn import_preview() -> Result {
                 >
                     "Import"
                 </button>
-                components::link_button(href: "/admin/searches", label: "Cancel")
+                components::link_button(href: "/searches", label: "Cancel")
             </div>
         </form>
     }
@@ -401,7 +401,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
 
                                 match claimed {
                                     Some(claimed) if claimed.same_parser => <a
-                                        href=(format!("/admin/searches/{}", claimed.id))
+                                        href=(format!("/searches/{}", claimed.id))
                                         class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300"
                                     >
                                         "already a search: " (&claimed.search)
@@ -533,7 +533,7 @@ fn picked(review: Option<&Review>, suggestion: &Suggestion) -> bool {
 /// The posted form is the review, so the created searches carry only the
 /// torrents the reader left checked. Every one is enabled, because a reader
 /// who imported a show asked for its releases.
-#[route(POST "/admin/searches/import")]
+#[route(POST "/searches/import")]
 async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
     let review = {
         let body = str::from_utf8(&body).map_err(|_| bad_request("the form is not valid UTF-8"))?;
@@ -604,7 +604,7 @@ async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
             .map_err(handlers::write_failed)?;
     }
 
-    Ok(see_other("/admin/searches"))
+    Ok(see_other("/searches"))
 }
 
 /// Resolves a collision's ids to the names the badge renders.
