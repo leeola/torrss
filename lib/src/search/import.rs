@@ -16,12 +16,12 @@
 //! and the client already holds these.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use chrono::{DateTime, Utc};
 
 use super::form::SearchForm;
-use super::{Condition, Op};
+use super::{Condition, Op, Search};
 use crate::engine::{Engine, Reading};
 use crate::parser::{Field, FieldKind, Parser, TitleTest};
 use crate::torrent::{Torrent, TorrentId};
@@ -356,9 +356,13 @@ fn conditions(parser: &Parser, subject: &Field, show: &str, group: &Group) -> Ve
 
 /// Reads `title` into the form a search editor starts from.
 ///
-/// A feed title is a group of one, so every field it read names one value
-/// and each becomes a condition. The reader removes the ones they do not
-/// want, which is quicker than typing the ones they do.
+/// The draft carries the subject alone. The preference lists rank the copies
+/// of a release, so a draft that also pins the resolution or the publisher
+/// narrows for no reason.
+///
+/// When a saved search on the same parser names the subject, the draft also
+/// pins each field on which that search rejects the title. Those fields are
+/// what tell the two apart.
 ///
 /// Any parser serves here, unlike an import, because a reader who wants a
 /// film says so from its title. A title no parser reads keeps its place as
@@ -387,12 +391,15 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> SearchForm {
         .get(&subject.name)
         .map_or_else(String::new, |(raw, _)| raw.clone());
 
-    let group = Group {
-        readings: vec![(None, read.clone())],
-        ..Group::default()
-    };
+    let key = subject.kind.normalize(&show);
 
-    let conditions = conditions(parser, subject, &show, &group);
+    let mut conditions = vec![Condition {
+        field: subject.name.clone(),
+        op: Op::Equals,
+        value: show,
+    }];
+
+    conditions.extend(separating(engine, parser, subject, &key, &read));
 
     let expected = conditions
         .iter()
@@ -414,21 +421,67 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> SearchForm {
     }
 }
 
+/// The fields on which a saved search that names the subject rejects what the
+/// title read.
+///
+/// They come in the parser's order, each pinned to the title's own spelling.
+/// A field the title did not read separates nothing, because the saved search
+/// fails on it already.
+fn separating(
+    engine: &Engine,
+    parser: &Parser,
+    subject: &Field,
+    key: &str,
+    read: &Captures,
+) -> Vec<Condition> {
+    let rejected = engine
+        .searches_on(parser)
+        .filter(|search| names(search, &subject.name, key))
+        .flat_map(|search| &search.conditions)
+        .filter_map(|condition| {
+            if condition.field == subject.name {
+                return None;
+            }
+
+            let field = parser
+                .fields
+                .iter()
+                .find(|one| one.name == condition.field)?;
+
+            if field.identity || SKIPPED_FIELDS.contains(&field.name.as_str()) {
+                return None;
+            }
+
+            let (_, normalized) = read.get(&condition.field)?;
+
+            (!condition.holds(field.kind, Some(normalized))).then_some(field.name.as_str())
+        })
+        .collect::<BTreeSet<_>>();
+
+    parser
+        .fields
+        .iter()
+        .filter(|field| rejected.contains(field.name.as_str()))
+        .filter_map(|field| {
+            let (raw, _) = read.get(&field.name)?;
+
+            Some(Condition {
+                field: field.name.clone(),
+                op: Op::Equals,
+                value: raw.clone(),
+            })
+        })
+        .collect()
+}
+
 /// Finds the search that already names `key` under the field `subject`.
 ///
 /// The one on `parser` wins over one on another parser, because that is the
-/// search this suggestion repeats. Both sides normalize before they compare,
-/// so a search that spells the subject differently is still found.
+/// search this suggestion repeats.
 fn collision(engine: &Engine, parser: &str, subject: &str, key: &str) -> Option<Collision> {
     let named = engine
         .searches()
-        .filter(|search| {
-            search.conditions.iter().any(|condition| {
-                condition.field == subject
-                    && condition.op == Op::Equals
-                    && FieldKind::Text.normalize(&condition.value) == key
-            })
-        })
+        .filter(|search| names(search, subject, key))
         .collect::<Vec<_>>();
 
     let found = named
@@ -439,6 +492,18 @@ fn collision(engine: &Engine, parser: &str, subject: &str, key: &str) -> Option<
     Some(Collision {
         search: found.id.clone(),
         same_parser: found.parser == parser,
+    })
+}
+
+/// Whether `search` names `key` under the field `subject`.
+///
+/// Both sides normalize before they compare, so a search that spells the
+/// subject differently still counts as naming it.
+fn names(search: &Search, subject: &str, key: &str) -> bool {
+    search.conditions.iter().any(|condition| {
+        condition.field == subject
+            && condition.op == Op::Equals
+            && FieldKind::Text.normalize(&condition.value) == key
     })
 }
 
@@ -786,39 +851,41 @@ mod tests {
     }
 
     #[test]
-    fn a_seed_reads_the_title_into_conditions_and_a_test() {
-        const TITLE: &str =
-            "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
+    fn a_seed_carries_the_subject_alone() {
+        const TITLE: &str = "Coastal.Ecology.S01E01.720p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
 
         let seeded = seed(&ENGINE, TITLE);
 
         assert_eq!(seeded.parser, "series-episodes");
         assert_eq!(
             seeded.conditions,
-            [
-                equals("show", "The.Hollow.Meridian"),
-                equals("resolution", "720p"),
-                equals("source", "Broadcast"),
-                equals("audio", "AAC.Stereo"),
-                equals("codec", "H.264"),
-                equals("publisher", "OtherGroup"),
-            ],
-            "one title agrees with itself, so every field it read becomes a condition"
+            [equals("show", "Coastal.Ecology")],
+            "no search names the show, so the subject is the whole draft"
         );
         assert_eq!(
             seeded.tests,
             [TitleTest {
                 title: TITLE.to_owned(),
-                expected: BTreeMap::from([
-                    ("show".to_owned(), "the hollow meridian".to_owned()),
-                    ("resolution".to_owned(), "720p".to_owned()),
-                    ("source".to_owned(), "broadcast".to_owned()),
-                    ("audio".to_owned(), "aac stereo".to_owned()),
-                    ("codec".to_owned(), "h 264".to_owned()),
-                    ("publisher".to_owned(), "othergroup".to_owned()),
-                ]),
+                expected: BTreeMap::from([("show".to_owned(), "coastal ecology".to_owned())]),
             }],
             "the test expects what the title read, in the normalized form a verdict compares"
+        );
+    }
+
+    #[test]
+    fn a_seed_pins_the_fields_a_saved_search_on_the_show_rejects() {
+        let seeded = seed(
+            &ENGINE,
+            "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+        );
+
+        assert_eq!(
+            seeded.conditions,
+            [
+                equals("show", "The.Hollow.Meridian"),
+                equals("resolution", "720p"),
+            ],
+            "the saved search wants 1080p, and the resolution is what tells this draft from it"
         );
     }
 
