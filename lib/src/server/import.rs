@@ -1,7 +1,8 @@
 //! The page that turns the torrents a client holds into searches.
 //!
 //! The preview reads the torrent index and stores nothing. Only the Import
-//! post writes, and it writes the shows the reader left checked.
+//! post writes, and it writes the shows the reader checked with the fields
+//! they turned on.
 //!
 //! The plan is computed again at post time rather than carried in the form.
 //! The index is the source, and a scan between the two requests costs one
@@ -100,12 +101,12 @@ struct Review {
     /// Every torrent the reader left in its suggestion's agreement.
     included: HashSet<TorrentId>,
 
-    /// The `parser|key|field` of every condition the reader turned off.
+    /// The `parser|key|field` of every condition the reader turned on.
     ///
-    /// A chip's checkbox is checked when its condition is off, so the
-    /// serialized form carries what was dropped rather than what was kept,
-    /// and a field that starts to agree comes in on.
-    dropped: HashSet<String>,
+    /// A chip's checkbox is checked when its condition is on, so the
+    /// serialized form carries what was kept and a field starts off. The
+    /// subject is no chip, because it is always kept.
+    kept: HashSet<String>,
 }
 
 impl Review {
@@ -123,7 +124,7 @@ impl Review {
         let mut review = Self {
             picked: BTreeSet::new(),
             included: HashSet::new(),
-            dropped: HashSet::new(),
+            kept: HashSet::new(),
         };
 
         for (key, value) in form_urlencoded::parse(body.as_bytes()) {
@@ -134,8 +135,8 @@ impl Review {
                 "torrent" => {
                     review.included.insert(TorrentId(value.into_owned()));
                 }
-                "drop" => {
-                    review.dropped.insert(value.into_owned());
+                "keep" => {
+                    review.kept.insert(value.into_owned());
                 }
                 _ => {}
             }
@@ -162,7 +163,7 @@ fn excluded(torrents: &[Torrent], review: Option<&Review>) -> HashSet<TorrentId>
 }
 
 /// Names one condition of one suggestion, which is what a chip's checkbox
-/// posts to turn it off.
+/// posts to turn it on.
 fn condition_value(suggestion: &Suggestion, condition: &Condition) -> String {
     format!(
         "{}|{}|{}",
@@ -175,22 +176,26 @@ fn condition_value(suggestion: &Suggestion, condition: &Condition) -> String {
 /// The subject leads, because [`crate::search::import`] places it first,
 /// and it never drops. A search with no subject condition claims every
 /// release its parser reads.
+///
+/// Every other condition is off until the reader turns its chip on. The
+/// preference lists rank the copies of a release, so a search that pins the
+/// resolution narrows for no reason.
 fn kept(suggestion: &Suggestion, review: Option<&Review>) -> Vec<Condition> {
     let Some((subject, rest)) = suggestion.conditions.split_first() else {
         return Vec::new();
     };
 
-    let dropped = |condition: &Condition| {
-        review.is_some_and(|review| {
-            review
-                .dropped
-                .contains(&condition_value(suggestion, condition))
-        })
-    };
-
     [subject.clone()]
         .into_iter()
-        .chain(rest.iter().filter(|one| !dropped(one)).cloned())
+        .chain(
+            rest.iter()
+                .filter(|one| {
+                    review.is_some_and(|review| {
+                        review.kept.contains(&condition_value(suggestion, one))
+                    })
+                })
+                .cloned(),
+        )
         .collect()
 }
 
@@ -462,18 +467,17 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                                     </span>
 
                                     // The box is checked when the condition
-                                    // is off, so the form carries what the
-                                    // reader dropped rather than what they
-                                    // kept.
+                                    // is on, so the form carries what the
+                                    // reader kept, and a chip starts off.
                                     for condition in rest {
-                                        <label class="cursor-pointer rounded-full bg-slate-800/70 px-2 py-0.5 font-mono text-xs text-slate-400 has-checked:bg-slate-900/40 has-checked:text-slate-600 has-checked:line-through">
+                                        <label class="cursor-pointer rounded-full bg-slate-900/40 px-2 py-0.5 font-mono text-xs text-slate-600 line-through has-checked:bg-slate-800/70 has-checked:text-slate-400 has-checked:no-underline">
                                             <input
                                                 type="checkbox"
-                                                name="drop"
+                                                name="keep"
                                                 value=(condition_value(suggestion, condition))
                                                 checked=(review.as_ref().is_some_and(|review| {
                                                     review
-                                                        .dropped
+                                                        .kept
                                                         .contains(&condition_value(suggestion, condition))
                                                 }))
                                                 class="sr-only"
@@ -526,9 +530,10 @@ fn picked(review: Option<&Review>, suggestion: &Suggestion) -> bool {
 
 /// Creates a search for each checked show, then returns to the index.
 ///
-/// The posted form is the review, so the created searches carry only the
-/// torrents the reader left checked. Every one is enabled, because a reader
-/// who imported a show asked for its releases.
+/// The posted form is the review, so a created search carries the subject and
+/// the fields the reader turned on, over the torrents they left checked. Every
+/// one is enabled, because a reader who imported a show asked for its
+/// releases.
 #[route(POST "/searches/import")]
 async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
     let review = {
@@ -675,7 +680,7 @@ mod tests {
     fn a_review_reads_picks_and_torrents() {
         let review = Review::parse(
             "reviewed=1&pick=series%7Ccoastal+ecology&torrent=abc&torrent=def\
-             &drop=series%7Ccoastal+ecology%7Cresolution",
+             &keep=series%7Ccoastal+ecology%7Cresolution",
         )
         .expect("a body with the hidden input is a review");
 
@@ -690,14 +695,14 @@ mod tests {
             "every checked torrent stays in its agreement"
         );
         assert_eq!(
-            review.dropped,
+            review.kept,
             HashSet::from(["series|coastal ecology|resolution".to_owned()]),
-            "a dropped condition is named by its show and its field"
+            "a kept condition is named by its show and its field"
         );
     }
 
     #[test]
-    fn a_dropped_condition_leaves_the_search_and_the_subject_stays() {
+    fn a_kept_condition_joins_the_subject_and_the_rest_stays_out() {
         let suggestion = Suggestion {
             parser: "series".to_owned(),
             key: "coastal ecology".to_owned(),
@@ -714,15 +719,15 @@ mod tests {
         };
 
         let review = Review::parse(
-            "reviewed=1&drop=series%7Ccoastal+ecology%7Cshow\
-             &drop=series%7Ccoastal+ecology%7Cresolution",
+            "reviewed=1&keep=series%7Ccoastal+ecology%7Cshow\
+             &keep=series%7Ccoastal+ecology%7Ccodec",
         )
         .expect("a body with the hidden input is a review");
 
         assert_eq!(
             kept(&suggestion, Some(&review)),
             [equals("show", "Coastal Ecology"), equals("codec", "x265")],
-            "the subject stays whatever the review says, and the dropped field goes"
+            "the subject is in whatever the review says, and only a kept field joins it"
         );
     }
 
@@ -733,7 +738,7 @@ mod tests {
             Some(Review {
                 picked: BTreeSet::new(),
                 included: HashSet::new(),
-                dropped: HashSet::new(),
+                kept: HashSet::new(),
             }),
             "the hidden input is what tells an emptied form from the first render"
         );
