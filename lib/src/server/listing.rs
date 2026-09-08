@@ -193,11 +193,28 @@ pub(super) fn demote_outranked(
     }
 }
 
+/// Whether every word of `query` appears somewhere in `title`.
+///
+/// Both sides lowercase, and `.`, `_`, and `-` become spaces, because a
+/// release name separates its words with those rather than with a space.
+/// The words match in any order and anywhere in the title, so a reader types
+/// what they remember of a show rather than the front of its release name.
+///
+/// An empty query holds for every title, which is what an empty box means.
+pub(super) fn title_contains(query: &str, title: &str) -> bool {
+    let separated = |text: &str| text.to_lowercase().replace(['.', '_', '-'], " ");
+    let title = separated(title);
+
+    separated(query)
+        .split_whitespace()
+        .all(|word| title.contains(word))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use super::{Standing, demote_outranked, parsed_values, standing};
+    use super::{Standing, demote_outranked, parsed_values, standing, title_contains};
     use crate::preference::Preferences;
     use crate::search::fixture::ENGINE;
 
@@ -496,5 +513,23 @@ mod tests {
             vec![parsed(FILM_HD), parsed(FILM_UHD)],
             "a reader who stated nothing sees every copy"
         );
+    }
+
+    #[test]
+    fn a_title_holds_every_word_of_the_query_in_any_order() {
+        for (query, holds) in [
+            ("hollow meridian", true),
+            ("meridian hollow", true),
+            ("HoLLoW MeRiDiAn", true),
+            ("hollow atlantic", false),
+            ("", true),
+            ("publicwave", true),
+        ] {
+            assert_eq!(
+                title_contains(query, HOLLOW_1080),
+                holds,
+                "{query:?} against the 1080p title"
+            );
+        }
     }
 }

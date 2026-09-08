@@ -1,0 +1,5 @@
+# A `#[shard]` handler is generated with a context parameter of its own, on
+# top of the `cx` the function declares, so a shard's counted arguments run
+# one above the ones its author wrote. The budget is the default seven of
+# those, plus that one.
+too-many-arguments-threshold = 8

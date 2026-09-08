@@ -107,8 +107,12 @@ window.torrssFeed = {
     window.torrssFeed.view.set('search', id);
     window.torrssFeed.sync();
   },
+  query: (text) => {
+    window.torrssFeed.view.set('query', text);
+    window.torrssFeed.sync();
+  },
   sync: () => {
-    for (const key of ['feed', 'show', 'search']) {
+    for (const key of ['feed', 'show', 'search', 'query']) {
       if (!window.torrssFeed.view.get(key)) {
         window.torrssFeed.view.delete(key);
       }
@@ -133,6 +137,9 @@ struct FeedView {
     /// [`Search::id`](crate::search::Search::id) of the only search whose
     /// matches to list, or absent for every search.
     search: Option<String>,
+
+    /// The text the listing's titles must contain, or absent for every title.
+    query: Option<String>,
 }
 
 impl FeedView {
@@ -216,11 +223,13 @@ async fn feed(cx: &Cx) -> Result {
     let active_id = view.active().unwrap_or_default().to_owned();
     let mode = view.mode().to_owned();
     let active_search = view.active_search().unwrap_or_default().to_owned();
+    let query_text = view.query.clone().unwrap_or_default();
 
     view! {
         signal filter = active_id;
         signal show = mode;
         signal search = active_search;
+        signal query = query_text;
         signal selected = String::new();
         signal kept = String::new();
         signal count = 0.0;
@@ -345,10 +354,28 @@ async fn feed(cx: &Cx) -> Result {
                 </div>
             </div>
 
+            // The box sits here rather than in the shard, because a shard
+            // re-render under the cursor takes the focus with it. The
+            // `#listing` change handler above acts only on a target named
+            // `item`, so this one refreshes the count and nothing else.
+            <input
+                type="search"
+                name="query"
+                placeholder="Filter by title"
+                :value=$(query.get())
+                @input=$(|e: Event| {
+                    kept.set(selected.get());
+                    query.set(e.target.value);
+                    raw!("window.torrssFeed.query(String(${e}.target.value))");
+                })
+                class="mt-3 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+            >
+
             feed_listing(
                 filter: $(filter.get()),
                 show: $(show.get()),
                 search: $(search.get()),
+                query: $(query.get()),
                 kept: $(kept.get()),
                 version: $(version.get()),
             )
@@ -363,13 +390,16 @@ async fn feed(cx: &Cx) -> Result {
 /// a re-render once the rows it took are gone.
 ///
 /// `search` narrows the rows to one search's matches before the counts run,
-/// so the sentence above the list describes the set the reader sees.
+/// so the sentence above the list describes the set the reader sees. `query`
+/// narrows them the same way, to the titles that hold every word the reader
+/// typed.
 #[shard]
 async fn feed_listing(
     cx: &Cx,
     filter: String,
     show: String,
     search: String,
+    query: String,
     kept: String,
     version: f64,
 ) -> Result {
@@ -431,6 +461,9 @@ async fn feed_listing(
         .collect();
     if !search.is_empty() {
         listed.retain(|(_, _, matched)| matched.contains(&search));
+    }
+    if !query.is_empty() {
+        listed.retain(|(item, _, _)| listing::title_contains(&query, &item.item.title));
     }
 
     let owned_count = listed
@@ -545,6 +578,9 @@ async fn feed_listing(
             if let Some(named) = engine.search(&search) {
                 " matching " (&named.name)
             }
+            if !query.is_empty() {
+                " containing “" (&query) "”"
+            }
             " from " (format::count(registered.len(), "feed", "feeds"))
             // Only the wanted view leaves rows out, so only it says what it
             // left out.
@@ -569,10 +605,14 @@ async fn feed_listing(
 
         if listed.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
-                match show.as_str() {
-                    "all" => "No item in this feed yet.",
-                    "unmatched" => "No unmatched title.",
-                    _ => "No wanted release yet.",
+                if !query.is_empty() {
+                    "No title contains “" (&query) "”."
+                } else {
+                    match show.as_str() {
+                        "all" => "No item in this feed yet.",
+                        "unmatched" => "No unmatched title.",
+                        _ => "No wanted release yet.",
+                    }
                 }
             </p>
         } else {
