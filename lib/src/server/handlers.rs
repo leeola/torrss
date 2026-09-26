@@ -78,14 +78,6 @@ window.torrssFeed = {
 
     return window.torrssFeed.list();
   },
-  all: () => {
-    for (const box of window.torrssFeed.boxes()) {
-      box.checked = true;
-      window.torrssFeed.chosen.add(box.value);
-    }
-
-    return window.torrssFeed.list();
-  },
   clear: () => {
     window.torrssFeed.chosen.clear();
     for (const box of window.torrssFeed.boxes()) {
@@ -283,16 +275,6 @@ async fn feed(cx: &Cx) -> Result<impl View> {
                 class="mt-6 flex scroll-mt-24 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3"
             >
                 <div class="flex flex-wrap items-center gap-3">
-                    <button
-                        type="button"
-                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                        @click=$(|_e: Event| {
-                            selected.set(raw!("cx.hydrate(window.torrssFeed.all())", String::new()));
-                            count.set(raw!("cx.hydrate(window.torrssFeed.count())", 0.0));
-                        })
-                    >
-                        "Select all"
-                    </button>
                     <span class="text-sm text-slate-300">
                         $(if count.get() == 0.0 { "Nothing selected" } else { "" })
                         <span :hidden=$(count.get() == 0.0)>$(count.get()) " selected"</span>
