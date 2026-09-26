@@ -8,6 +8,7 @@
 mod api;
 mod components;
 mod format;
+mod groups;
 mod handlers;
 mod held;
 mod import;
