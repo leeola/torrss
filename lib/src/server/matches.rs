@@ -104,17 +104,14 @@ pub(super) struct PatternError {
 }
 
 /// One stored title as the Matches section shows it.
-///
-/// The title and the segments both borrow it, so a match costs no copy of the
-/// name it describes.
 #[derive(Debug)]
-pub(super) struct Match<'a> {
+pub(super) struct Match {
     pub(super) id: i64,
 
     /// The whole title, which a reader saving this row as a test names.
-    pub(super) title: &'a str,
+    pub(super) title: String,
 
-    pub(super) segments: Vec<Segment<'a>>,
+    pub(super) segments: Vec<Segment>,
 
     /// What each claiming rule read, normalized, which is what a test
     /// saved from this row asserts.
@@ -302,9 +299,9 @@ pub(super) fn rules(
 }
 
 /// What one title became under the saved rules and the edited ones.
-pub(super) struct Diffed<'a> {
+pub(super) struct Diffed {
     pub(super) diff: Diff,
-    pub(super) segments: Vec<Segment<'a>>,
+    pub(super) segments: Vec<Segment>,
 
     /// Each claiming rule's name and the normalized text it read.
     pub(super) values: Vec<(String, String)>,
@@ -316,7 +313,7 @@ pub(super) struct Diffed<'a> {
 /// the title, and from `before` otherwise, so a removed title keeps the
 /// highlighting and the values the edit gives up. That is what
 /// [`Diff::Removed`] promises the reader.
-pub(super) fn diff<'a>(before: &Rules, after: &Rules, title: &'a str) -> Diffed<'a> {
+pub(super) fn diff(before: &Rules, after: &Rules, title: &str) -> Diffed {
     let was = captures(before, title);
     let now = captures(after, title);
 
@@ -415,7 +412,7 @@ fn read(title: &str, captured: &[Capture<'_>]) -> Vec<(String, String)> {
 ///
 /// The groups of one regex never overlap, so every claimed run stands whole
 /// once the captures are in start order.
-fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'a>> {
+fn segments(title: &str, mut captured: Vec<Capture<'_>>) -> Vec<Segment> {
     captured.sort_by_key(|capture| capture.range.start);
 
     let mut segments = Vec::new();
@@ -426,21 +423,21 @@ fn segments<'a>(title: &'a str, mut captured: Vec<Capture<'_>>) -> Vec<Segment<'
 
         if range.start > cut {
             segments.push(Segment {
-                text: &title[cut..range.start],
+                text: title[cut..range.start].to_owned(),
                 field: None,
             });
         }
 
         cut = range.end;
         segments.push(Segment {
-            text: &title[range.clone()],
+            text: title[range.clone()].to_owned(),
             field: Some(position),
         });
     }
 
     if cut < title.len() {
         segments.push(Segment {
-            text: &title[cut..],
+            text: title[cut..].to_owned(),
             field: None,
         });
     }
@@ -651,7 +648,7 @@ pub(super) mod tests {
         assert_eq!(
             segments
                 .iter()
-                .map(|segment| segment.text)
+                .map(|segment| segment.text.as_str())
                 .collect::<String>(),
             TITLE,
             "the runs in order are the title itself"
@@ -659,7 +656,7 @@ pub(super) mod tests {
         assert_eq!(
             segments
                 .iter()
-                .map(|segment| (segment.text, segment.field))
+                .map(|segment| (segment.text.as_str(), segment.field))
                 .collect::<Vec<_>>(),
             [
                 ("The.Hollow.Meridian", Some(0)),

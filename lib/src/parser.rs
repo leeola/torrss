@@ -139,8 +139,8 @@ impl Tint {
 /// in order reproduce the filename exactly, so the highlighted render never
 /// drifts from the name it describes.
 #[derive(Debug)]
-pub(crate) struct Segment<'a> {
-    pub(crate) text: &'a str,
+pub(crate) struct Segment {
+    pub(crate) text: String,
     pub(crate) field: Option<usize>,
 }
 

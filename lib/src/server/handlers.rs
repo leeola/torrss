@@ -1795,16 +1795,13 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
 ///
 /// `before` is empty for a search that is not saved yet, so every title the
 /// draft claims reads as gained rather than unchanged.
-///
-/// The items arrive from the caller rather than being read here, because a
-/// [`Match`] borrows the title it describes and cannot outlive the read.
-pub(super) fn compute_matches<'a>(
+pub(super) fn compute_matches(
     registry: &FeedRegistry,
     before: &Rules,
     after: &[&Field],
     conditions: &[Condition],
-    items: &'a [StoredItem],
-) -> (Vec<Match<'a>>, Vec<PatternError>) {
+    items: &[StoredItem],
+) -> (Vec<Match>, Vec<PatternError>) {
     let (after, errors) = matches::rules(after, conditions, &Edits::default());
 
     let matched = items
@@ -1814,7 +1811,7 @@ pub(super) fn compute_matches<'a>(
 
             Match {
                 id: item.id,
-                title: &item.item.title,
+                title: item.item.title.clone(),
                 segments: diffed.segments,
                 values: diffed.values,
                 diff: diffed.diff,

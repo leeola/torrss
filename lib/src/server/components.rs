@@ -23,7 +23,7 @@ use url::form_urlencoded;
 /// parser and a search each read a name through their own fields, so the
 /// caller passes the path of the editor the runs belong to.
 #[component]
-pub(crate) async fn filename(segments: &[Segment<'_>], editor: &str) -> Result {
+pub(crate) async fn filename(segments: &[Segment], editor: &str) -> Result {
     view! {
         <span class="font-mono text-sm break-all">
             for segment in segments {
@@ -35,8 +35,8 @@ pub(crate) async fn filename(segments: &[Segment<'_>], editor: &str) -> Result {
                             Tint::at(position).classes(),
                         ))
                         title="edit the search that matched this"
-                    >(segment.text)</a>,
-                    None => <span class="text-slate-500">(segment.text)</span>,
+                    >(&segment.text)</a>,
+                    None => <span class="text-slate-500">(&segment.text)</span>,
                 }
             }
         </span>
@@ -110,11 +110,11 @@ pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current:
 /// fails until the search claims it, which is how a reader says "make this
 /// match".
 #[component]
-pub(crate) async fn match_row(matched: &Match<'_>, editor: &str) -> Result {
+pub(crate) async fn match_row(matched: &Match, editor: &str) -> Result {
     let payload = {
         let mut pairs = form_urlencoded::Serializer::new(String::new());
 
-        pairs.append_pair("title", matched.title);
+        pairs.append_pair("title", &matched.title);
         for (field, value) in &matched.values {
             pairs.append_pair(&format!("expect.{field}"), value);
         }
@@ -1144,7 +1144,7 @@ window.torrssRows = {
 #[component]
 pub(crate) async fn match_section(
     editor: &str,
-    matched: &[Match<'_>],
+    matched: &[Match],
     errors: &[PatternError],
     filter: Option<Diff>,
 ) -> Result {
