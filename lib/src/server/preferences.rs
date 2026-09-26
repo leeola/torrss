@@ -15,8 +15,8 @@ use topcoat::{
     context::Cx,
     context::app_context,
     router::page,
-    runtime::{Event, procedure, shard},
-    view::view,
+    runtime::{Event, procedure, shard, signal},
+    view::{View, view},
 };
 use tracing::error;
 
@@ -26,10 +26,10 @@ use crate::services::Services;
 
 /// The page that edits every preference list.
 #[page("/preferences")]
-async fn preferences() -> Result {
-    view! {
-        signal version = 0.0;
+async fn preferences(cx: &Cx) -> Result<impl View> {
+    let version = signal(cx, || 0.0);
 
+    Ok(view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Preferences"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "These lists rank the results of every search. The first value
@@ -65,7 +65,7 @@ async fn preferences() -> Result {
         >
             preference_cards(version: $(version.get()))
         </div>
-    }
+    })
 }
 
 /// One card per field a list ranks by, with the values it holds.
@@ -74,7 +74,7 @@ async fn preferences() -> Result {
 /// it. A parser edit strands such a list, and a stranded one needs a way
 /// out.
 #[shard]
-async fn preference_cards(cx: &Cx, version: f64) -> Result {
+async fn preference_cards(cx: &Cx, version: f64) -> Result<impl View> {
     // This is read for its change alone. An edit bumps it so the card shows
     // what the store now holds.
     let _ = version;
@@ -93,7 +93,7 @@ async fn preference_cards(cx: &Cx, version: f64) -> Result {
 
     fields.extend(stranded);
 
-    view! {
+    Ok(view! {
         if fields.is_empty() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No parser reads a field a list ranks by."
@@ -158,7 +158,7 @@ async fn preference_cards(cx: &Cx, version: f64) -> Result {
                 }
             </ul>
         }
-    }
+    })
 }
 
 /// Appends `value` to the list for `field`, and reports whether it landed.

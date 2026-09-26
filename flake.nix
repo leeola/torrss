@@ -35,14 +35,14 @@
         # version in step with `topcoat` in `[workspace.dependencies]`.
         topcoat-cli = rustPlatform.buildRustPackage rec {
           pname = "topcoat-cli";
-          version = "0.6.2";
+          version = "0.9.0";
 
           src = pkgs.fetchCrate {
             inherit pname version;
-            hash = "sha256-+6DKc2yjKwju64iokWV1EUXf62GGj1W32kp7E7WVKdM=";
+            hash = "sha256-6kLV2AP9e2H8WfmaZ5IwJp3HY3uFD6B0U3qMEvWzWYE=";
           };
 
-          cargoHash = "sha256-CDnvF0CMkpjIK0dDhuxIfpm0PnyEjFvbIjWhgSfFk1w=";
+          cargoHash = "sha256-o/QffbjjkHqM+mxZwjxARm2mx4ylqxWrRw4UJ4Q0R+Q=";
 
           doCheck = false;
         };

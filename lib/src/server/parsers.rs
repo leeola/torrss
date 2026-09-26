@@ -21,9 +21,9 @@ use topcoat::{
         },
         page, path_param, route,
     },
-    runtime::{Event, procedure, shard},
+    runtime::{Event, procedure, shard, signal},
     view::Unescaped,
-    view::{class, component, view},
+    view::{View, ViewExt, class, component, view},
 };
 use tracing::error;
 
@@ -42,10 +42,10 @@ use crate::store;
 path_param!(parser_id);
 
 #[page("/parsers")]
-async fn parser_index(cx: &Cx) -> Result {
+async fn parser_index(cx: &Cx) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
-    view! {
+    Ok(view! {
         <div class="flex flex-wrap items-end justify-between gap-4">
             <div>
                 <h1 class="text-2xl font-semibold tracking-tight">"Parsers"</h1>
@@ -73,31 +73,31 @@ async fn parser_index(cx: &Cx) -> Result {
                 }
             </ul>
         }
-    }
+    })
 }
 
 #[page("/parsers/new")]
-async fn new_parser() -> Result {
-    view! {
+async fn new_parser() -> Result<impl View> {
+    Ok(view! {
         parser_editor(parser: None)
-    }
+    })
 }
 
 #[page("/parsers/{parser_id}")]
-async fn parser_editor_page(cx: &Cx) -> Result {
+async fn parser_editor_page(cx: &Cx) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let parser = engine
         .parser(path_param::<ParserId>(cx))
         .ok_or_not_found()?
         .clone();
 
-    view! {
+    Ok(view! {
         if parser.built_in {
             built_in_parser(parser: &parser)
         } else {
             parser_editor(parser: Some(&parser))
         }
-    }
+    })
 }
 
 /// The one page that writes a parser, whether or not one is stored.
@@ -107,7 +107,7 @@ async fn parser_editor_page(cx: &Cx) -> Result {
 /// [`None`] shows Create, because a parser nothing has saved has nothing to
 /// save over.
 #[component]
-async fn parser_editor(parser: Option<&Parser>) -> Result {
+async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
     let name = parser.map(|parser| parser.name.clone()).unwrap_or_default();
 
     let parser_id = parser.map(|parser| parser.id.clone()).unwrap_or_default();
@@ -127,17 +127,17 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
     .encode();
     let initial_rows = initial_draft.clone();
 
-    view! {
-        signal draft = initial_draft;
-        signal rows = initial_rows;
-        // The id the save names. A handler outlives the render that built it,
-        // so the argument comes from a signal rather than from a capture.
-        signal save_id = stored_id;
-        signal diff = String::new();
-        signal saving = false;
-        signal save_error = String::new();
-        signal saved = 0.0;
+    let draft = signal(cx, || initial_draft);
+    let rows = signal(cx, || initial_rows);
+    // The id the save names. A handler outlives the render that built it,
+    // so the argument comes from a signal rather than from a capture.
+    let save_id = signal(cx, || stored_id);
+    let diff = signal(cx, String::new);
+    let saving = signal(cx, || false);
+    let save_error = signal(cx, String::new);
+    let saved = signal(cx, || 0.0);
 
+    Ok(view! {
         // The row buttons the shard renders reach the signals above through
         // this, which one delegated handler on the form below calls.
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
@@ -347,7 +347,7 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
                 )
             </div>
         </form>
-    }
+    })
 }
 
 /// Shows a parser the binary carries, which no save reaches.
@@ -356,7 +356,7 @@ async fn parser_editor(parser: Option<&Parser>) -> Result {
 /// Delete have nothing to write. The reader sees what the parser reads and
 /// takes a copy under their own name to change it.
 #[component]
-async fn built_in_parser(parser: &Parser) -> Result {
+async fn built_in_parser(cx: &Cx, parser: &Parser) -> Result<impl View> {
     let draft = ParserForm {
         name: parser.name.clone(),
         fields: parser.fields.clone(),
@@ -368,9 +368,9 @@ async fn built_in_parser(parser: &Parser) -> Result {
     // as an owned value rather than as a borrow of the parser.
     let parser_id = parser.id.clone();
 
-    view! {
-        signal diff = String::new();
+    let diff = signal(cx, String::new);
 
+    Ok(view! {
         <nav class="text-sm text-slate-500">
             <a href="/parsers" class="hover:text-slate-300">"Parsers"</a>
             " / "
@@ -447,7 +447,7 @@ async fn built_in_parser(parser: &Parser) -> Result {
                 saved: $(0.0),
             )
         </div>
-    }
+    })
 }
 
 /// Re-renders the Matches section against the draft the editor holds.
@@ -463,7 +463,7 @@ async fn parser_matches(
     diff: String,
     draft: String,
     saved: f64,
-) -> Result {
+) -> Result<impl View> {
     // This is read for its change alone. A save bumps it so the diff measures
     // the draft against the fields the store now holds.
     let _ = saved;
@@ -480,12 +480,13 @@ async fn parser_matches(
     let posted = match ParserForm::parse_draft(&draft) {
         Ok(posted) => posted,
         Err(error) => {
-            return view! {
+            return Ok(view! {
                 <section id="matches" class="mt-8 scroll-mt-24">
                     <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
                     <p class="mt-2 text-xs text-rose-300">(error.to_string())</p>
                 </section>
-            };
+            }
+            .boxed());
         }
     };
 
@@ -512,7 +513,7 @@ async fn parser_matches(
 
     let editor_path = format!("/parsers/{parser}");
 
-    view! {
+    Ok(view! {
         components::match_section(
             editor: &editor_path,
             matched: &matched,
@@ -520,6 +521,7 @@ async fn parser_matches(
             filter: Diff::from_slug(&diff),
         )
     }
+    .boxed())
 }
 
 /// Creates a parser from the new-parser form, then opens its editor.
@@ -677,18 +679,18 @@ fn write_failed(error: SaveError) -> Error {
 /// alone, because re-rendering a row under the cursor takes the focus with
 /// it.
 #[shard]
-async fn field_rows(cx: &Cx, rows: String) -> Result {
+async fn field_rows(cx: &Cx, rows: String) -> Result<impl View> {
     // Every row comes out of the posted body, so nothing here reads the
     // stored set.
     let _ = cx;
 
     let posted = ParserRows::parse(&rows);
 
-    view! {
+    Ok(view! {
         for (index, field) in posted.fields.iter().enumerate() {
             components::field_row(index: index, field: field)
         }
-    }
+    })
 }
 
 /// Re-renders the test rows from the draft the editor holds.
@@ -702,7 +704,7 @@ async fn field_rows(cx: &Cx, rows: String) -> Result {
 /// Only a structural change re-renders these, as with [`field_rows`]. A
 /// keystroke takes the focus out of the input under the cursor.
 #[shard]
-async fn test_rows(cx: &Cx, rows: String) -> Result {
+async fn test_rows(cx: &Cx, rows: String) -> Result<impl View> {
     let _ = cx;
 
     let posted = ParserRows::parse(&rows);
@@ -713,11 +715,11 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
         .enumerate()
         .collect::<Vec<_>>();
 
-    view! {
+    Ok(view! {
         for (index, test) in posted.tests.iter().enumerate() {
             components::test_row(index: index, test: test, fields: &fields)
         }
-    }
+    })
 }
 
 /// Reports each saved test against the draft the editor holds.
@@ -729,11 +731,11 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
 /// A draft that does not parse renders nothing. The Matches section reports
 /// the same error on the same draft, and one message is enough.
 #[shard]
-async fn test_results(cx: &Cx, draft: String) -> Result {
+async fn test_results(cx: &Cx, draft: String) -> Result<impl View> {
     let _ = cx;
 
     let Ok(posted) = ParserForm::parse_draft(&draft) else {
-        return view! {};
+        return Ok(view! {}.boxed());
     };
 
     let fields = posted.fields.iter().collect::<Vec<_>>();
@@ -751,7 +753,8 @@ async fn test_results(cx: &Cx, draft: String) -> Result {
         })
         .collect::<Vec<_>>();
 
-    view! {
+    Ok(view! {
         components::test_verdicts(judged: &judged)
     }
+    .boxed())
 }

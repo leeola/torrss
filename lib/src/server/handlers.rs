@@ -13,9 +13,9 @@ use topcoat::{
         },
         page, path_param, query_params, route,
     },
-    runtime::{Event, procedure, shard},
+    runtime::{Event, procedure, shard, signal},
     view::Unescaped,
-    view::{class, component, view},
+    view::{View, ViewExt, class, component, view},
 };
 use tracing::error;
 use url::Url;
@@ -218,25 +218,25 @@ fn item_details(
 }
 
 #[page("/")]
-async fn feed(cx: &Cx) -> Result {
+async fn feed(cx: &Cx) -> Result<impl View> {
     let view = query_params::<FeedView>(cx)?;
     let active_id = view.active().unwrap_or_default().to_owned();
     let mode = view.mode().to_owned();
     let active_search = view.active_search().unwrap_or_default().to_owned();
     let query_text = view.query.clone().unwrap_or_default();
 
-    view! {
-        signal filter = active_id;
-        signal show = mode;
-        signal search = active_search;
-        signal query = query_text;
-        signal selected = String::new();
-        signal kept = String::new();
-        signal count = 0.0;
-        signal version = 0.0;
-        signal fetching = false;
-        signal grabbing = false;
+    let filter = signal(cx, || active_id);
+    let show = signal(cx, || mode);
+    let search = signal(cx, || active_search);
+    let query = signal(cx, || query_text);
+    let selected = signal(cx, String::new);
+    let kept = signal(cx, String::new);
+    let count = signal(cx, || 0.0);
+    let version = signal(cx, || 0.0);
+    let fetching = signal(cx, || false);
+    let grabbing = signal(cx, || false);
 
+    Ok(view! {
         <script>(Unescaped::new_unchecked(FEED_ACTIONS))</script>
 
         <h1 class="text-2xl font-semibold tracking-tight">"Results"</h1>
@@ -380,7 +380,7 @@ async fn feed(cx: &Cx) -> Result {
                 version: $(version.get()),
             )
         </div>
-    }
+    })
 }
 
 /// The stored rows under the chosen filter, and what the page knows of each.
@@ -402,7 +402,7 @@ async fn feed_listing(
     query: String,
     kept: String,
     version: f64,
-) -> Result {
+) -> Result<impl View> {
     // Read for its change alone: a grab bumps it so the rows it took leave
     // the listing.
     let _ = version;
@@ -512,7 +512,7 @@ async fn feed_listing(
         .map(|(((item, _, _), shown), id)| ((*item).clone(), shown, selection.contains(id)))
         .collect::<Vec<_>>();
 
-    view! {
+    Ok(view! {
         // The chips belong to the shard, because only a re-render presses the
         // one the reader picked. A component takes concrete values, so a chip
         // reads no signal of the page's own.
@@ -634,7 +634,7 @@ async fn feed_listing(
                 }
             </ul>
         }
-    }
+    })
 }
 
 /// Grabs every selected item and reports how many it took.
@@ -741,10 +741,10 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
 }
 
 #[page("/searches")]
-async fn search_index(cx: &Cx) -> Result {
+async fn search_index(cx: &Cx) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
-    view! {
+    Ok(view! {
         <div class="flex flex-wrap items-end justify-between gap-4">
             <div>
                 <h1 class="text-2xl font-semibold tracking-tight">"Searches"</h1>
@@ -784,19 +784,19 @@ async fn search_index(cx: &Cx) -> Result {
                 }
             </ul>
         }
-    }
+    })
 }
 
 #[page("/feeds")]
-async fn feeds() -> Result {
-    view! {
-        signal version = 0.0;
-        // The two inputs are bound rather than posted, so an accepted add
-        // clears them and a refused one keeps what the reader typed.
-        signal entry_name = String::new();
-        signal entry_url = String::new();
-        signal add_error = String::new();
+async fn feeds(cx: &Cx) -> Result<impl View> {
+    let version = signal(cx, || 0.0);
+    // The two inputs are bound rather than posted, so an accepted add clears
+    // them and a refused one keeps what the reader typed.
+    let entry_name = signal(cx, String::new);
+    let entry_url = signal(cx, String::new);
+    let add_error = signal(cx, String::new);
 
+    Ok(view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Feeds"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "Every registered feed is polled on the configured interval."
@@ -866,21 +866,21 @@ async fn feeds() -> Result {
                 "Add feed"
             </button>
         </form>
-    }
+    })
 }
 
 /// Every registered feed, with the controls that read and drop one.
 ///
 /// Test stays a link, because it opens a page rather than writing anything.
 #[shard]
-async fn feed_list(cx: &Cx, version: f64) -> Result {
+async fn feed_list(cx: &Cx, version: f64) -> Result<impl View> {
     // This is read for its change alone. A removal bumps it so the row the
     // reader dropped leaves the list.
     let _ = version;
 
     let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
 
-    view! {
+    Ok(view! {
         if entries.is_empty() {
             <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No feed is registered."
@@ -914,18 +914,18 @@ async fn feed_list(cx: &Cx, version: f64) -> Result {
                 }
             </ul>
         }
-    }
+    })
 }
 
 #[page("/torrents")]
-async fn client() -> Result {
-    view! {
-        signal version = 0.0;
-        signal scanning = false;
-        // The feed the current check reads. It disables that one button and
-        // leaves the others alive.
-        signal busy = String::new();
+async fn client(cx: &Cx) -> Result<impl View> {
+    let version = signal(cx, || 0.0);
+    let scanning = signal(cx, || false);
+    // The feed the current check reads. It disables that one button and
+    // leaves the others alive.
+    let busy = signal(cx, String::new);
 
+    Ok(view! {
         <h1 class="text-2xl font-semibold tracking-tight">"Client"</h1>
         <p class="mt-1 text-sm text-slate-400">
             "What this application talks to, and how each one last answered."
@@ -974,7 +974,7 @@ async fn client() -> Result {
         })>
             feed_checks(version: $(version.get()), busy: $(busy.get()))
         </div>
-    }
+    })
 }
 
 /// How the torrent client answered, and what the last scan found in it.
@@ -982,7 +982,7 @@ async fn client() -> Result {
 /// The block sits beside the Scan now button rather than holding it, because
 /// a shard cannot reach the signals its caller declared.
 #[shard]
-async fn client_status(cx: &Cx, version: f64) -> Result {
+async fn client_status(cx: &Cx, version: f64) -> Result<impl View> {
     // This is read for its change alone. A scan bumps it so the counts below
     // report the pass that just ran.
     let _ = version;
@@ -994,7 +994,7 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
     let checked = services.torrents.check().await;
     let scanned = app_context::<Arc<ScanState>>(cx).last();
 
-    view! {
+    Ok(view! {
         <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
                 <span class="text-sm text-slate-200">"qBittorrent"</span>
@@ -1032,14 +1032,14 @@ async fn client_status(cx: &Cx, version: f64) -> Result {
                 }
             </p>
         </div>
-    }
+    })
 }
 
 /// The torrents the client holds that a search claims, grabbed first, then
 /// by the time the client added them. Each row carries what the search read
 /// out of the name.
 #[shard]
-async fn client_torrents(cx: &Cx, version: f64) -> Result {
+async fn client_torrents(cx: &Cx, version: f64) -> Result<impl View> {
     // This is read for its change alone. A scan bumps it so the list reports
     // what the pass that just ran left in the client.
     let _ = version;
@@ -1079,7 +1079,7 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
         .collect::<Vec<_>>();
     let empty = rows.is_empty();
 
-    view! {
+    Ok(view! {
         match rows {
             _ if empty => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No torrent is indexed."
@@ -1095,7 +1095,7 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                 }
             </ul>,
         }
-    }
+    })
 }
 
 /// Every registered feed, with how it last answered and a control to ask now.
@@ -1104,7 +1104,7 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
 /// dead while the others stay live. The label is plain server text, because
 /// a write to `busy` re-renders the whole block anyway.
 #[shard]
-async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result {
+async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result<impl View> {
     // This is read for its change alone. A finished check bumps it so the
     // row reports the answer that just arrived.
     let _ = version;
@@ -1112,7 +1112,7 @@ async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result {
     let entries = app_context::<Arc<FeedRegistry>>(cx).entries();
     let now = app_context::<Services>(cx).clock.now();
 
-    view! {
+    Ok(view! {
         if entries.is_empty() {
             <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No feed is registered. "
@@ -1168,7 +1168,7 @@ async fn feed_checks(cx: &Cx, version: f64, busy: String) -> Result {
                 }
             </ul>
         }
-    }
+    })
 }
 
 /// Scans the library from the torrent client now, and reports what matched.
@@ -1234,7 +1234,7 @@ async fn check_feed_now(cx: &Cx, id: String) -> Result<bool> {
 ///
 /// An id that names no feed is a 404.
 #[page("/feeds/{feed_id}/test")]
-async fn test_feed(cx: &Cx) -> Result {
+async fn test_feed(cx: &Cx) -> Result<impl View> {
     let registry = app_context::<Arc<FeedRegistry>>(cx);
     let services = app_context::<Services>(cx);
     let id = path_param::<FeedId>(cx);
@@ -1246,7 +1246,7 @@ async fn test_feed(cx: &Cx) -> Result {
         .await
         .ok_or_not_found()?;
 
-    view! {
+    Ok(view! {
         <nav class="text-sm text-slate-500">
             <a href="/feeds" class="hover:text-slate-300">"Feeds"</a>
             " / "
@@ -1307,7 +1307,7 @@ async fn test_feed(cx: &Cx) -> Result {
                 }
             </div>,
         }
-    }
+    })
 }
 
 /// Registers a feed, and reports its id or why it was refused.
@@ -1391,7 +1391,7 @@ struct NewSearchView {
 /// from what it already says. A `title` seeds the same way from a name the
 /// store holds no row for. Anything else opens the editor empty.
 #[page("/searches/new")]
-async fn new_search(cx: &Cx) -> Result {
+async fn new_search(cx: &Cx) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let view = query_params::<NewSearchView>(cx)?;
 
@@ -1418,13 +1418,13 @@ async fn new_search(cx: &Cx) -> Result {
         },
     };
 
-    view! {
+    Ok(view! {
         editor(engine: &engine, search: None, draft: &draft)
-    }
+    })
 }
 
 #[page("/searches/{search_id}")]
-async fn search_editor(cx: &Cx) -> Result {
+async fn search_editor(cx: &Cx) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let search = engine
         .search(path_param::<SearchId>(cx))
@@ -1433,9 +1433,9 @@ async fn search_editor(cx: &Cx) -> Result {
 
     let draft = stored_draft(&search);
 
-    view! {
+    Ok(view! {
         editor(engine: &engine, search: Some(&search), draft: &draft)
-    }
+    })
 }
 
 /// The form a stored search opens its editor on.
@@ -1476,7 +1476,12 @@ fn stored_draft(search: &Search) -> SearchForm {
 /// [`None`] shows Create and no switch, because a search nothing has saved
 /// has nothing to switch on.
 #[component]
-async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) -> Result {
+async fn editor(
+    cx: &Cx,
+    engine: &Engine,
+    search: Option<&Search>,
+    draft: &SearchForm,
+) -> Result<impl View> {
     let name = draft.name.clone();
 
     let search_id = search.map(|search| search.id.clone()).unwrap_or_default();
@@ -1507,23 +1512,23 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
     .encode();
     let initial_rows = initial_draft.clone();
 
-    view! {
-        signal draft = initial_draft;
-        signal rows = initial_rows;
-        signal diff = String::new();
-        signal enabled = enabled_now;
-        // The name the page shows. A save replaces it, because a blank name
-        // stores one read out of the conditions and the reader has to see
-        // what the search is called without loading the page again.
-        signal title = name;
-        // The id the switch and the save name. A handler outlives the render
-        // that built it, so the argument comes from a signal rather than
-        // from a capture.
-        signal switch_id = stored_id;
-        signal saving = false;
-        signal save_error = String::new();
-        signal saved = 0.0;
+    let draft = signal(cx, || initial_draft);
+    let rows = signal(cx, || initial_rows);
+    let diff = signal(cx, String::new);
+    let enabled = signal(cx, || enabled_now);
+    // The name the page shows. A save replaces it, because a blank name
+    // stores one read out of the conditions and the reader has to see
+    // what the search is called without loading the page again.
+    let title = signal(cx, || name);
+    // The id the switch and the save name. A handler outlives the render
+    // that built it, so the argument comes from a signal rather than
+    // from a capture.
+    let switch_id = signal(cx, || stored_id);
+    let saving = signal(cx, || false);
+    let save_error = signal(cx, String::new);
+    let saved = signal(cx, || 0.0);
 
+    Ok(view! {
         // The row buttons the shard renders reach the signals above through
         // this, which one delegated handler on the form below calls.
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
@@ -1797,7 +1802,7 @@ async fn editor(engine: &Engine, search: Option<&Search>, draft: &SearchForm) ->
                 )
             </div>
         </form>
-    }
+    })
 }
 
 /// Runs the saved rules and the edited rules over every stored title.
@@ -1841,7 +1846,7 @@ pub(super) fn compute_matches(
 /// Only a structural change re-renders these. A keystroke takes the focus
 /// out of the input under the cursor.
 #[shard]
-pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
+pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let posted = EditorRows::parse(&rows);
@@ -1854,11 +1859,11 @@ pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
         .collect::<Vec<Field>>();
     let named = condition_fields(&fields, &posted.conditions);
 
-    view! {
+    Ok(view! {
         for (index, test) in posted.tests.iter().enumerate() {
             components::test_row(index: index, test: test, fields: &named)
         }
-    }
+    })
 }
 
 /// Re-renders the condition rows from the draft the editor holds.
@@ -1867,7 +1872,7 @@ pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
 /// do, so a field the reader just added is one a condition names in the same
 /// breath.
 #[shard]
-async fn condition_rows(cx: &Cx, rows: String) -> Result {
+async fn condition_rows(cx: &Cx, rows: String) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let posted = EditorRows::parse(&rows);
@@ -1879,11 +1884,11 @@ async fn condition_rows(cx: &Cx, rows: String) -> Result {
         .cloned()
         .collect::<Vec<Field>>();
 
-    view! {
+    Ok(view! {
         for (index, condition) in posted.conditions.iter().enumerate() {
             components::condition_row(index: index, condition: condition, fields: &fields)
         }
-    }
+    })
 }
 
 /// Reports each saved test against the draft the editor holds.
@@ -1895,11 +1900,11 @@ async fn condition_rows(cx: &Cx, rows: String) -> Result {
 /// A draft that does not parse renders nothing. The Matches section reports
 /// the same error on the same draft, and one message is enough.
 #[shard]
-pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
+pub(super) async fn test_results(cx: &Cx, draft: String) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let Ok(posted) = SearchForm::parse_draft(&draft) else {
-        return view! {};
+        return Ok(view! {}.boxed());
     };
 
     let fields = parser_fields(&engine, Some(&posted.parser));
@@ -1914,9 +1919,10 @@ pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
         })
         .collect::<Vec<_>>();
 
-    view! {
+    Ok(view! {
         components::test_verdicts(judged: &judged)
     }
+    .boxed())
 }
 
 /// The fields the parser named by `id` reads, or none when it names no
@@ -1960,7 +1966,13 @@ fn condition_fields(fields: &[Field], conditions: &[Condition]) -> Vec<(usize, F
 /// is trusted: the search is looked up rather than taken, and a draft that
 /// does not parse reports itself instead of matching anything.
 #[shard]
-async fn live_matches(cx: &Cx, search: String, diff: String, draft: String, saved: f64) -> Result {
+async fn live_matches(
+    cx: &Cx,
+    search: String,
+    diff: String,
+    draft: String,
+    saved: f64,
+) -> Result<impl View> {
     // This is read for its change alone. A save bumps it so the diff measures
     // the draft against the rules the store now holds.
     let _ = saved;
@@ -1977,12 +1989,13 @@ async fn live_matches(cx: &Cx, search: String, diff: String, draft: String, save
     let posted = match SearchForm::parse_draft(&draft) {
         Ok(posted) => posted,
         Err(error) => {
-            return view! {
+            return Ok(view! {
                 <section id="matches" class="mt-8 scroll-mt-24">
                     <h2 class="text-lg font-semibold tracking-tight">"Matches"</h2>
                     <p class="mt-2 text-xs text-rose-300">(error.to_string())</p>
                 </section>
-            };
+            }
+            .boxed());
         }
     };
 
@@ -2009,7 +2022,7 @@ async fn live_matches(cx: &Cx, search: String, diff: String, draft: String, save
 
     let editor_path = format!("/searches/{search}");
 
-    view! {
+    Ok(view! {
         components::match_section(
             editor: &editor_path,
             matched: &matched,
@@ -2017,6 +2030,7 @@ async fn live_matches(cx: &Cx, search: String, diff: String, draft: String, save
             filter: Diff::from_slug(&diff),
         )
     }
+    .boxed())
 }
 
 /// Reads a posted search, or answers 400 saying what to change.

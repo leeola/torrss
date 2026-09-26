@@ -20,9 +20,9 @@ use topcoat::{
         error::{SeeOther, bad_request, internal_server_error, see_other},
         page, route,
     },
-    runtime::{Event, shard},
+    runtime::{Event, shard, signal},
     view::Unescaped,
-    view::view,
+    view::{View, view},
 };
 use url::form_urlencoded;
 
@@ -234,10 +234,10 @@ struct Claimed {
 /// The heading and the form shell stay put. Everything the review changes
 /// lives in the shard below, so a click re-plans the list in place.
 #[page("/searches/import")]
-async fn import_preview() -> Result {
-    view! {
-        signal review = String::new();
+async fn import_preview(cx: &Cx) -> Result<impl View> {
+    let review = signal(cx, String::new);
 
+    Ok(view! {
         // The shard's checkboxes are rendered outside this render, so the
         // form is read back through the serializer rather than a capture.
         <script>(Unescaped::new_unchecked(components::ROW_ACTIONS))</script>
@@ -326,7 +326,7 @@ async fn import_preview() -> Result {
                 components::link_button(href: "/searches", label: "Cancel")
             </div>
         </form>
-    }
+    })
 }
 
 /// Lists every subject the index holds, re-planned from what the reader
@@ -336,7 +336,7 @@ async fn import_preview() -> Result {
 /// is compared against what the index holds, so an id naming nothing
 /// excludes nothing.
 #[shard]
-async fn import_suggestions(cx: &Cx, review: String) -> Result {
+async fn import_suggestions(cx: &Cx, review: String) -> Result<impl View> {
     let services = app_context::<Services>(cx);
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let now = services.clock.now();
@@ -371,7 +371,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
         .collect::<Vec<_>>();
     let empty = rows.is_empty();
 
-    view! {
+    Ok(view! {
         match rows {
             _ if torrents.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No torrent is indexed. Scan the client from the "
@@ -513,7 +513,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                 }
             </ul>,
         }
-    }
+    })
 }
 
 /// Whether the pick checkbox of `suggestion` renders checked.

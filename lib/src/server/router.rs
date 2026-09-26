@@ -4,6 +4,7 @@ use std::{io, path::Path};
 use topcoat::{
     asset::{AssetBundle, RouterBuilderAssetExt},
     router::{Router, RouterBuilderDiscoverExt},
+    runtime::RouterBuilderRuntimeExt,
 };
 
 use crate::feed::registry::FeedRegistry;
@@ -35,6 +36,9 @@ pub(super) fn build(
         .app_context(searches)
         .app_context(scan)
         .layer(RequestSpan)
+        // A page rerun arrives as a POST. The runtime layer rewrites it to a
+        // GET before the layers registered ahead of it run.
+        .runtime()
         .build())
 }
 

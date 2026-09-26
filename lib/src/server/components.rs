@@ -1,6 +1,6 @@
 use topcoat::{
     Result,
-    view::{class, component, view},
+    view::{View, class, component, view},
 };
 
 use super::format;
@@ -23,8 +23,8 @@ use url::form_urlencoded;
 /// parser and a search each read a name through their own fields, so the
 /// caller passes the path of the editor the runs belong to.
 #[component]
-pub(crate) async fn filename(segments: &[Segment], editor: &str) -> Result {
-    view! {
+pub(crate) async fn filename(segments: &[Segment], editor: &str) -> Result<impl View> {
+    Ok(view! {
         <span class="font-mono text-sm break-all">
             for segment in segments {
                 match segment.field {
@@ -40,7 +40,7 @@ pub(crate) async fn filename(segments: &[Segment], editor: &str) -> Result {
                 }
             }
         </span>
-    }
+    })
 }
 
 /// One chip of a row that narrows the listing.
@@ -49,8 +49,13 @@ pub(crate) async fn filename(segments: &[Segment], editor: &str) -> Result {
 /// reads every chip of a row. `name` is what that handler matches on, which
 /// is how two rows of chips settle two different things.
 #[component]
-pub(crate) async fn filter_chip(name: &str, value: &str, label: &str, current: bool) -> Result {
-    view! {
+pub(crate) async fn filter_chip(
+    name: &str,
+    value: &str,
+    label: &str,
+    current: bool,
+) -> Result<impl View> {
+    Ok(view! {
         <button
             type="button"
             name=(name)
@@ -64,7 +69,7 @@ pub(crate) async fn filter_chip(name: &str, value: &str, label: &str, current: b
         >
             (label)
         </button>
-    }
+    })
 }
 
 /// One search that claims a listed title.
@@ -82,8 +87,13 @@ pub(crate) struct Matched {
 /// The chip names its state in its own value, so one delegated handler reads
 /// every chip. An empty value is every state rather than one.
 #[component]
-pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current: bool) -> Result {
-    view! {
+pub(crate) async fn diff_filter(
+    value: &str,
+    label: &str,
+    count: usize,
+    current: bool,
+) -> Result<impl View> {
+    Ok(view! {
         <button
             type="button"
             name="diff-filter"
@@ -97,7 +107,7 @@ pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current:
         >
             (label) " " <span class="text-slate-500">(count)</span>
         </button>
-    }
+    })
 }
 
 /// One stored title in the editor, tinted by how the edit changed it.
@@ -110,7 +120,7 @@ pub(crate) async fn diff_filter(value: &str, label: &str, count: usize, current:
 /// fails until the search claims it, which is how a reader says "make this
 /// match".
 #[component]
-pub(crate) async fn match_row(matched: &Match, editor: &str) -> Result {
+pub(crate) async fn match_row(matched: &Match, editor: &str) -> Result<impl View> {
     let payload = {
         let mut pairs = form_urlencoded::Serializer::new(String::new());
 
@@ -122,7 +132,7 @@ pub(crate) async fn match_row(matched: &Match, editor: &str) -> Result {
         pairs.finish()
     };
 
-    view! {
+    Ok(view! {
         <li
             id=(format!("match-{}", matched.id))
             class=(class!(
@@ -153,7 +163,7 @@ pub(crate) async fn match_row(matched: &Match, editor: &str) -> Result {
                 "save as test"
             </button>
         </li>
-    }
+    })
 }
 
 /// What the page worked out about one listed release.
@@ -231,8 +241,8 @@ pub(crate) async fn item_row(
     item: &StoredItem,
     details: &ItemDetails,
     selected: bool,
-) -> Result {
-    view! {
+) -> Result<impl View> {
+    Ok(view! {
         <li
             id=(format!("item-{}", item.id))
             class=(class!(
@@ -318,7 +328,7 @@ pub(crate) async fn item_row(
                 }
             </div>
         </li>
-    }
+    })
 }
 
 /// Names the searches a grab passed, in the order they were recorded.
@@ -344,8 +354,8 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
 /// under and the position that tints it. A parser holds every one of its
 /// fields itself, so the two never part company.
 #[component]
-pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
-    view! {
+pub(crate) async fn field_row(index: usize, field: &Field) -> Result<impl View> {
+    Ok(view! {
         <div
             id=(format!("field-{index}"))
             class="grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center"
@@ -474,7 +484,7 @@ pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
                 </div>
             </div>
         </div>
-    }
+    })
 }
 
 /// One saved test inside the search editor.
@@ -491,8 +501,12 @@ pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
 /// than its place in the list, so a caller that lists a subset keeps every
 /// field the color it wears in the rows above.
 #[component]
-pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, Field)]) -> Result {
-    view! {
+pub(crate) async fn test_row(
+    index: usize,
+    test: &TitleTest,
+    fields: &[(usize, Field)],
+) -> Result<impl View> {
+    Ok(view! {
         <div
             id=(format!("test-{index}"))
             class="grid scroll-mt-24 grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 target:bg-slate-800/40 md:grid-cols-12 md:items-center"
@@ -536,7 +550,7 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, F
                 </button>
             </div>
         </div>
-    }
+    })
 }
 
 /// Every saved test's verdict against the draft.
@@ -546,8 +560,8 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, F
 /// way. It names the title the reader wrote, whether the rules claim it, and
 /// every field the two disagree about.
 #[component]
-pub(super) async fn test_verdicts(judged: &[(TitleTest, Verdict)]) -> Result {
-    view! {
+pub(super) async fn test_verdicts(judged: &[(TitleTest, Verdict)]) -> Result<impl View> {
+    Ok(view! {
         if !judged.is_empty() {
             <div class="border-t border-slate-800 px-4 py-3">
                 <ul class="space-y-2">
@@ -596,7 +610,7 @@ pub(super) async fn test_verdicts(judged: &[(TitleTest, Verdict)]) -> Result {
                 </ul>
             </div>
         }
-    }
+    })
 }
 
 /// One condition inside the search editor.
@@ -612,7 +626,11 @@ pub(super) async fn test_verdicts(judged: &[(TitleTest, Verdict)]) -> Result {
 /// The arrows trade the row with its neighbor, and the order they set is the
 /// one the search stores.
 #[component]
-pub(crate) async fn condition_row(index: usize, condition: &Condition, fields: &[Field]) -> Result {
+pub(crate) async fn condition_row(
+    index: usize,
+    condition: &Condition,
+    fields: &[Field],
+) -> Result<impl View> {
     // The dot follows the named field rather than the row, because a
     // condition is about one field and the color is how the reader finds it
     // among the rows above.
@@ -621,7 +639,7 @@ pub(crate) async fn condition_row(index: usize, condition: &Condition, fields: &
         .position(|field| field.name == condition.field)
         .map(Tint::at);
 
-    view! {
+    Ok(view! {
         <div class="grid grid-cols-1 gap-3 border-t border-slate-800 px-4 py-3 md:grid-cols-12 md:items-center">
             <div class="md:col-span-3">
                 <label class="block text-xs text-slate-500">"Field"</label>
@@ -710,7 +728,7 @@ pub(crate) async fn condition_row(index: usize, condition: &Condition, fields: &
                 </div>
             </div>
         </div>
-    }
+    })
 }
 
 /// A link that carries the reader to a page, styled as a button.
@@ -719,15 +737,15 @@ pub(crate) async fn condition_row(index: usize, condition: &Condition, fields: &
 /// belongs to a procedure the page calls, which leaves the reader where they
 /// are.
 #[component]
-pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
-    view! {
+pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result<impl View> {
+    Ok(view! {
         <a
             href=(href)
             class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
         >
             (label)
         </a>
-    }
+    })
 }
 
 /// One search on the admin index.
@@ -741,8 +759,8 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result {
 /// always answers. [`None`] renders no badge rather than an error, because a
 /// missing one is a set the process refused to run.
 #[component]
-pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Result {
-    view! {
+pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Result<impl View> {
+    Ok(view! {
         <li id=(format!("search-{}", search.id)) class="scroll-mt-24">
             <a
                 href=(format!("/searches/{}", search.id))
@@ -766,7 +784,7 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
                 </div>
             </a>
         </li>
-    }
+    })
 }
 
 /// Reports how a feed's last check went.
@@ -775,8 +793,8 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
 /// has been tried. That is a different state from a check that failed, and
 /// the colors keep them apart at a glance.
 #[component]
-pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result {
-    view! {
+pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result<impl View> {
+    Ok(view! {
         <span class=(class!(
             "rounded-full px-2 py-0.5 text-xs",
             match check.map(|check| check.outcome.is_ok()) {
@@ -791,7 +809,7 @@ pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result {
                 None => "unchecked",
             }
         </span>
-    }
+    })
 }
 
 /// Reports whether a search runs, without changing it.
@@ -799,8 +817,8 @@ pub(crate) async fn check_badge(check: Option<&FeedCheck>) -> Result {
 /// Used where the badge sits inside a larger link, which holds no control of
 /// its own.
 #[component]
-pub(crate) async fn status_badge(enabled: bool) -> Result {
-    view! {
+pub(crate) async fn status_badge(enabled: bool) -> Result<impl View> {
+    Ok(view! {
         <span class=(class!(
             "rounded-full px-2 py-0.5 text-xs",
             "bg-emerald-500/15 text-emerald-300" if enabled
@@ -808,7 +826,7 @@ pub(crate) async fn status_badge(enabled: bool) -> Result {
         ))>
             if enabled { "active" } else { "paused" }
         </span>
-    }
+    })
 }
 
 /// One torrent the client holds.
@@ -831,7 +849,7 @@ pub(crate) async fn torrent_row(
     search: Option<&Matched>,
     values: &[ParsedValue],
     ingested: Option<&str>,
-) -> Result {
+) -> Result<impl View> {
     // Each tint is a whole literal, because the Tailwind scanner reads class
     // names out of source text and never sees one joined at runtime.
     let (word, tint) = match &torrent.state {
@@ -844,7 +862,7 @@ pub(crate) async fn torrent_row(
 
     let percent = format::percent(torrent.progress);
 
-    view! {
+    Ok(view! {
         <li class=(class!(
             "rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3",
             "opacity-60" if search.is_none(),
@@ -904,7 +922,7 @@ pub(crate) async fn torrent_row(
                 </span>
             </div>
         </li>
-    }
+    })
 }
 
 /// The values a search read out of one name, one chip per field.
@@ -917,8 +935,8 @@ pub(crate) async fn torrent_row(
 /// The caller guards an empty list, so this renders one strip and a row with
 /// nothing parsed adds no empty element.
 #[component]
-pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result {
-    view! {
+pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result<impl View> {
+    Ok(view! {
         <div class="mt-1.5 flex flex-wrap gap-1">
             for value in values {
                 <span
@@ -937,7 +955,7 @@ pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result {
                 </span>
             }
         </div>
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1143,7 +1161,7 @@ pub(crate) async fn match_section(
     matched: &[Match],
     errors: &[PatternError],
     filter: Option<Diff>,
-) -> Result {
+) -> Result<impl View> {
     let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
 
     let listed: Vec<_> = matched
@@ -1151,7 +1169,7 @@ pub(crate) async fn match_section(
         .filter(|one| filter.is_none_or(|state| one.diff == state))
         .collect();
 
-    view! {
+    Ok(view! {
         <section id="matches" class="mt-8 scroll-mt-24">
             <div class="flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -1199,7 +1217,7 @@ pub(crate) async fn match_section(
                 </ul>
             }
         </section>
-    }
+    })
 }
 
 /// One parser on the parser index.
@@ -1208,8 +1226,8 @@ pub(crate) async fn match_section(
 /// state badge. A parser claims nothing, so there is nothing about it to be
 /// on or off.
 #[component]
-pub(crate) async fn parser_card(parser: &Parser) -> Result {
-    view! {
+pub(crate) async fn parser_card(parser: &Parser) -> Result<impl View> {
+    Ok(view! {
         <li id=(format!("parser-{}", parser.id)) class="scroll-mt-24">
             <a
                 href=(format!("/parsers/{}", parser.id))
@@ -1229,5 +1247,5 @@ pub(crate) async fn parser_card(parser: &Parser) -> Result {
                 </p>
             </a>
         </li>
-    }
+    })
 }

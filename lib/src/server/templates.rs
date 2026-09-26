@@ -2,15 +2,15 @@ use topcoat::{
     Result,
     context::Cx,
     dev,
-    router::{layout, request::uri},
+    router::{Slot, layout, request::uri},
     runtime, tailwind,
-    view::{class, component, view},
+    view::{View, class, component, view},
 };
 
 /// Wraps every page in the HTML document shell and the site header.
 #[layout("/")]
-async fn document(slot: Result) -> Result {
-    view! {
+async fn document(slot: Slot<'_>) -> Result<impl View> {
+    Ok(view! {
         <!DOCTYPE html>
         <html lang="en">
             <head>
@@ -24,19 +24,19 @@ async fn document(slot: Result) -> Result {
             <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
                 site_header()
                 <main class="mx-auto w-full max-w-5xl px-6 py-10">
-                    (slot?)
+                    (slot)
                 </main>
             </body>
         </html>
-    }
+    })
 }
 
 /// The bar every page shares, holding the wordmark and the primary nav.
 #[component]
-async fn site_header(cx: &Cx) -> Result {
+async fn site_header(cx: &Cx) -> Result<impl View> {
     let path = uri(cx).path();
 
-    view! {
+    Ok(view! {
         <header class="border-b border-slate-800 bg-slate-900/40">
             <div class="mx-auto flex w-full max-w-5xl items-center gap-8 px-6 py-4">
                 <a href="/" class="text-base font-semibold tracking-tight text-slate-100">
@@ -72,12 +72,12 @@ async fn site_header(cx: &Cx) -> Result {
                 </nav>
             </div>
         </header>
-    }
+    })
 }
 
 #[component]
-async fn nav_link(href: &str, label: &str, current: bool) -> Result {
-    view! {
+async fn nav_link(href: &str, label: &str, current: bool) -> Result<impl View> {
+    Ok(view! {
         <a
             href=(href)
             class=(class!(
@@ -90,5 +90,5 @@ async fn nav_link(href: &str, label: &str, current: bool) -> Result {
         >
             (label)
         </a>
-    }
+    })
 }
