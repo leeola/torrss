@@ -491,7 +491,7 @@ pub(crate) async fn field_row(index: usize, field: &Field) -> Result {
 /// than its place in the list, so a caller that lists a subset keeps every
 /// field the color it wears in the rows above.
 #[component]
-pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, &Field)]) -> Result {
+pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, Field)]) -> Result {
     view! {
         <div
             id=(format!("test-{index}"))
@@ -546,7 +546,7 @@ pub(crate) async fn test_row(index: usize, test: &TitleTest, fields: &[(usize, &
 /// way. It names the title the reader wrote, whether the rules claim it, and
 /// every field the two disagree about.
 #[component]
-pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
+pub(super) async fn test_verdicts(judged: &[(TitleTest, Verdict)]) -> Result {
     view! {
         if !judged.is_empty() {
             <div class="border-t border-slate-800 px-4 py-3">
@@ -612,11 +612,7 @@ pub(super) async fn test_verdicts(judged: &[(&TitleTest, Verdict)]) -> Result {
 /// The arrows trade the row with its neighbor, and the order they set is the
 /// one the search stores.
 #[component]
-pub(crate) async fn condition_row(
-    index: usize,
-    condition: &Condition,
-    fields: &[&Field],
-) -> Result {
+pub(crate) async fn condition_row(index: usize, condition: &Condition, fields: &[Field]) -> Result {
     // The dot follows the named field rather than the row, because a
     // condition is about one field and the color is how the reader finds it
     // among the rows above.

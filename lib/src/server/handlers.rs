@@ -1428,12 +1428,13 @@ async fn search_editor(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let search = engine
         .search(path_param::<SearchId>(cx))
-        .ok_or_not_found()?;
+        .ok_or_not_found()?
+        .clone();
 
-    let draft = stored_draft(search);
+    let draft = stored_draft(&search);
 
     view! {
-        editor(engine: &engine, search: Some(search), draft: &draft)
+        editor(engine: &engine, search: Some(&search), draft: &draft)
     }
 }
 
@@ -1847,7 +1848,10 @@ pub(super) async fn test_rows(cx: &Cx, rows: String) -> Result {
 
     // A draft that names no parser reads no value, so a test has nothing to
     // expect and the row carries no input.
-    let fields = parser_fields(&engine, posted.parser.as_deref());
+    let fields = parser_fields(&engine, posted.parser.as_deref())
+        .into_iter()
+        .cloned()
+        .collect::<Vec<Field>>();
     let named = condition_fields(&fields, &posted.conditions);
 
     view! {
@@ -1870,7 +1874,10 @@ async fn condition_rows(cx: &Cx, rows: String) -> Result {
 
     // A draft that names no parser reads no value, so the select offers
     // nothing to compare against.
-    let fields = parser_fields(&engine, posted.parser.as_deref());
+    let fields = parser_fields(&engine, posted.parser.as_deref())
+        .into_iter()
+        .cloned()
+        .collect::<Vec<Field>>();
 
     view! {
         for (index, condition) in posted.conditions.iter().enumerate() {
@@ -1900,8 +1907,11 @@ pub(super) async fn test_results(cx: &Cx, draft: String) -> Result {
 
     let judged = posted
         .tests
-        .iter()
-        .map(|test| (test, verdict::verdict(&rules, test)))
+        .into_iter()
+        .map(|test| {
+            let verdict = verdict::verdict(&rules, &test);
+            (test, verdict)
+        })
         .collect::<Vec<_>>();
 
     view! {
@@ -1930,7 +1940,7 @@ fn parser_fields<'a>(engine: &'a Engine, id: Option<&str>) -> Vec<&'a Field> {
 ///
 /// A condition row naming no field names nothing, which is what the reader
 /// posts the moment they add one.
-fn condition_fields<'a>(fields: &[&'a Field], conditions: &[Condition]) -> Vec<(usize, &'a Field)> {
+fn condition_fields(fields: &[Field], conditions: &[Condition]) -> Vec<(usize, Field)> {
     fields
         .iter()
         .enumerate()
@@ -1939,7 +1949,7 @@ fn condition_fields<'a>(fields: &[&'a Field], conditions: &[Condition]) -> Vec<(
                 .iter()
                 .any(|condition| condition.field == field.name)
         })
-        .map(|(position, field)| (position, *field))
+        .map(|(position, field)| (position, field.clone()))
         .collect()
 }
 

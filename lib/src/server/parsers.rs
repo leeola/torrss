@@ -88,13 +88,14 @@ async fn parser_editor_page(cx: &Cx) -> Result {
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let parser = engine
         .parser(path_param::<ParserId>(cx))
-        .ok_or_not_found()?;
+        .ok_or_not_found()?
+        .clone();
 
     view! {
         if parser.built_in {
-            built_in_parser(parser: parser)
+            built_in_parser(parser: &parser)
         } else {
-            parser_editor(parser: Some(parser))
+            parser_editor(parser: Some(&parser))
         }
     }
 }
@@ -705,7 +706,12 @@ async fn test_rows(cx: &Cx, rows: String) -> Result {
     let _ = cx;
 
     let posted = ParserRows::parse(&rows);
-    let fields = posted.fields.iter().enumerate().collect::<Vec<_>>();
+    let fields = posted
+        .fields
+        .iter()
+        .cloned()
+        .enumerate()
+        .collect::<Vec<_>>();
 
     view! {
         for (index, test) in posted.tests.iter().enumerate() {
@@ -738,8 +744,11 @@ async fn test_results(cx: &Cx, draft: String) -> Result {
 
     let judged = posted
         .tests
-        .iter()
-        .map(|test| (test, verdict::verdict(&rules, test)))
+        .into_iter()
+        .map(|test| {
+            let verdict = verdict::verdict(&rules, &test);
+            (test, verdict)
+        })
         .collect::<Vec<_>>();
 
     view! {
