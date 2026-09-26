@@ -601,6 +601,8 @@ async fn feed_listing(
                         item: item,
                         details: shown,
                         selected: *selected,
+                        grouped: false,
+                        preferred: false,
                     )
                 }
             </ul>

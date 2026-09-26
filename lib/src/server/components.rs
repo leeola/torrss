@@ -235,12 +235,21 @@ pub(crate) struct Grabbed {
 /// The title renders as plain monospace rather than tinted by part. Tinting
 /// needs the segments the search editor works from, which are checked-in
 /// data rather than anything the engine produces from a real title.
+///
+/// A grouped row sits under headers that name its subject and identity, and
+/// repeats neither. It shows only the values that are no identity, and it
+/// names no search, because the subject header names them. Its title moves
+/// to a dim line below the details.
+///
+/// `preferred` marks the release the preference lists rank best.
 #[component]
 pub(crate) async fn item_row(
     engine: &Engine,
     item: &StoredItem,
     details: &ItemDetails,
     selected: bool,
+    grouped: bool,
+    preferred: bool,
 ) -> Result<impl View> {
     Ok(view! {
         <li
@@ -261,7 +270,18 @@ pub(crate) async fn item_row(
 
             <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
-                    <span class="font-mono text-sm break-all">(&item.item.title)</span>
+                    if grouped {
+                        for value in details.values.iter().filter(|value| !value.identity) {
+                            parsed_chip(value: value)
+                        }
+                    } else {
+                        <span class="font-mono text-sm break-all">(&item.item.title)</span>
+                    }
+                    if preferred {
+                        <span class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300">
+                            "preferred"
+                        </span>
+                    }
                     if let Some(label) = details.hidden {
                         <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
                             (label)
@@ -282,27 +302,29 @@ pub(crate) async fn item_row(
                     }
                 </div>
 
-                if !details.values.is_empty() {
+                if !grouped && !details.values.is_empty() {
                     parsed_chips(values: &details.values)
                 }
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    if details.searches.is_empty() {
-                        <span class="text-slate-600">"unmatched"</span>
-                        <a
-                            href=(format!("/searches/new?from={}", item.id))
-                            class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                        >
-                            "Save as search"
-                        </a>
-                    } else {
-                        for search in &details.searches {
+                    if !grouped {
+                        if details.searches.is_empty() {
+                            <span class="text-slate-600">"unmatched"</span>
                             <a
-                                href=(format!("/searches/{}", search.id))
+                                href=(format!("/searches/new?from={}", item.id))
                                 class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                             >
-                                (&search.name)
+                                "Save as search"
                             </a>
+                        } else {
+                            for search in &details.searches {
+                                <a
+                                    href=(format!("/searches/{}", search.id))
+                                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                                >
+                                    (&search.name)
+                                </a>
+                            }
                         }
                     }
                     <span>(&details.feed_name)</span>
@@ -316,6 +338,10 @@ pub(crate) async fn item_row(
                     </span>
                     <span>(&details.age)</span>
                 </div>
+
+                if grouped {
+                    <p class="mt-1 font-mono text-xs text-slate-600 break-all">(&item.item.title)</p>
+                }
 
                 if let Some(grabbed) = &details.grab {
                     <p class="mt-1 text-xs text-slate-500">
@@ -939,22 +965,33 @@ pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result<impl View> {
     Ok(view! {
         <div class="mt-1.5 flex flex-wrap gap-1">
             for value in values {
-                <span
-                    title=(if value.identity {
-                        format!("{} (identity)", value.name)
-                    } else {
-                        value.name.to_owned()
-                    })
-                    class=(class!(
-                        "rounded-sm px-1.5 py-0.5 font-mono text-xs",
-                        Tint::at(value.position).classes(),
-                        "ring-1 ring-current/40" if value.identity else "opacity-70",
-                    ))
-                >
-                    (&value.value)
-                </span>
+                parsed_chip(value: value)
             }
         </div>
+    })
+}
+
+/// One chip of [`parsed_chips`].
+///
+/// A grouped [`item_row`] renders the chips of its values that are no
+/// identity in its title line, without the strip around them.
+#[component]
+async fn parsed_chip(value: &ParsedValue) -> Result<impl View> {
+    Ok(view! {
+        <span
+            title=(if value.identity {
+                format!("{} (identity)", value.name)
+            } else {
+                value.name.to_owned()
+            })
+            class=(class!(
+                "rounded-sm px-1.5 py-0.5 font-mono text-xs",
+                Tint::at(value.position).classes(),
+                "ring-1 ring-current/40" if value.identity else "opacity-70",
+            ))
+        >
+            (&value.value)
+        </span>
     })
 }
 
