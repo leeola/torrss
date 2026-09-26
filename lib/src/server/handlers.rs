@@ -407,7 +407,7 @@ async fn feed_listing(
     // the listing.
     let _ = version;
 
-    let active = Some(filter.as_str()).filter(|id| !id.is_empty());
+    let active = Some(filter).filter(|id| !id.is_empty());
     let selection = IdList::new(Some(&kept));
 
     let registry = app_context::<Arc<FeedRegistry>>(cx);
@@ -421,7 +421,7 @@ async fn feed_listing(
     // A bookmark outlives the registration it names, because a restart empties
     // the registry while the rows stay. An id that names nothing lists nothing.
     // Falling back to every feed instead reads as that feed's whole contents.
-    let chosen = active.and_then(|id| registry.get(id));
+    let chosen = active.as_deref().and_then(|id| registry.get(id));
     let items = if active.is_some() && chosen.is_none() {
         Vec::new()
     } else {
@@ -505,6 +505,13 @@ async fn feed_listing(
         })
         .collect();
 
+    let rows = listed
+        .iter()
+        .zip(details)
+        .zip(&ids)
+        .map(|(((item, _, _), shown), id)| ((*item).clone(), shown, selection.contains(id)))
+        .collect::<Vec<_>>();
+
     view! {
         // The chips belong to the shard, because only a re-render presses the
         // one the reader picked. A component takes concrete values, so a chip
@@ -524,7 +531,7 @@ async fn feed_listing(
                     name: "feed-filter",
                     value: entry.id.as_str(),
                     label: entry.name.as_str(),
-                    current: active == Some(entry.id.as_str()),
+                    current: active.as_deref() == Some(entry.id.as_str()),
                 )
             }
         </nav>
@@ -603,7 +610,7 @@ async fn feed_listing(
             }
         </p>
 
-        if listed.is_empty() {
+        if rows.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 if !query.is_empty() {
                     "No title contains “" (&query) "”."
@@ -617,12 +624,12 @@ async fn feed_listing(
             </p>
         } else {
             <ul class="mt-4 flex flex-col gap-2">
-                for ((item, _, _), (id, shown)) in listed.iter().zip(ids.iter().zip(&details)) {
+                for (item, shown, selected) in &rows {
                     components::item_row(
                         engine: &engine,
                         item: item,
                         details: shown,
-                        selected: selection.contains(id),
+                        selected: *selected,
                     )
                 }
             </ul>
@@ -1067,19 +1074,20 @@ async fn client_torrents(cx: &Cx, version: f64) -> Result {
                 .unwrap_or_default();
             let age = entry.grabbed_at.map(|at| format::age(now, Some(at)));
 
-            (&entry.torrent, matched, values, age)
+            (entry.torrent.clone(), matched, values, age)
         })
         .collect::<Vec<_>>();
+    let empty = rows.is_empty();
 
     view! {
-        match &rows {
-            entries if entries.is_empty() => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+        match rows {
+            _ if empty => <p class="mt-2 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No torrent is indexed."
             </p>,
             entries => <ul class="mt-2 flex flex-col gap-2">
                 for (torrent, matched, values, age) in entries {
                     components::torrent_row(
-                        torrent: torrent,
+                        torrent: &torrent,
                         search: matched.as_ref(),
                         values: values.as_slice(),
                         ingested: age.as_deref(),

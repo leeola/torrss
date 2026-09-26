@@ -200,8 +200,8 @@ fn kept(suggestion: &Suggestion, review: Option<&Review>) -> Vec<Condition> {
 }
 
 /// One suggestion with every name the row renders resolved.
-struct Row<'a> {
-    suggestion: &'a Suggestion,
+struct Row {
+    suggestion: Suggestion,
 
     /// What the suggested search is called.
     name: String,
@@ -350,12 +350,12 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
     // The names are resolved here rather than in the view, because a row
     // borrows them and a value built inline dies before the row reads it.
     let rows = suggestions
-        .iter()
+        .into_iter()
         .map(|suggestion| Row {
             name: named(
                 &engine,
                 &suggestion.parser,
-                &kept(suggestion, review.as_ref()),
+                &kept(&suggestion, review.as_ref()),
             ),
             claimed: suggestion
                 .collision
@@ -369,9 +369,10 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
             suggestion,
         })
         .collect::<Vec<_>>();
+    let empty = rows.is_empty();
 
     view! {
-        match &rows {
+        match rows {
             _ if torrents.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "No torrent is indexed. Scan the client from the "
                 <a
@@ -382,7 +383,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                 </a>
                 " page."
             </p>,
-            entries if entries.is_empty() => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+            _ if empty => <p class="mt-6 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 "The client holds no show a parser reads."
             </p>,
             entries => <ul class="mt-6 flex flex-col gap-2">
@@ -394,7 +395,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                                     type="checkbox"
                                     name="pick"
                                     value=(format!("{}|{}", suggestion.parser, suggestion.key))
-                                    checked=(picked(review.as_ref(), suggestion))
+                                    checked=(picked(review.as_ref(), &suggestion))
                                     disabled=(claimed.as_ref().is_some_and(|claimed| claimed.same_parser))
                                     class="size-4 rounded border-slate-700 bg-slate-950"
                                 >
@@ -474,11 +475,11 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result {
                                             <input
                                                 type="checkbox"
                                                 name="keep"
-                                                value=(condition_value(suggestion, condition))
+                                                value=(condition_value(&suggestion, condition))
                                                 checked=(review.as_ref().is_some_and(|review| {
                                                     review
                                                         .kept
-                                                        .contains(&condition_value(suggestion, condition))
+                                                        .contains(&condition_value(&suggestion, condition))
                                                 }))
                                                 class="sr-only"
                                             >
