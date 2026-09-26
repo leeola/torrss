@@ -22,7 +22,7 @@ use url::Url;
 
 use crate::clock::{self, Clock};
 use crate::feed::store::{FeedCheck, FeedStore};
-use crate::feed::{Feed, FeedAuth, FeedError, FeedSource, redacted};
+use crate::feed::{Feed, FeedAuth, FeedError, FeedItem, FeedSource, redacted};
 use crate::store;
 
 /// One registered feed.
@@ -273,9 +273,13 @@ pub async fn check(
 
     let at = clock.now();
     let outcome = match source.fetch(&entry.url, &entry.auth).await {
-        Ok(feed) => store::ingest(pool, &entry.url, at, &feed.items)
-            .await
-            .map_err(|error| error.to_string()),
+        Ok(feed) => {
+            warn_duplicates(pool, &entry.url, &feed.items).await;
+
+            store::ingest(pool, &entry.url, at, &feed.items)
+                .await
+                .map_err(|error| error.to_string())
+        }
         Err(error) => Err(error.to_string()),
     };
 
@@ -294,6 +298,26 @@ pub async fn check(
             warn!(error = %error, "check not stored");
             true
         }
+    }
+}
+
+/// Warns about each item whose title a stored row carries under another
+/// link.
+///
+/// A read failure only warns, because the ingest that follows is what the
+/// check is for.
+async fn warn_duplicates(pool: &SqlitePool, feed_url: &Url, items: &[FeedItem]) {
+    match store::duplicates(pool, feed_url, items).await {
+        Ok(duplicates) => {
+            for duplicate in duplicates {
+                warn!(
+                    title = %duplicate.title,
+                    other = %redacted(&duplicate.feed_url),
+                    "duplicate title"
+                );
+            }
+        }
+        Err(error) => warn!(error = %error, "duplicates not read"),
     }
 }
 

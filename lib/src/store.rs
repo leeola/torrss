@@ -65,6 +65,20 @@ const SELECT_ONE: &str = "
     WHERE id = ?1
 ";
 
+/// Reads the feed of a stored row that carries an item's title under
+/// another link.
+///
+/// Only an item its feed has not stored yet reports, so each pair warns
+/// once, at the arrival of the second.
+const DUPLICATE: &str = "
+    SELECT feed_url
+    FROM feed_items
+    WHERE title = ?1
+      AND link != ?2
+      AND NOT EXISTS (SELECT 1 FROM feed_items WHERE feed_url = ?3 AND guid = ?4)
+    LIMIT 1
+";
+
 /// What one fetch put into the store.
 ///
 /// The two counts differ whenever a tracker republishes what it already
@@ -77,6 +91,18 @@ pub struct Ingest {
 
     /// How many of them the store had never seen.
     pub added: usize,
+}
+
+/// A fetched item whose title a stored row carries under another link.
+///
+/// Two links under one title are two torrents. A listing that keeps one row
+/// per title shows only one of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Duplicate {
+    pub title: String,
+
+    /// The feed of the stored row, which is the other side of the pair.
+    pub feed_url: Url,
 }
 
 /// One stored item, with the times it was first and last seen.
@@ -132,6 +158,39 @@ pub async fn ingest(
         items: items.len(),
         added: usize::try_from(after - before).unwrap_or(0),
     })
+}
+
+/// Returns the items of one fetch whose titles a stored row carries under
+/// another link.
+///
+/// An item that `feed_url` already stored reports nothing, so call this
+/// before [`ingest`] writes the same fetch. A pair then reports once, on the
+/// fetch that brings its second item.
+pub async fn duplicates(
+    pool: &SqlitePool,
+    feed_url: &Url,
+    items: &[FeedItem],
+) -> Result<Vec<Duplicate>, sqlx::Error> {
+    let mut duplicates = Vec::new();
+
+    for item in items {
+        let other: Option<String> = sqlx::query_scalar(DUPLICATE)
+            .bind(&item.title)
+            .bind(item.link.as_str())
+            .bind(feed_url.as_str())
+            .bind(&item.guid)
+            .fetch_optional(pool)
+            .await?;
+
+        if let Some(other) = other {
+            duplicates.push(Duplicate {
+                title: item.title.clone(),
+                feed_url: url(&other)?,
+            });
+        }
+    }
+
+    Ok(duplicates)
 }
 
 /// Returns stored items newest first, for one feed or for every feed.
@@ -223,7 +282,7 @@ mod tests {
     use sqlx::SqlitePool;
     use url::Url;
 
-    use super::{Ingest, StoredItem, ingest, item, items, migrate};
+    use super::{Duplicate, Ingest, StoredItem, duplicates, ingest, item, items, migrate};
     use crate::feed::FeedItem;
     use crate::feed::fake;
 
@@ -247,6 +306,14 @@ mod tests {
             item,
             first_seen: at(first),
             last_seen: at(last),
+        }
+    }
+
+    /// `title` as another tracker links it, which makes it another torrent.
+    fn relinked(title: &str) -> FeedItem {
+        FeedItem {
+            link: url(&format!("https://other.invalid/{title}.torrent")),
+            ..fake::item(title)
         }
     }
 
@@ -327,6 +394,50 @@ mod tests {
                 2
             )],
             "a fetch that omits a value keeps the stored one"
+        );
+    }
+
+    #[sqlx::test]
+    async fn duplicates_names_a_title_another_feed_holds_under_another_link(pool: SqlitePool) {
+        ingest(&pool, &url(FEED), at(1), &[fake::item("A.Release")])
+            .await
+            .expect("ingest");
+
+        assert_eq!(
+            duplicates(&pool, &url(OTHER), &[relinked("A.Release")])
+                .await
+                .expect("duplicates"),
+            vec![Duplicate {
+                title: "A.Release".to_owned(),
+                feed_url: url(FEED),
+            }],
+        );
+    }
+
+    #[sqlx::test]
+    async fn duplicates_ignores_the_same_link_and_a_stored_item(pool: SqlitePool) {
+        ingest(&pool, &url(FEED), at(1), &[fake::item("A.Release")])
+            .await
+            .expect("first feed");
+
+        assert_eq!(
+            duplicates(&pool, &url(OTHER), &[fake::item("A.Release")])
+                .await
+                .expect("duplicates"),
+            Vec::<Duplicate>::new(),
+            "one link under one title is one torrent"
+        );
+
+        ingest(&pool, &url(OTHER), at(2), &[relinked("A.Release")])
+            .await
+            .expect("second feed");
+
+        assert_eq!(
+            duplicates(&pool, &url(OTHER), &[relinked("A.Release")])
+                .await
+                .expect("duplicates"),
+            Vec::<Duplicate>::new(),
+            "a pair reports once, on the fetch that brings its second item"
         );
     }
 
