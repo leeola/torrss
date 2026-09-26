@@ -404,11 +404,11 @@ async fn feed_listing(
     // the registry while the rows stay. An id that names nothing lists nothing.
     // Falling back to every feed instead reads as that feed's whole contents.
     let chosen = active.as_deref().and_then(|id| registry.get(id));
-    let items = if active.is_some() && chosen.is_none() {
+    let items = listing::distinct_titles(if active.is_some() && chosen.is_none() {
         Vec::new()
     } else {
         store::items(&services.db, chosen.as_ref().map(|entry| &entry.url)).await?
-    };
+    });
 
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let owned = index::identities(&engine, &index::all(&services.db).await?);

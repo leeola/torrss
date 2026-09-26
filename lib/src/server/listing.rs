@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::engine::{Engine, Parsed};
 use crate::preference::Preferences;
+use crate::store::StoredItem;
 
 /// Where one title stands against the searches and the library.
 #[derive(Debug, PartialEq, Eq)]
@@ -210,13 +211,37 @@ pub(super) fn title_contains(query: &str, title: &str) -> bool {
         .all(|word| title.contains(word))
 }
 
+/// Keeps the first row of every title and drops the rest.
+///
+/// Two feeds that carry one release store it once each, and the listing
+/// shows it once. Rows arrive newest first from [`crate::store::items`], so
+/// the kept row is the newest announcement, and its link is what a grab
+/// downloads.
+///
+/// A title two feeds carry under different links is two torrents under one
+/// name, and only one of them lists. The feed check warns about each such
+/// pair and names both feeds, so the operator learns of the one left out.
+pub(super) fn distinct_titles(mut items: Vec<StoredItem>) -> Vec<StoredItem> {
+    let mut seen = HashSet::new();
+    items.retain(|stored| seen.insert(stored.item.title.clone()));
+
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use super::{Standing, demote_outranked, parsed_values, standing, title_contains};
+    use chrono::DateTime;
+    use url::Url;
+
+    use super::{
+        Standing, demote_outranked, distinct_titles, parsed_values, standing, title_contains,
+    };
+    use crate::feed::fake;
     use crate::preference::Preferences;
     use crate::search::fixture::ENGINE;
+    use crate::store::StoredItem;
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -531,5 +556,24 @@ mod tests {
                 "{query:?} against the 1080p title"
             );
         }
+    }
+
+    fn stored(id: i64, title: &str) -> StoredItem {
+        StoredItem {
+            id,
+            feed_url: Url::parse("https://tracker.invalid/rss").expect("the test URL parses"),
+            item: fake::item(title),
+            first_seen: DateTime::UNIX_EPOCH,
+            last_seen: DateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn duplicate_titles_keep_the_first_row() {
+        assert_eq!(
+            distinct_titles(vec![stored(3, "A"), stored(2, "B"), stored(1, "A")]),
+            vec![stored(3, "A"), stored(2, "B")],
+            "the first row of a title is its newest announcement"
+        );
     }
 }
