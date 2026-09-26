@@ -1,6 +1,6 @@
 use topcoat::{
     Result,
-    view::{View, class, component, view},
+    view::{View, ViewExt, class, component, view},
 };
 
 use super::format;
@@ -223,6 +223,40 @@ pub(crate) struct Grabbed {
     pub searches: Vec<String>,
 }
 
+/// One show or film on the Results page, with its identities and their
+/// releases.
+///
+/// The view owns everything here, because a view renders after the handler
+/// returns, when the handler's locals are gone.
+pub(crate) struct SubjectRows {
+    pub label: String,
+
+    /// Every search that matches a listed release of the subject, in
+    /// declaration order.
+    pub searches: Vec<Matched>,
+
+    pub groups: Vec<GroupRows>,
+}
+
+/// One identity of a subject, such as an episode or a season pack, with its
+/// releases best first.
+pub(crate) struct GroupRows {
+    pub label: String,
+    pub pack: bool,
+    pub releases: Vec<ReleaseRow>,
+}
+
+/// One release of an identity, with what its row shows.
+pub(crate) struct ReleaseRow {
+    pub item: StoredItem,
+    pub details: ItemDetails,
+    pub selected: bool,
+
+    /// Whether this release leads its identity, as the wanted release the
+    /// preference lists rank best, or the newest of those they rank alike.
+    pub preferred: bool,
+}
+
 /// One stored feed item, prefixed by the checkbox that selects it.
 ///
 /// The checkbox posts nothing. The page reads it, keeps the selection in the
@@ -372,6 +406,90 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// One show or film on the Results page, as a card that folds open on its
+/// releases.
+///
+/// Each identity lists its releases as grouped rows, best first. A subject
+/// with one identity names it in the card header rather than under a heading
+/// of its own, so a lone episode reads as one line and its rows.
+///
+/// The header links every search that matches a release of the subject,
+/// because a grouped row names none.
+#[component]
+pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Result<impl View> {
+    let total: usize = subject
+        .groups
+        .iter()
+        .map(|group| group.releases.len())
+        .sum();
+    let single = match subject.groups.as_slice() {
+        [only] => Some(only),
+        _ => None,
+    };
+
+    // Boxed, because the card nests every row of its subject. Without the box,
+    // the page type grows too deep for the compiler to prove it `Send`.
+    Ok(view! {
+        <li>
+            <details open=(true) class="rounded-lg border border-slate-800 bg-slate-900/40">
+                <summary class="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
+                    <h2 class="text-sm font-semibold text-slate-100">
+                        (&subject.label)
+                        if let Some(group) = single {
+                            " · " (&group.label)
+                            if group.pack {
+                                " · pack"
+                            }
+                        }
+                    </h2>
+                    <span class="text-xs text-slate-500">
+                        (format::count(total, "release", "releases"))
+                    </span>
+                    for search in &subject.searches {
+                        <a
+                            href=(format!("/searches/{}", search.id))
+                            class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                        >
+                            (&search.name)
+                        </a>
+                    }
+                </summary>
+
+                <div class="flex flex-col gap-3 px-4 pb-3">
+                    for group in &subject.groups {
+                        <div>
+                            if single.is_none() {
+                                <h3 class="mb-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                                    (&group.label)
+                                    if group.pack {
+                                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                                            "pack"
+                                        </span>
+                                    }
+                                    <span>(format::count(group.releases.len(), "release", "releases"))</span>
+                                </h3>
+                            }
+                            <ul class="flex flex-col gap-2">
+                                for release in &group.releases {
+                                    item_row(
+                                        engine: engine,
+                                        item: &release.item,
+                                        details: &release.details,
+                                        selected: release.selected,
+                                        grouped: true,
+                                        preferred: release.preferred,
+                                    )
+                                }
+                            </ul>
+                        </div>
+                    }
+                </div>
+            </details>
+        </li>
+    }
+    .boxed())
 }
 
 /// One extraction rule inside the parser editor.

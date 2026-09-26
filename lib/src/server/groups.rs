@@ -14,10 +14,6 @@
 //! subject leads, and which release leads when the preference lists rank two
 //! alike.
 
-// FIXME: `tree` has no caller outside the tests. The Results page that
-// renders the subjects is what it waits on.
-#![allow(dead_code)]
-
 use crate::engine::{Engine, Identity, Parsed};
 use crate::parser::FieldKind;
 use crate::preference::Preferences;

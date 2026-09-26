@@ -13,11 +13,6 @@
 //! short list is a statement about what the reader wants rather than a
 //! filter that hides the rest.
 
-// FIXME: `fields`, `rankable_fields`, and `store::replace` have no caller
-// outside the tests. The Preferences page that edits the lists is what they
-// wait on; the Results page already reads and ranks by them.
-#![allow(dead_code)]
-
 pub(crate) mod store;
 
 use std::collections::BTreeMap;

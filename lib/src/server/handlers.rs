@@ -17,7 +17,7 @@ use topcoat::{
     view::Unescaped,
     view::{View, ViewExt, class, component, view},
 };
-use tracing::error;
+use tracing::{error, warn};
 use url::Url;
 
 use crate::{
@@ -26,14 +26,14 @@ use crate::{
     grab,
     parser::form as parser_form,
     parser::{Field, Parser, TitleTest},
-    search,
+    preference, search,
     search::form::{EditorRows, SearchForm},
     search::import,
     search::registry::{SaveError, Searches},
     search::{Condition, Diff, Search},
     server::{
-        components::{self, Grabbed, ItemDetails, Matched},
-        format, held,
+        components::{self, Grabbed, GroupRows, ItemDetails, Matched, ReleaseRow, SubjectRows},
+        format, groups, held,
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
         query::IdList,
@@ -367,6 +367,10 @@ async fn feed(cx: &Cx) -> Result<impl View> {
 
 /// The stored rows under the chosen filter, and what the page knows of each.
 ///
+/// The rows a search claims fold into subject cards, one per show or film,
+/// with the releases of each identity best first. The rows no search claims
+/// follow as a flat list.
+///
 /// `kept` is the selection the browser holds, which the rows read their
 /// checked state from. `version` is unread here and exists so a grab forces
 /// a re-render once the rows it took are gone.
@@ -412,6 +416,7 @@ async fn feed_listing(
 
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let owned = index::identities(&engine, &index::all(&services.db).await?);
+    let preferences = preference::store::all(&services.db).await?;
     let enabled = engine
         .searches()
         .filter(|saved| saved.enabled)
@@ -470,18 +475,110 @@ async fn feed_listing(
         .collect();
 
     let grabbed = grabs::all(&services.db).await?;
-    let details: Vec<ItemDetails> = listed
+
+    let (matched, unmatched): (Vec<_>, Vec<_>) = listed
         .iter()
-        .map(|(item, standing, matched)| {
-            item_details(&engine, registry, standing, matched, &grabbed, now, item)
+        .partition(|(_, standing, _)| standing.parsed().is_some());
+
+    // Every matched row carries a parse, so every one maps, and an index into
+    // the tree is an index into `matched`.
+    let entries: Vec<groups::Release<'_>> = matched
+        .iter()
+        .filter_map(|(_, standing, _)| {
+            standing.parsed().map(|parsed| groups::Release {
+                parsed,
+                wanted: standing.is_wanted(),
+            })
+        })
+        .collect();
+    let tree = groups::tree(&engine, &preferences, &entries);
+
+    for subject in &tree {
+        for group in &subject.groups {
+            if let (true, [first, second, ..]) = (group.tied, group.releases.as_slice()) {
+                warn!(
+                    subject = %subject.label,
+                    identity = %group.label,
+                    first = %matched[*first].0.item.title,
+                    second = %matched[*second].0.item.title,
+                    "preference tie"
+                );
+            }
+        }
+    }
+
+    let subjects: Vec<SubjectRows> = tree
+        .into_iter()
+        .map(|subject| {
+            let searches = engine
+                .searches()
+                .filter(|saved| {
+                    subject
+                        .groups
+                        .iter()
+                        .flat_map(|group| &group.releases)
+                        .any(|&index| matched[index].2.contains(&saved.id))
+                })
+                .map(|saved| Matched {
+                    id: saved.id.clone(),
+                    name: saved.name.clone(),
+                })
+                .collect();
+
+            SubjectRows {
+                label: subject.label,
+                searches,
+                groups: subject
+                    .groups
+                    .into_iter()
+                    .map(|group| GroupRows {
+                        label: group.label,
+                        pack: group.pack,
+                        releases: group
+                            .releases
+                            .iter()
+                            .map(|&index| {
+                                let (item, standing, matched_ids) = matched[index];
+
+                                ReleaseRow {
+                                    item: (*item).clone(),
+                                    details: item_details(
+                                        &engine,
+                                        registry,
+                                        standing,
+                                        matched_ids,
+                                        &grabbed,
+                                        now,
+                                        item,
+                                    ),
+                                    selected: selection.contains(&item.id.to_string()),
+                                    preferred: group.preferred == Some(index),
+                                }
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            }
         })
         .collect();
 
-    let rows = listed
+    let rows = unmatched
         .iter()
-        .zip(details)
-        .zip(&ids)
-        .map(|(((item, _, _), shown), id)| ((*item).clone(), shown, selection.contains(id)))
+        .map(|(item, standing, matched_ids)| {
+            (
+                (*item).clone(),
+                item_details(
+                    &engine,
+                    registry,
+                    standing,
+                    matched_ids,
+                    &grabbed,
+                    now,
+                    item,
+                ),
+                selection.contains(&item.id.to_string()),
+            )
+        })
         .collect::<Vec<_>>();
 
     Ok(view! {
@@ -581,7 +678,7 @@ async fn feed_listing(
             }
         </p>
 
-        if rows.is_empty() {
+        if subjects.is_empty() && rows.is_empty() {
             <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
                 if !query.is_empty() {
                     "No title contains “" (&query) "”."
@@ -594,18 +691,30 @@ async fn feed_listing(
                 }
             </p>
         } else {
-            <ul class="mt-4 flex flex-col gap-2">
-                for (item, shown, selected) in &rows {
-                    components::item_row(
-                        engine: &engine,
-                        item: item,
-                        details: shown,
-                        selected: *selected,
-                        grouped: false,
-                        preferred: false,
-                    )
+            if !subjects.is_empty() {
+                <ul class="mt-4 flex flex-col gap-3">
+                    for subject in &subjects {
+                        components::subject_card(engine: &engine, subject: subject)
+                    }
+                </ul>
+            }
+            if !rows.is_empty() {
+                if !subjects.is_empty() {
+                    <h2 class="mt-6 text-sm font-semibold text-slate-400">"Unmatched"</h2>
                 }
-            </ul>
+                <ul class="mt-4 flex flex-col gap-2">
+                    for (item, shown, selected) in &rows {
+                        components::item_row(
+                            engine: &engine,
+                            item: item,
+                            details: shown,
+                            selected: *selected,
+                            grouped: false,
+                            preferred: false,
+                        )
+                    }
+                </ul>
+            }
         }
     })
 }
