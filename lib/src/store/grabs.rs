@@ -21,11 +21,12 @@ use sqlx::{Row, SqlitePool};
 /// The update form is what keeps them agreeing once a second table references
 /// a grab.
 const UPSERT: &str = "
-    INSERT INTO grabs (item_id, grabbed_at, error)
-    VALUES (?1, ?2, ?3)
+    INSERT INTO grabs (item_id, grabbed_at, error, status)
+    VALUES (?1, ?2, ?3, ?4)
     ON CONFLICT (item_id) DO UPDATE SET
         grabbed_at = excluded.grabbed_at,
-        error = excluded.error
+        error = excluded.error,
+        status = excluded.status
 ";
 
 /// Reads every attempt with the searches that claimed it.
@@ -37,7 +38,7 @@ const UPSERT: &str = "
 /// sorts by `position` rather than leaving the join to answer in its own
 /// order.
 const SELECT: &str = "
-    SELECT g.item_id, g.grabbed_at, g.error, r.search
+    SELECT g.item_id, g.grabbed_at, g.error, g.status, r.search
     FROM grabs g
     LEFT JOIN grab_searches r ON r.item_id = g.item_id
     ORDER BY g.item_id, r.position
@@ -68,8 +69,28 @@ pub(crate) struct Grab {
     /// Why the attempt failed, or nothing when the client accepted it.
     pub(crate) error: Option<String>,
 
+    /// The HTTP status the tracker answered a failed download with.
+    ///
+    /// Nothing when the grab succeeded, or when it failed at another stage,
+    /// such as an unreachable tracker or a client that refused the torrent.
+    pub(crate) status: Option<u16>,
+
     /// Every search that claimed the release, in declaration order.
     pub(crate) searches: Vec<String>,
+}
+
+impl Grab {
+    /// Whether the tracker no longer serves the release.
+    ///
+    /// A 404 or a 410 says the torrent is gone. A 403 or a 5xx says nothing
+    /// about the release itself, because an expired passkey or an outage
+    /// answers that way for every release alike.
+    // FIXME: `gone` has no caller outside the tests. The wanted list that
+    // hides a release the tracker deleted is what it waits on.
+    #[allow(dead_code)]
+    pub(crate) fn gone(&self) -> bool {
+        matches!(self.status, Some(404 | 410))
+    }
 }
 
 /// One grab the client took, named by the title it was made for.
@@ -95,6 +116,7 @@ pub(crate) async fn record(
     item_id: i64,
     at: DateTime<Utc>,
     error: Option<&str>,
+    status: Option<u16>,
     searches: &[&str],
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
@@ -103,6 +125,7 @@ pub(crate) async fn record(
         .bind(item_id)
         .bind(at)
         .bind(error)
+        .bind(status.map(i64::from))
         .execute(&mut *tx)
         .await?;
 
@@ -146,6 +169,11 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<HashMap<i64, Grab>, sqlx::E
                 item_id,
                 at: row.try_get("grabbed_at")?,
                 error: row.try_get("error")?,
+                status: row
+                    .try_get::<Option<i64>, _>("status")?
+                    .map(u16::try_from)
+                    .transpose()
+                    .map_err(sqlx::Error::decode)?,
                 searches: Vec::new(),
             }),
         };
@@ -222,14 +250,15 @@ mod tests {
             ids[0],
             at(2),
             Some("the download answered with status 403"),
+            None,
             &[],
         )
         .await
         .expect("first attempt");
-        record(&pool, ids[0], at(3), None, &[])
+        record(&pool, ids[0], at(3), None, None, &[])
             .await
             .expect("retry");
-        record(&pool, ids[1], at(4), None, &[])
+        record(&pool, ids[1], at(4), None, None, &[])
             .await
             .expect("other item");
 
@@ -242,6 +271,7 @@ mod tests {
                         item_id: ids[0],
                         at: at(3),
                         error: None,
+                        status: None,
                         searches: Vec::new(),
                     }
                 ),
@@ -251,6 +281,7 @@ mod tests {
                         item_id: ids[1],
                         at: at(4),
                         error: None,
+                        status: None,
                         searches: Vec::new(),
                     }
                 ),
@@ -267,6 +298,7 @@ mod tests {
             ids[0],
             at(2),
             Some("the torrent client rejected the request"),
+            None,
             &[],
         )
         .await
@@ -280,6 +312,7 @@ mod tests {
                     item_id: ids[0],
                     at: at(2),
                     error: Some("the torrent client rejected the request".to_owned()),
+                    status: None,
                     searches: Vec::new(),
                 }
             )])
@@ -294,7 +327,7 @@ mod tests {
     #[sqlx::test]
     async fn record_against_unknown_item_fails(pool: SqlitePool) {
         assert!(
-            record(&pool, 404, at(2), None, &[]).await.is_err(),
+            record(&pool, 404, at(2), None, None, &[]).await.is_err(),
             "foreign keys keep a grab from naming an item nothing stored"
         );
     }
@@ -306,6 +339,7 @@ mod tests {
             &pool,
             ids[0],
             at(2),
+            None,
             None,
             &["series-hollow-meridian", "series-episodes"],
         )
@@ -320,6 +354,7 @@ mod tests {
                     item_id: ids[0],
                     at: at(2),
                     error: None,
+                    status: None,
                     searches: vec![
                         "series-hollow-meridian".to_owned(),
                         "series-episodes".to_owned(),
@@ -338,12 +373,13 @@ mod tests {
             ids[0],
             at(2),
             None,
+            None,
             &["series-hollow-meridian", "series-episodes"],
         )
         .await
         .expect("first attempt");
 
-        record(&pool, ids[0], at(3), None, &["feature-films"])
+        record(&pool, ids[0], at(3), None, None, &["feature-films"])
             .await
             .expect("retry");
 
@@ -355,6 +391,7 @@ mod tests {
                     item_id: ids[0],
                     at: at(3),
                     error: None,
+                    status: None,
                     searches: vec!["feature-films".to_owned()],
                 }
             )]),
@@ -365,7 +402,7 @@ mod tests {
     #[sqlx::test]
     async fn grab_with_no_searches_still_returns(pool: SqlitePool) {
         let ids = ingested(&pool, &["A.Release"]).await;
-        record(&pool, ids[0], at(2), None, &[])
+        record(&pool, ids[0], at(2), None, None, &[])
             .await
             .expect("record");
 
@@ -377,6 +414,7 @@ mod tests {
                     item_id: ids[0],
                     at: at(2),
                     error: None,
+                    status: None,
                     searches: Vec::new(),
                 }
             )]),
@@ -388,24 +426,38 @@ mod tests {
     async fn accepted_lists_only_grabs_the_client_took(pool: SqlitePool) {
         let ids = ingested(&pool, &["A.Release", "B.Release", "C.Release", "D.Release"]).await;
 
-        record(&pool, ids[0], at(2), Some("the client refused it"), &[])
-            .await
-            .expect("failed attempt");
-        record(&pool, ids[1], at(3), None, &[])
+        record(
+            &pool,
+            ids[0],
+            at(2),
+            Some("the client refused it"),
+            None,
+            &[],
+        )
+        .await
+        .expect("failed attempt");
+        record(&pool, ids[1], at(3), None, None, &[])
             .await
             .expect("second item");
-        record(&pool, ids[2], at(4), None, &[])
+        record(&pool, ids[2], at(4), None, None, &[])
             .await
             .expect("third item");
-        record(&pool, ids[0], at(5), None, &[])
+        record(&pool, ids[0], at(5), None, None, &[])
             .await
             .expect("retry");
 
         // Never retried, so this failure is the one the filter has to drop.
         // The newest time, so a missing filter puts it first.
-        record(&pool, ids[3], at(6), Some("the client refused it"), &[])
-            .await
-            .expect("standing failure");
+        record(
+            &pool,
+            ids[3],
+            at(6),
+            Some("the client refused it"),
+            None,
+            &[],
+        )
+        .await
+        .expect("standing failure");
 
         assert_eq!(
             accepted(&pool).await.expect("accepted"),
@@ -433,6 +485,29 @@ mod tests {
             accepted(&pool).await.expect("accepted"),
             Vec::new(),
             "nothing has been grabbed, so nothing has reached the client"
+        );
+    }
+
+    #[test]
+    fn only_404_and_410_are_gone() {
+        let gone = |status| {
+            Grab {
+                item_id: 1,
+                at: at(2),
+                error: None,
+                status,
+                searches: Vec::new(),
+            }
+            .gone()
+        };
+
+        assert_eq!(
+            [Some(404), Some(410), Some(403), None]
+                .into_iter()
+                .map(gone)
+                .collect::<Vec<_>>(),
+            vec![true, true, false, false],
+            "a refusal or an outage says nothing about the release itself"
         );
     }
 }

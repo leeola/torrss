@@ -66,12 +66,19 @@ pub(crate) async fn grab(
     }
 
     let submitted = submit(downloader, client, item, auth).await;
+    let status = match &submitted {
+        Err(GrabError::Download {
+            source: DownloadError::Status { code },
+        }) => Some(*code),
+        _ => None,
+    };
 
     let recorded = grabs::record(
         pool,
         item.id,
         clock.now(),
         submitted.as_ref().err().map(ToString::to_string).as_deref(),
+        status,
         &searches.iter().map(String::as_str).collect::<Vec<_>>(),
     )
     .await
@@ -269,6 +276,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the download answered with status 403".to_owned()),
+                    status: Some(403),
                     searches: Vec::new(),
                 }
             )]),
@@ -307,6 +315,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: Some("the torrent client rejected the request: duplicate".to_owned()),
+                    status: None,
                     searches: Vec::new(),
                 }
             )]),
@@ -339,6 +348,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
+                    status: None,
                     searches: Vec::new(),
                 }
             )])
@@ -374,6 +384,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
+                    status: None,
                     searches: vec!["series-hollow-meridian".to_owned()],
                 }
             )]),
@@ -410,6 +421,7 @@ mod tests {
                     item_id: item.id,
                     at: fakes.clock.now(),
                     error: None,
+                    status: None,
                     searches: Vec::new(),
                 }
             )]),
