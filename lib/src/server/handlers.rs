@@ -227,6 +227,7 @@ async fn feed(cx: &Cx) -> Result<impl View> {
     let version = signal(cx, || 0.0);
     let fetching = signal(cx, || false);
     let grabbing = signal(cx, || false);
+    let reported = signal(cx, String::new);
 
     Ok(view! {
         <script>(Unescaped::new_unchecked(FEED_ACTIONS))</script>
@@ -267,6 +268,10 @@ async fn feed(cx: &Cx) -> Result<impl View> {
                     kept.set(selected.get());
                     search.set(e.target.value);
                     raw!("window.torrssFeed.search(String(${e}.target.value))");
+                }
+
+                if e.target.name == "dismiss-report" {
+                    reported.set("".to_owned());
                 }
             })
         >
@@ -319,6 +324,7 @@ async fn feed(cx: &Cx) -> Result<impl View> {
                             grabbing.set(true);
                             grab_items(selected.get()).await;
                             grabbing.set(false);
+                            reported.set(selected.get());
                             // clear() empties the browser set and returns the
                             // empty list, so one call does both.
                             selected.set(raw!("cx.hydrate(window.torrssFeed.clear())", String::new()));
@@ -335,6 +341,8 @@ async fn feed(cx: &Cx) -> Result<impl View> {
                     </button>
                 </div>
             </div>
+
+            grab_report(reported: $(reported.get()))
 
             // The box sits here rather than in the shard, because a shard
             // re-render under the cursor takes the focus with it. The
@@ -733,6 +741,110 @@ async fn feed_listing(
                     }
                 </ul>
             }
+        }
+    })
+}
+
+/// One release the last grab named, as the grab report lists it.
+struct Reported {
+    title: String,
+    feed_name: String,
+    size: String,
+
+    /// Why the grab failed, or nothing when the client accepted it.
+    error: Option<String>,
+
+    /// Whether the tracker answered that it no longer serves the release.
+    gone: bool,
+}
+
+/// The outcome of the last grab, one line per release it named.
+///
+/// A release the client took leaves the wanted listing as owned, and a
+/// release the tracker deleted leaves it as gone. The grabs table keeps the
+/// outcome of each grab, so the report reads the table rather than the
+/// return value of the procedure.
+///
+/// `reported` is the id list the grab received, and the rows keep the order
+/// the reader ticked them in. An empty list renders nothing, and so does a
+/// list whose ids resolve to no stored row with a grab.
+#[shard]
+async fn grab_report(cx: &Cx, reported: String) -> Result<impl View> {
+    let entries = IdList::new(Some(&reported)).entries();
+    let mut rows = Vec::new();
+
+    if !entries.is_empty() {
+        let registry = app_context::<Arc<FeedRegistry>>(cx);
+        let services = app_context::<Services>(cx);
+        let grabbed = grabs::all(&services.db).await?;
+
+        for entry in entries {
+            let Ok(id) = entry.parse::<i64>() else {
+                continue;
+            };
+            let Some(grab) = grabbed.get(&id) else {
+                continue;
+            };
+            let Some(item) = store::item(&services.db, id).await? else {
+                continue;
+            };
+
+            rows.push(Reported {
+                feed_name: feed_name(registry, &item),
+                size: format::size(item.item.size),
+                title: item.item.title,
+                error: grab.error.clone(),
+                gone: grab.gone(),
+            });
+        }
+    }
+
+    let failed = rows.iter().filter(|row| row.error.is_some()).count();
+    let taken = rows.len() - failed;
+
+    Ok(view! {
+        if !rows.is_empty() {
+            <div class="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                <div class="flex items-center justify-between">
+                    <p class="text-sm text-slate-300">
+                        (format::count(taken, "release", "releases")) " grabbed, "
+                        (failed) " failed."
+                    </p>
+                    <button
+                        type="button"
+                        name="dismiss-report"
+                        class="text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                    >
+                        "Dismiss"
+                    </button>
+                </div>
+
+                <ul class="mt-2 flex flex-col gap-1">
+                    for row in &rows {
+                        <li class="flex flex-wrap items-center gap-2 text-xs">
+                            match &row.error {
+                                None => <span
+                                    class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300"
+                                >"grabbed"</span>,
+                                Some(_) => <span
+                                    class="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300"
+                                >"grab failed"</span>,
+                            }
+                            <span class="font-mono text-slate-300 break-all">(&row.title)</span>
+                            if let Some(error) = &row.error {
+                                <span class="text-rose-300">(error)</span>
+                            }
+                            if row.gone {
+                                <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                                    "gone"
+                                </span>
+                            }
+                            <span class="text-slate-500">(&row.size)</span>
+                            <span class="text-slate-500">(&row.feed_name)</span>
+                        </li>
+                    }
+                </ul>
+            </div>
         }
     })
 }
