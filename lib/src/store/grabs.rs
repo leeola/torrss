@@ -85,9 +85,6 @@ impl Grab {
     /// A 404 or a 410 says the torrent is gone. A 403 or a 5xx says nothing
     /// about the release itself, because an expired passkey or an outage
     /// answers that way for every release alike.
-    // FIXME: `gone` has no caller outside the tests. The wanted list that
-    // hides a release the tracker deleted is what it waits on.
-    #[allow(dead_code)]
     pub(crate) fn gone(&self) -> bool {
         matches!(self.status, Some(404 | 410))
     }
