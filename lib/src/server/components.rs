@@ -327,8 +327,7 @@ pub(crate) async fn item_row(
                                 title=(&grabbed.age)
                                 class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300"
                             >"grabbed"</span>,
-                            Some(error) => <span
-                                title=(error)
+                            Some(_) => <span
                                 class="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300"
                             >"grab failed"</span>,
                         },
@@ -379,6 +378,10 @@ pub(crate) async fn item_row(
 
                 if let Some(grabbed) = &details.grab {
                     <p class="mt-1 text-xs text-slate-500">
+                        if let Some(error) = &grabbed.error {
+                            <span class="text-rose-300">(error)</span>
+                            " · "
+                        }
                         if grabbed.searches.is_empty() {
                             "matched no search"
                         } else {
