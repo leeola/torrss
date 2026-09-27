@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -423,9 +423,24 @@ async fn feed_listing(
         .map(|saved| saved.id.clone())
         .collect();
 
+    let grabbed = grabs::all(&services.db).await?;
+    let gone: HashSet<i64> = grabbed
+        .values()
+        .filter(|grab| grab.gone())
+        .map(|grab| grab.item_id)
+        .collect();
+
     let standings: Vec<Standing> = items
         .iter()
-        .map(|item| listing::standing(&engine, &enabled, &owned, &item.item.title))
+        .map(|item| {
+            listing::standing(
+                &engine,
+                &enabled,
+                &owned,
+                gone.contains(&item.id),
+                &item.item.title,
+            )
+        })
         .collect();
 
     let matching = items.iter().map(|item| engine.matching(&item.item.title));
@@ -455,11 +470,15 @@ async fn feed_listing(
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Disabled(_)))
         .count();
+    let gone_count = listed
+        .iter()
+        .filter(|(_, standing, _)| matches!(standing, Standing::Gone(_)))
+        .count();
     let unmatched_count = listed
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Unmatched))
         .count();
-    let hidden_count = owned_count + disabled_count + unmatched_count;
+    let hidden_count = owned_count + disabled_count + gone_count + unmatched_count;
 
     let wanted = show != "all" && show != "unmatched";
 
@@ -473,8 +492,6 @@ async fn feed_listing(
         .iter()
         .map(|(item, _, _)| item.id.to_string())
         .collect();
-
-    let grabbed = grabs::all(&services.db).await?;
 
     let (matched, unmatched): (Vec<_>, Vec<_>) = listed
         .iter()
@@ -664,6 +681,7 @@ async fn feed_listing(
                 ", hidden: "
                 (owned_count) " owned, "
                 (disabled_count) " paused, "
+                (gone_count) " gone, "
                 (unmatched_count) " unmatched"
             }
             "."

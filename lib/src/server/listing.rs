@@ -19,6 +19,10 @@ pub(super) enum Standing {
     /// The library already holds this identity, so another copy adds nothing.
     Owned(Parsed),
 
+    /// The last grab found the tracker no longer serving the release, so
+    /// another copy of its identity is wanted in its place.
+    Gone(Parsed),
+
     /// The matched search is switched off.
     Disabled(Parsed),
 
@@ -31,7 +35,10 @@ impl Standing {
     /// claimed it.
     pub(super) fn parsed(&self) -> Option<&Parsed> {
         match self {
-            Self::Wanted(parsed) | Self::Owned(parsed) | Self::Disabled(parsed) => Some(parsed),
+            Self::Wanted(parsed)
+            | Self::Owned(parsed)
+            | Self::Gone(parsed)
+            | Self::Disabled(parsed) => Some(parsed),
             Self::Unmatched => None,
         }
     }
@@ -48,6 +55,7 @@ impl Standing {
         match self {
             Self::Wanted(_) => None,
             Self::Owned(_) => Some("owned"),
+            Self::Gone(_) => Some("gone"),
             Self::Disabled(_) => Some("paused"),
             Self::Unmatched => Some("unmatched"),
         }
@@ -109,10 +117,15 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 /// A stored season pack therefore owns each episode of that season, while a
 /// stored episode never owns the pack, which carries the rest of the season
 /// too.
+///
+/// `gone` says the last grab of the release found the tracker no longer
+/// serving it. An owned release stays owned, because the library holds it
+/// whatever the tracker serves.
 pub(super) fn standing(
     engine: &Engine,
     enabled: &HashSet<String>,
     owned: &HashSet<String>,
+    gone: bool,
     title: &str,
 ) -> Standing {
     let Some(parsed) = engine.parse(title) else {
@@ -130,6 +143,10 @@ pub(super) fn standing(
         .any(|span| owned.contains(span))
     {
         return Standing::Owned(parsed);
+    }
+
+    if gone {
+        return Standing::Gone(parsed);
     }
 
     Standing::Wanted(parsed)
@@ -209,6 +226,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &HashSet::new(),
+                false,
                 HOLLOW_1080,
             ),
             parsed(HOLLOW_1080),
@@ -226,6 +244,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &owned_of(HOLLOW_1080),
+                false,
                 HOLLOW_1080,
             ),
             Standing::Owned(expected),
@@ -243,6 +262,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &owned_of(HOLLOW_PACK),
+                false,
                 HOLLOW_1080,
             ),
             Standing::Owned(expected),
@@ -257,10 +277,49 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &owned_of(HOLLOW_1080),
+                false,
                 HOLLOW_PACK,
             ),
             parsed(HOLLOW_PACK),
             "a pack carries more than the one episode the library holds"
+        );
+    }
+
+    #[test]
+    fn a_gone_release_is_hidden() {
+        let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &enabled(&["series-hollow-meridian"]),
+                &HashSet::new(),
+                true,
+                HOLLOW_1080,
+            ),
+            Standing::Gone(expected),
+            "the tracker deleted the torrent, so another copy is wanted in its place"
+        );
+    }
+
+    #[test]
+    fn an_owned_release_stays_owned_when_gone() {
+        let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &enabled(&["series-hollow-meridian"]),
+                &owned_of(HOLLOW_1080),
+                true,
+                HOLLOW_1080,
+            ),
+            Standing::Owned(expected),
+            "the library holds the release, whatever the tracker serves"
         );
     }
 
@@ -271,7 +330,13 @@ mod tests {
         };
 
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_1080),
+            standing(
+                &ENGINE,
+                &HashSet::new(),
+                &HashSet::new(),
+                false,
+                HOLLOW_1080
+            ),
             Standing::Disabled(expected),
             "the search that claims this title is switched off"
         );
@@ -280,7 +345,7 @@ mod tests {
     #[test]
     fn a_title_no_search_wants_is_unmatched() {
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &HashSet::new(), HOLLOW_720),
+            standing(&ENGINE, &HashSet::new(), &HashSet::new(), false, HOLLOW_720),
             Standing::Unmatched,
             "the parser reads the 720p name, and no search admits that resolution"
         );
@@ -289,7 +354,7 @@ mod tests {
     #[test]
     fn title_no_search_claims_is_unmatched() {
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &HashSet::new(), NONSENSE),
+            standing(&ENGINE, &HashSet::new(), &HashSet::new(), false, NONSENSE),
             Standing::Unmatched,
         );
     }
@@ -301,6 +366,7 @@ mod tests {
         for standing in [
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
+            Standing::Gone(claimed.clone()),
             Standing::Disabled(claimed.clone()),
         ] {
             assert_eq!(standing.parsed(), Some(&claimed));
@@ -365,6 +431,7 @@ mod tests {
         let labels: Vec<(bool, Option<&str>)> = [
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
+            Standing::Gone(claimed.clone()),
             Standing::Disabled(claimed),
             Standing::Unmatched,
         ]
@@ -377,6 +444,7 @@ mod tests {
             [
                 (true, None),
                 (false, Some("owned")),
+                (false, Some("gone")),
                 (false, Some("paused")),
                 (false, Some("unmatched")),
             ],
