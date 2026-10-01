@@ -122,7 +122,7 @@
             gcc
             rust-analyzer
             # using a hardcoded rustfmt version to support nightly rustfmt features.
-            rust-bin.nightly."2026-08-20".rustfmt
+            rust-bin.nightly."2026-10-01".rustfmt
             rust-toolchain
             # Drives the feature-powerset compile check.
             cargo-hack
@@ -140,11 +140,10 @@
         };
       }
     )
-    //
-      {
-        # `eachDefaultSystem` yields per-system outputs, and a NixOS module is
-        # not one of those, so the module attaches outside that call.
-        nixosModules.torrss = import ./nix/module.nix self;
-        nixosModules.default = self.nixosModules.torrss;
-      };
+    // {
+      # `eachDefaultSystem` yields per-system outputs, and a NixOS module is
+      # not one of those, so the module attaches outside that call.
+      nixosModules.torrss = import ./nix/module.nix self;
+      nixosModules.default = self.nixosModules.torrss;
+    };
 }
