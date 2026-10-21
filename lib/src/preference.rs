@@ -54,7 +54,8 @@ impl Preferences {
     /// groups and resolutions the reader takes.
     ///
     /// A stated list replaces the suggestion whole. The reader chose that
-    /// order, so no value from the library joins it.
+    /// order, so no value from the library joins it. The Preferences page
+    /// shows which fields follow the library.
     pub(crate) fn or_suggested(mut self, engine: &Engine, library: &Library) -> Self {
         for field in rankable_fields(engine) {
             if !self.values(&field).is_empty() {
