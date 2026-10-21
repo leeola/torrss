@@ -114,6 +114,29 @@ impl Identity {
             })
             .collect()
     }
+
+    /// Returns the name of the field that names the subject, such as `show`
+    /// or `title`.
+    ///
+    /// The subject is the first identity field, as [`Parser::subject`] reads
+    /// it.
+    pub(crate) fn subject_field(&self) -> &str {
+        self.namespace.split('+').next().unwrap_or_default()
+    }
+
+    /// Returns the key one show or film files under, such as
+    /// `show|the hollow meridian`.
+    ///
+    /// The field name takes part in the key, so a show and a film that
+    /// normalize alike stay two subjects. Two parsers that name the field
+    /// alike fold one show into one subject.
+    pub(crate) fn subject(&self) -> String {
+        format!(
+            "{}|{}",
+            self.subject_field(),
+            self.key.first().map_or("", String::as_str)
+        )
+    }
 }
 
 impl Display for Identity {
@@ -824,6 +847,16 @@ mod tests {
         assert_eq!(
             identity(HOLLOW_1080).to_string(),
             "show+season+episodeNumber|the hollow meridian|4|6"
+        );
+    }
+
+    #[test]
+    fn subject_is_the_first_identity_field_and_its_value() {
+        assert_eq!(identity(HOLLOW_1080).subject_field(), "show");
+        assert_eq!(
+            identity(HOLLOW_1080).subject(),
+            "show|the hollow meridian",
+            "the season and the episode stay out of the subject"
         );
     }
 

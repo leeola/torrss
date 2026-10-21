@@ -164,11 +164,7 @@ pub(super) fn tree(
         let parsed = release.parsed;
         let identity = &parsed.identity;
 
-        let subject_key = format!(
-            "{}|{}",
-            subject_field(identity),
-            identity.key.first().map_or("", String::as_str)
-        );
+        let subject_key = identity.subject();
         let subject = find_or_push(
             &mut drafts,
             |draft| draft.key == subject_key,
@@ -233,21 +229,12 @@ fn find_or_push<T>(
     &mut items[at]
 }
 
-/// The name of the field that names the subject, such as `show` or `title`.
-///
-/// The name takes part in the subject key, so a show and a film that
-/// normalize alike stay two subjects. Two parsers that name the field alike
-/// fold one show into one subject.
-fn subject_field(identity: &Identity) -> &str {
-    identity.namespace.split('+').next().unwrap_or_default()
-}
-
 /// The subject as `parsed` names it, with `.` and `_` read as spaces.
 ///
 /// The raw value keeps the capitals the release wrote, which the normalized
 /// key drops.
 fn subject_label(parsed: &Parsed) -> String {
-    raw(parsed, subject_field(&parsed.identity))
+    raw(parsed, parsed.identity.subject_field())
         .unwrap_or_else(|| parsed.identity.key.first().map_or("", String::as_str))
         .replace(['.', '_'], " ")
 }
