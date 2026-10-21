@@ -35,14 +35,14 @@
         # version in step with `topcoat` in `[workspace.dependencies]`.
         topcoat-cli = rustPlatform.buildRustPackage rec {
           pname = "topcoat-cli";
-          version = "0.9.0";
+          version = "0.10.0";
 
           src = pkgs.fetchCrate {
             inherit pname version;
-            hash = "sha256-6kLV2AP9e2H8WfmaZ5IwJp3HY3uFD6B0U3qMEvWzWYE=";
+            hash = "sha256-lk13D/RqrskzhXwLNz+KEbWowllQqGxoGU47T4ZdBvk=";
           };
 
-          cargoHash = "sha256-o/QffbjjkHqM+mxZwjxARm2mx4ylqxWrRw4UJ4Q0R+Q=";
+          cargoHash = "sha256-/uztLZLC8A7lgAin8YoIrhv3+mOvy7OKJWdfAbQay9g=";
 
           doCheck = false;
         };
@@ -73,10 +73,11 @@
             pkgs.makeWrapper
           ];
 
-          # `topcoat asset bundle` runs its own `cargo build` with every
-          # `CARGO*` variable removed and no `--target`, so the hook's
-          # env-only settings never reach it. Repeating them in config keeps
-          # the inner build, and its `OUT_DIR`, identical to the hook's.
+          # `topcoat asset bundle` runs its own `cargo build`, which must
+          # resolve the same target, offline mode, and strip setting as the
+          # hook's build. Its `OUT_DIR`, and the asset ids hashed from it,
+          # match only then. The config holds those settings whatever
+          # environment the CLI forwards.
           postConfigure = ''
             mkdir -p .cargo
             cat >> .cargo/config.toml <<EOF
