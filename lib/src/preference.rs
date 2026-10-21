@@ -19,6 +19,7 @@ pub(crate) mod store;
 use std::collections::BTreeMap;
 
 use crate::engine::{Engine, Parsed};
+use crate::preference::library::Library;
 
 /// The ordered lists a reader has stated, by field name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -56,16 +57,23 @@ impl Preferences {
     /// A field with no list is skipped, so stating nothing about a field
     /// keeps it out of the comparison entirely.
     ///
-    /// A field the release read nothing for ranks at the list's length, as
-    /// does a value the list does not name. The two sit below every named
-    /// value without being ranked against each other.
+    /// A value the list does not name ranks at the list's length when
+    /// `library` holds it for the release's subject. A group the reader
+    /// already took an episode of the show from is one they accepted, so it
+    /// beats a group they never took, and only the stated list beats it.
+    ///
+    /// A value that neither names ranks one below that, as does a field the
+    /// release read nothing for. The two sit below every value the reader
+    /// accepted without being ranked against each other.
     ///
     /// Both sides normalize through the field's kind before they compare, so
     /// a list entry `WEB-DL` meets a read `web dl`.
-    pub(crate) fn rank(&self, engine: &Engine, parsed: &Parsed) -> Vec<usize> {
+    pub(crate) fn rank(&self, engine: &Engine, parsed: &Parsed, library: &Library) -> Vec<usize> {
         let Some(parser) = engine.parser(&parsed.parser) else {
             return Vec::new();
         };
+
+        let subject = parsed.identity.subject();
 
         parser
             .fields
@@ -83,13 +91,19 @@ impl Preferences {
                     .find(|(name, _)| *name == field.name)
                     .map(|(_, value)| field.kind.normalize(value));
 
-                let place = read.and_then(|read| {
+                let place = read.as_deref().and_then(|read| {
                     preferred
                         .iter()
                         .position(|wanted| field.kind.normalize(wanted) == read)
                 });
 
-                Some(place.unwrap_or(preferred.len()))
+                Some(match (place, read) {
+                    (Some(place), _) => place,
+                    (None, Some(read)) if library.holds(&subject, &field.name, &read) => {
+                        preferred.len()
+                    }
+                    _ => preferred.len() + 1,
+                })
             })
             .collect()
     }
@@ -125,7 +139,9 @@ mod tests {
 
     use super::{Preferences, rankable_fields};
     use crate::engine::Parsed;
+    use crate::preference::library::Library;
     use crate::search::fixture::ENGINE;
+    use crate::torrent::{Torrent, TorrentId, TorrentState};
 
     /// One invented film in each resolution the fixture parser reads, plus
     /// one with no resolution at all. The source is required, so every title
@@ -134,6 +150,10 @@ mod tests {
     const HD: &str = "Coastal.Drift.2024.1080p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
     const SD: &str = "Coastal.Drift.2024.720p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
     const NO_RESOLUTION: &str = "Coastal.Drift.2024.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
+    /// A 720p release of another invented film, which files under another
+    /// subject.
+    const OTHER_FILM_SD: &str =
+        "Invented.Movie.2024.720p.Remaster.AAC.Stereo.H.264-MeridianPress.mkv";
 
     fn parsed(title: &str) -> Parsed {
         ENGINE.parse(title).expect("the film search claims it")
@@ -153,13 +173,33 @@ mod tests {
         )
     }
 
+    /// A library of `names`, each a completed torrent.
+    fn library(names: &[&str]) -> Library {
+        let torrents: Vec<Torrent> = names
+            .iter()
+            .map(|name| Torrent {
+                id: TorrentId((*name).to_owned()),
+                name: (*name).to_owned(),
+                state: TorrentState::Seeding,
+                size: 734_003_200,
+                progress: 1.0,
+                added_at: None,
+            })
+            .collect();
+
+        Library::new(&ENGINE, &torrents)
+    }
+
     #[test]
     fn a_listed_value_ranks_by_its_place() {
         let wanted = stated(&[("resolution", &["2160p", "1080p"])]);
 
-        assert_eq!(wanted.rank(&ENGINE, &parsed(UHD)), vec![0]);
         assert_eq!(
-            wanted.rank(&ENGINE, &parsed(HD)),
+            wanted.rank(&ENGINE, &parsed(UHD), &Library::default()),
+            vec![0]
+        );
+        assert_eq!(
+            wanted.rank(&ENGINE, &parsed(HD), &Library::default()),
             vec![1],
             "the two titles differ only in resolution, so only the place differs"
         );
@@ -170,21 +210,43 @@ mod tests {
         let wanted = stated(&[("resolution", &["2160p", "1080p"])]);
 
         assert_eq!(
-            wanted.rank(&ENGINE, &parsed(SD)),
-            vec![2],
-            "a resolution the list does not name sits below every one it does"
+            wanted.rank(&ENGINE, &parsed(SD), &Library::default()),
+            vec![3],
+            "a resolution that the list does not name and the library does not hold sits one below the list"
         );
         assert_eq!(
-            wanted.rank(&ENGINE, &parsed(NO_RESOLUTION)),
-            vec![2],
+            wanted.rank(&ENGINE, &parsed(NO_RESOLUTION), &Library::default()),
+            vec![3],
             "and so does a release that read no resolution at all"
+        );
+    }
+
+    #[test]
+    fn a_value_the_library_holds_for_the_subject_ranks_after_the_list() {
+        let wanted = stated(&[("resolution", &["2160p", "1080p"])]);
+        let held = library(&[SD]);
+
+        assert_eq!(
+            wanted.rank(&ENGINE, &parsed(SD), &held),
+            vec![2],
+            "the reader already took a 720p copy of the film, so 720p sits right after the list"
+        );
+        assert_eq!(
+            wanted.rank(&ENGINE, &parsed(NO_RESOLUTION), &held),
+            vec![3],
+            "a release that read no resolution still sits one below the list"
+        );
+        assert_eq!(
+            wanted.rank(&ENGINE, &parsed(SD), &library(&[OTHER_FILM_SD])),
+            vec![3],
+            "a 720p copy of another film says nothing about this one"
         );
     }
 
     #[test]
     fn both_sides_normalize_before_they_compare() {
         assert_eq!(
-            stated(&[("source", &["remaster"])]).rank(&ENGINE, &parsed(UHD)),
+            stated(&[("source", &["remaster"])]).rank(&ENGINE, &parsed(UHD), &Library::default()),
             vec![0],
             "the title reads Remaster, which the kind normalizes to meet the entry"
         );
@@ -198,7 +260,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            wanted.rank(&ENGINE, &parsed(HD)),
+            wanted.rank(&ENGINE, &parsed(HD), &Library::default()),
             vec![1, 1],
             "resolution leads because the parser declares it first, whatever the list order"
         );
@@ -207,7 +269,7 @@ mod tests {
     #[test]
     fn a_field_with_no_list_is_left_out_of_the_comparison() {
         assert_eq!(
-            stated(&[("codec", &[])]).rank(&ENGINE, &parsed(UHD)),
+            stated(&[("codec", &[])]).rank(&ENGINE, &parsed(UHD), &Library::default()),
             Vec::<usize>::new(),
             "an empty list states nothing, so it ranks nothing"
         );

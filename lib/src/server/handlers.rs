@@ -26,7 +26,9 @@ use crate::{
     grab,
     parser::form as parser_form,
     parser::{Field, Parser, TitleTest},
-    preference, search,
+    preference,
+    preference::library::Library,
+    search,
     search::form::{EditorRows, SearchForm},
     search::import,
     search::registry::{SaveError, Searches},
@@ -423,7 +425,9 @@ async fn feed_listing(
     });
 
     let engine = app_context::<Arc<Searches>>(cx).engine();
-    let owned = index::identities(&engine, &index::all(&services.db).await?);
+    let torrents = index::all(&services.db).await?;
+    let owned = index::identities(&engine, &torrents);
+    let library = Library::new(&engine, &torrents);
     let preferences = preference::store::all(&services.db).await?;
     let enabled = engine
         .searches()
@@ -516,7 +520,7 @@ async fn feed_listing(
             })
         })
         .collect();
-    let tree = groups::tree(&engine, &preferences, &entries);
+    let tree = groups::tree(&engine, &preferences, &library, &entries);
 
     for subject in &tree {
         for group in &subject.groups {

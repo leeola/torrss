@@ -11,12 +11,13 @@
 //! them as one item, so a grab of either one owns the whole group.
 //!
 //! The input order is the listing order, newest first. It decides which
-//! subject leads, and which release leads when the preference lists rank two
-//! alike.
+//! subject leads, and which release leads when the preference lists and the
+//! library rank two alike.
 
 use crate::engine::{Engine, Identity, Parsed};
 use crate::parser::FieldKind;
 use crate::preference::Preferences;
+use crate::preference::library::Library;
 
 /// One listed release, as the tree reads it.
 #[derive(Debug, PartialEq, Eq)]
@@ -56,15 +57,15 @@ pub(super) struct Group {
     /// Indices into the input, best first.
     ///
     /// A wanted release comes before an unwanted one, and the preference
-    /// lists order each part. Releases the lists rank alike keep the input
-    /// order.
+    /// lists and the library order each part. Releases they rank alike keep
+    /// the input order.
     pub(super) releases: Vec<usize>,
 
     /// The first release, when the listing wants it.
     pub(super) preferred: Option<usize>,
 
     /// Whether the two best releases are both wanted and the stated lists
-    /// rank them alike.
+    /// and the library rank them alike.
     ///
     /// Only the order they arrived in separates such a pair, and the reader
     /// never chose that order. A reader who stated no list asked for no
@@ -156,6 +157,7 @@ impl<'a> From<&'a str> for Part<'a> {
 pub(super) fn tree(
     engine: &Engine,
     preferences: &Preferences,
+    library: &Library,
     releases: &[Release<'_>],
 ) -> Vec<Subject> {
     let mut drafts: Vec<SubjectDraft<'_>> = Vec::new();
@@ -193,7 +195,7 @@ pub(super) fn tree(
 
         group.releases.push(Ranked {
             index,
-            rank: preferences.rank(engine, parsed),
+            rank: preferences.rank(engine, parsed, library),
             wanted: release.wanted,
         });
     }
@@ -303,7 +305,9 @@ mod tests {
     use super::{Group, Release, Subject, tree};
     use crate::engine::Parsed;
     use crate::preference::Preferences;
+    use crate::preference::library::Library;
     use crate::search::fixture::ENGINE;
+    use crate::torrent::{Torrent, TorrentId, TorrentState};
 
     const HOLLOW_1080: &str =
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
@@ -312,6 +316,9 @@ mod tests {
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
     const HOLLOW_NEXT: &str =
         "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
+    /// The next episode from the other group, as a torrent the client holds.
+    const HOLLOW_NEXT_OTHER_GROUP: &str =
+        "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
     /// The first season as one release, named after its folder.
     const HOLLOW_PACK: &str = "The.Hollow.Meridian.S01.1080p.Broadcast.AAC.Stereo.H.264-PublicWave";
     /// An episode of the season the pack carries.
@@ -344,9 +351,31 @@ mod tests {
         )]))
     }
 
-    /// The tree of `titles`, every one of them wanted.
+    /// A library of `names`, each a completed torrent.
+    fn library(names: &[&str]) -> Library {
+        let torrents: Vec<Torrent> = names
+            .iter()
+            .map(|name| Torrent {
+                id: TorrentId((*name).to_owned()),
+                name: (*name).to_owned(),
+                state: TorrentState::Seeding,
+                size: 734_003_200,
+                progress: 1.0,
+                added_at: None,
+            })
+            .collect();
+
+        Library::new(&ENGINE, &torrents)
+    }
+
+    /// The tree of `titles`, every one of them wanted, with an empty library.
     fn tree_of(preferences: &Preferences, titles: &[&str]) -> Vec<Subject> {
-        tree(&ENGINE, preferences, &wanted(&parsed(titles)))
+        tree(
+            &ENGINE,
+            preferences,
+            &Library::default(),
+            &wanted(&parsed(titles)),
+        )
     }
 
     fn subject(label: &str, groups: Vec<Group>) -> Subject {
@@ -433,6 +462,23 @@ mod tests {
     }
 
     #[test]
+    fn a_group_the_library_holds_for_the_show_leads_an_unknown_one() {
+        assert_eq!(
+            tree(
+                &ENGINE,
+                &prefers("publisher", &["MeridianPress"]),
+                &library(&[HOLLOW_NEXT_OTHER_GROUP]),
+                &wanted(&parsed(&[HOLLOW_1080, HOLLOW_OTHER_GROUP])),
+            ),
+            vec![subject(
+                "The Hollow Meridian",
+                vec![group("S04E06", &[1, 0])]
+            )],
+            "the reader took the next episode from OtherGroup, so its copy leads with no tie"
+        );
+    }
+
+    #[test]
     fn no_stated_list_ties_nothing() {
         assert_eq!(
             tree_of(&Preferences::default(), &[HOLLOW_1080, HOLLOW_OTHER_GROUP]),
@@ -461,7 +507,12 @@ mod tests {
         };
 
         assert_eq!(
-            tree(&ENGINE, &Preferences::default(), &releases(false, true)),
+            tree(
+                &ENGINE,
+                &Preferences::default(),
+                &Library::default(),
+                &releases(false, true)
+            ),
             vec![subject(
                 "The Hollow Meridian",
                 vec![group("S04E06", &[1, 0])]
@@ -469,7 +520,12 @@ mod tests {
             "the wanted release leads although it is older"
         );
         assert_eq!(
-            tree(&ENGINE, &Preferences::default(), &releases(false, false)),
+            tree(
+                &ENGINE,
+                &Preferences::default(),
+                &Library::default(),
+                &releases(false, false)
+            ),
             vec![subject(
                 "The Hollow Meridian",
                 vec![Group {
