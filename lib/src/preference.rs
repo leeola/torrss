@@ -13,6 +13,7 @@
 //! short list is a statement about what the reader wants rather than a
 //! filter that hides the rest.
 
+pub(crate) mod library;
 pub(crate) mod store;
 
 use std::collections::BTreeMap;
