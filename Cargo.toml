@@ -24,7 +24,7 @@ unused_qualifications = "warn"
 async-trait = "0.1.91"
 chrono = "0.4.45"
 clap = "4.6.6"
-feed-rs = "2.4.0"
+feed-rs = "3.0.0"
 qbit-rs = { version = "0.6.0", default-features = false, features = ["reqwest", "rustls-tls"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
