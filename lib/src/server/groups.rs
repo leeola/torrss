@@ -11,8 +11,10 @@
 //! them as one item, so a grab of either one owns the whole group.
 //!
 //! The input order is the listing order, newest first. It decides which
-//! subject leads, and which release leads when the preference lists and the
-//! library rank two alike.
+//! subject leads, and which release comes first when the preference lists
+//! and the library rank two alike. Two wanted releases ranked alike make the
+//! group tied, because the order they arrived in is no choice of the
+//! reader's.
 
 use crate::engine::{Engine, Identity, Parsed};
 use crate::parser::FieldKind;
@@ -64,12 +66,13 @@ pub(super) struct Group {
     /// The first release, when the listing wants it.
     pub(super) preferred: Option<usize>,
 
-    /// Whether the two best releases are both wanted and the stated lists
-    /// and the library rank them alike.
+    /// Whether the two best releases are both wanted and the lists and the
+    /// library rank them alike.
     ///
     /// Only the order they arrived in separates such a pair, and the reader
-    /// never chose that order. A reader who stated no list asked for no
-    /// ranking, so a pair that no list ranks is no tie.
+    /// never chose that order. The flag marks a group to ask the reader
+    /// about rather than take the newest for them, so two releases that no
+    /// list ranks are a tie too.
     pub(super) tied: bool,
 }
 
@@ -103,7 +106,6 @@ impl GroupDraft<'_> {
             self.releases.as_slice(),
             [first, second, ..] if first.wanted
                 && second.wanted
-                && !first.rank.is_empty()
                 && first.rank == second.rank
         );
 
@@ -405,7 +407,13 @@ mod tests {
             ),
             vec![subject(
                 "The Hollow Meridian",
-                vec![group("S04E07", &[2]), group("S04E06", &[0, 1])],
+                vec![
+                    group("S04E07", &[2]),
+                    Group {
+                        tied: true,
+                        ..group("S04E06", &[0, 1])
+                    },
+                ],
             )],
         );
     }
@@ -479,14 +487,17 @@ mod tests {
     }
 
     #[test]
-    fn no_stated_list_ties_nothing() {
+    fn no_stated_list_ties_two_wanted_releases() {
         assert_eq!(
             tree_of(&Preferences::default(), &[HOLLOW_1080, HOLLOW_OTHER_GROUP]),
             vec![subject(
                 "The Hollow Meridian",
-                vec![group("S04E06", &[0, 1])]
+                vec![Group {
+                    tied: true,
+                    ..group("S04E06", &[0, 1])
+                }],
             )],
-            "a reader who stated no list asked for no ranking"
+            "nothing ranks the two apart, so only their order separates them"
         );
     }
 
@@ -556,7 +567,13 @@ mod tests {
     fn a_film_is_labeled_by_its_year() {
         assert_eq!(
             tree_of(&Preferences::default(), &[FILM, FILM_UHD]),
-            vec![subject("Coastal Drift", vec![group("2024", &[0, 1])])],
+            vec![subject(
+                "Coastal Drift",
+                vec![Group {
+                    tied: true,
+                    ..group("2024", &[0, 1])
+                }],
+            )],
         );
     }
 }

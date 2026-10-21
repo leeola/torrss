@@ -17,7 +17,7 @@ use topcoat::{
     view::Unescaped,
     view::{View, ViewExt, class, component, view},
 };
-use tracing::{error, warn};
+use tracing::error;
 use url::Url;
 
 use crate::{
@@ -523,20 +523,6 @@ async fn feed_listing(
         })
         .collect();
     let tree = groups::tree(&engine, &preferences, &library, &entries);
-
-    for subject in &tree {
-        for group in &subject.groups {
-            if let (true, [first, second, ..]) = (group.tied, group.releases.as_slice()) {
-                warn!(
-                    subject = %subject.label,
-                    identity = %group.label,
-                    first = %matched[*first].0.item.title,
-                    second = %matched[*second].0.item.title,
-                    "preference tie"
-                );
-            }
-        }
-    }
 
     let subjects: Vec<SubjectRows> = tree
         .into_iter()
