@@ -21,7 +21,10 @@ use std::collections::BTreeMap;
 use crate::engine::{Engine, Parsed};
 use crate::preference::library::Library;
 
-/// The ordered lists a reader has stated, by field name.
+/// The ordered lists that rank the copies of a release, by field name.
+///
+/// A list is one the reader stated, or one [`Self::or_suggested`] filled in
+/// from the library for a field the reader left without one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Preferences {
     lists: BTreeMap<String, Vec<String>>,
@@ -33,17 +36,46 @@ impl Preferences {
     }
 
     /// The values preferred for `field`, best first, or an empty slice when
-    /// the reader has stated nothing about it.
+    /// no list ranks it.
     pub(crate) fn values(&self, field: &str) -> &[String] {
         self.lists.get(field).map_or(&[], Vec::as_slice)
     }
 
-    /// Every field the reader has stated a list for, in name order.
+    /// Every field that has a list, in name order.
     pub(crate) fn fields(&self) -> impl Iterator<Item = &str> {
         self.lists.keys().map(String::as_str)
     }
 
-    /// Places `parsed` in the stated lists, one place per ranked field.
+    /// Returns these lists with each field that has no list filled in the
+    /// order [`Library::suggested`] gives.
+    ///
+    /// A field with no list ranks nothing. Without a suggestion, a fresh
+    /// database ranks no release, although the client already shows which
+    /// groups and resolutions the reader takes.
+    ///
+    /// A stated list replaces the suggestion whole. The reader chose that
+    /// order, so no value from the library joins it.
+    pub(crate) fn or_suggested(mut self, engine: &Engine, library: &Library) -> Self {
+        for field in rankable_fields(engine) {
+            if !self.values(&field).is_empty() {
+                continue;
+            }
+
+            let suggested: Vec<String> = library
+                .suggested(&field)
+                .into_iter()
+                .map(|(raw, _)| raw)
+                .collect();
+
+            if !suggested.is_empty() {
+                self.lists.insert(field, suggested);
+            }
+        }
+
+        self
+    }
+
+    /// Places `parsed` in the lists, one place per ranked field.
     ///
     /// The smaller vector, compared lexicographically, is the better
     /// release. Comparing two vectors is only meaningful when both come
@@ -54,13 +86,13 @@ impl Preferences {
     /// declared before a source therefore settles a pair that the source
     /// alone leaves tied.
     ///
-    /// A field with no list is skipped, so stating nothing about a field
-    /// keeps it out of the comparison entirely.
+    /// A field with no list is skipped, so it stays out of the comparison
+    /// entirely.
     ///
     /// A value the list does not name ranks at the list's length when
     /// `library` holds it for the release's subject. A group the reader
     /// already took an episode of the show from is one they accepted, so it
-    /// beats a group they never took, and only the stated list beats it.
+    /// beats a group they never took, and only the list beats it.
     ///
     /// A value that neither names ranks one below that, as does a field the
     /// release read nothing for. The two sit below every value the reader
@@ -272,6 +304,43 @@ mod tests {
             stated(&[("codec", &[])]).rank(&ENGINE, &parsed(UHD), &Library::default()),
             Vec::<usize>::new(),
             "an empty list states nothing, so it ranks nothing"
+        );
+    }
+
+    #[test]
+    fn a_field_with_no_list_takes_the_librarys_order() {
+        let filled = stated(&[("resolution", &["2160p"])]).or_suggested(
+            &ENGINE,
+            &library(&[
+                "The.Hollow.Meridian.S04E05.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                "The.Hollow.Meridian.S04E04.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+                "The.Hollow.Meridian.S04E03.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv",
+                "The.Hollow.Meridian.S04E02.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+                "The.Hollow.Meridian.S04E01.1080p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv",
+            ]),
+        );
+
+        assert_eq!(
+            filled.values("publisher"),
+            ["OtherGroup", "PublicWave"],
+            "the group with more completed torrents leads, although the other is newer"
+        );
+        assert_eq!(
+            filled.values("resolution"),
+            ["2160p"],
+            "a stated list wins over the count"
+        );
+        assert_eq!(
+            filled.fields().collect::<Vec<_>>(),
+            [
+                "audio",
+                "codec",
+                "extension",
+                "publisher",
+                "resolution",
+                "source"
+            ],
+            "every field the torrents agree on gets a list, and no identity field does"
         );
     }
 

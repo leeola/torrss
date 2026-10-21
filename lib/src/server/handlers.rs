@@ -428,7 +428,9 @@ async fn feed_listing(
     let torrents = index::all(&services.db).await?;
     let owned = index::identities(&engine, &torrents);
     let library = Library::new(&engine, &torrents);
-    let preferences = preference::store::all(&services.db).await?;
+    let preferences = preference::store::all(&services.db)
+        .await?
+        .or_suggested(&engine, &library);
     let enabled = engine
         .searches()
         .filter(|saved| saved.enabled)
