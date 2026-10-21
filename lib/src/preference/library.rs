@@ -4,10 +4,6 @@
 //! record of what they accepted. The ranking reads it to place a value that
 //! no stated list names, and to fill a list that the reader never stated.
 
-// FIXME: `Library::suggested` has no caller outside the tests. The order
-// that a field with no list falls back on is what it waits on.
-#![allow(dead_code)]
-
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
