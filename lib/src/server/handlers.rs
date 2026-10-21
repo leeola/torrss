@@ -60,6 +60,11 @@ path_param!(feed_id);
 /// Every selection operation returns the list the grab procedure receives, so
 /// one handler writes one signal from one call.
 ///
+/// An episode's row holds at most one release of the set. Its box takes the
+/// picked release, or the lead when the reader picked none, and a pick swaps
+/// the episode's release and ticks the box. A tied row's box names no lead,
+/// so it stays clear until the reader picks.
+///
 /// The view operations keep the address bar in step with the signals that
 /// drive the listing, so a reader shares the view they found. They replace
 /// the entry rather than push one, because restoring the signals on a back
@@ -68,14 +73,53 @@ const FEED_ACTIONS: &str = r"
 window.torrssFeed = {
   chosen: new Set(),
   view: new URLSearchParams(location.search),
-  boxes: () => [...document.querySelectorAll('#listing input[name=\'item\']')],
+  boxes: () => [...document.querySelectorAll('#listing input[type=checkbox], #listing input[type=radio]')],
+  picks: (key) => [...document.querySelectorAll(`#listing input[name='pick-${key}']`)],
   list: () => [...window.torrssFeed.chosen].join(','),
-  toggle: (value) => {
-    const box = window.torrssFeed.boxes().find((one) => one.value === value);
+  tick: (value) => {
+    const box = window.torrssFeed.boxes().find((one) => one.name === 'item' && one.value === value);
     if (box && box.checked) {
       window.torrssFeed.chosen.add(value);
     } else {
       window.torrssFeed.chosen.delete(value);
+    }
+
+    return window.torrssFeed.list();
+  },
+  toggle: (id, lead) => {
+    const key = id.slice('group-'.length);
+    const picks = window.torrssFeed.picks(key);
+    for (const pick of picks) {
+      window.torrssFeed.chosen.delete(pick.value);
+    }
+
+    const box = document.getElementById(id);
+    if (box && box.checked) {
+      const pick = picks.find((one) => one.checked) || picks.find((one) => one.value === lead);
+      if (pick) {
+        pick.checked = true;
+        window.torrssFeed.chosen.add(pick.value);
+      } else {
+        box.checked = false;
+      }
+    } else {
+      for (const pick of picks) {
+        pick.checked = false;
+      }
+    }
+
+    return window.torrssFeed.list();
+  },
+  pick: (name, value) => {
+    const key = name.slice('pick-'.length);
+    for (const pick of window.torrssFeed.picks(key)) {
+      window.torrssFeed.chosen.delete(pick.value);
+    }
+
+    window.torrssFeed.chosen.add(value);
+    const box = document.getElementById('group-' + key);
+    if (box) {
+      box.checked = true;
     }
 
     return window.torrssFeed.list();
@@ -243,7 +287,21 @@ async fn feed(cx: &Cx) -> Result<impl View> {
             @change=$(|e: Event| {
                 if e.target.name == "item" {
                     selected.set(raw!(
-                        "cx.hydrate(window.torrssFeed.toggle(String(${e}.target.value)))",
+                        "cx.hydrate(window.torrssFeed.tick(String(${e}.target.value)))",
+                        String::new()
+                    ));
+                }
+
+                if e.target.name == "group" {
+                    selected.set(raw!(
+                        "cx.hydrate(window.torrssFeed.toggle(String(${e}.target.id), String(${e}.target.value)))",
+                        String::new()
+                    ));
+                }
+
+                if e.target.name.starts_with("pick-") {
+                    selected.set(raw!(
+                        "cx.hydrate(window.torrssFeed.pick(String(${e}.target.name), String(${e}.target.value)))",
                         String::new()
                     ));
                 }
@@ -348,8 +406,9 @@ async fn feed(cx: &Cx) -> Result<impl View> {
 
             // The box sits here rather than in the shard, because a shard
             // re-render under the cursor takes the focus with it. The
-            // `#listing` change handler above acts only on a target named
-            // `item`, so this one refreshes the count and nothing else.
+            // `#listing` change handler above acts only on the boxes and picks
+            // that select releases, so this one refreshes the count and nothing
+            // else.
             <input
                 type="search"
                 name="query"
@@ -378,7 +437,8 @@ async fn feed(cx: &Cx) -> Result<impl View> {
 /// The stored rows under the chosen filter, and what the page knows of each.
 ///
 /// The rows a search claims fold into subject cards, one per show or film,
-/// with the releases of each identity best first. The rows no search claims
+/// with one row per identity that ticks its lead release. The other releases
+/// of the identity fold under that row as picks. The rows no search claims
 /// follow as a flat list.
 ///
 /// `kept` is the selection the browser holds, which the rows read their
@@ -526,7 +586,8 @@ async fn feed_listing(
 
     let subjects: Vec<SubjectRows> = tree
         .into_iter()
-        .map(|subject| {
+        .enumerate()
+        .map(|(subject_index, subject)| {
             let searches = engine
                 .searches()
                 .filter(|saved| {
@@ -548,9 +609,12 @@ async fn feed_listing(
                 groups: subject
                     .groups
                     .into_iter()
-                    .map(|group| GroupRows {
+                    .enumerate()
+                    .map(|(group_index, group)| GroupRows {
+                        key: format!("{subject_index}-{group_index}"),
                         label: group.label,
                         pack: group.pack,
+                        tied: group.tied,
                         releases: group
                             .releases
                             .iter()
@@ -727,8 +791,6 @@ async fn feed_listing(
                             item: item,
                             details: shown,
                             selected: *selected,
-                            grouped: false,
-                            preferred: false,
                         )
                     }
                 </ul>

@@ -240,9 +240,25 @@ pub(crate) struct SubjectRows {
 
 /// One identity of a subject, such as an episode or a season pack, with its
 /// releases best first.
+///
+/// The Results page shows it as one row the reader ticks as a whole, with
+/// every release under a fold as a pick.
 pub(crate) struct GroupRows {
+    /// The identity's place in the tree as `subject-group`, such as `0-2`.
+    ///
+    /// The row's box and picks carry it in their id and name, so a pick
+    /// finds the box of its own identity. It holds for one render only,
+    /// because a re-render under another filter counts again.
+    pub key: String,
+
     pub label: String,
     pub pack: bool,
+
+    /// Whether the two best releases are both wanted and nothing ranks them
+    /// apart, so the row asks the reader to pick rather than ticking the
+    /// newest.
+    pub tied: bool,
+
     pub releases: Vec<ReleaseRow>,
 }
 
@@ -250,14 +266,21 @@ pub(crate) struct GroupRows {
 pub(crate) struct ReleaseRow {
     pub item: StoredItem,
     pub details: ItemDetails,
+
+    /// Whether the browser's selection holds this release, which checks its
+    /// pick and the box of its identity.
     pub selected: bool,
 
     /// Whether this release leads its identity, as the wanted release the
-    /// preference lists rank best, or the newest of those they rank alike.
+    /// preference lists and the library rank best, or the newest of those
+    /// they rank alike.
+    ///
+    /// A tied identity shows the lead but ticks nothing until the reader
+    /// picks.
     pub preferred: bool,
 }
 
-/// One stored feed item, prefixed by the checkbox that selects it.
+/// One title no search claims, prefixed by the checkbox that selects it.
 ///
 /// The checkbox posts nothing. The page reads it, keeps the selection in the
 /// browser, and hands the set to the grab procedure, so a click changes one
@@ -270,21 +293,19 @@ pub(crate) struct ReleaseRow {
 /// needs the segments the search editor works from, which are checked-in
 /// data rather than anything the engine produces from a real title.
 ///
-/// A grouped row sits under headers that name its subject and identity, and
-/// repeats neither. It shows only the values that are no identity, and it
-/// names no search, because the subject header names them. Its title moves
-/// to a dim line below the details.
-///
-/// `preferred` marks the release the preference lists rank best.
+/// See also:
+/// - [`subject_card`] for a release a search claims, which its identity's
+///   row ticks instead.
 #[component]
 pub(crate) async fn item_row(
     engine: &Engine,
     item: &StoredItem,
     details: &ItemDetails,
     selected: bool,
-    grouped: bool,
-    preferred: bool,
 ) -> Result<impl View> {
+    // Boxed, because the listing shard nests every unmatched row inside the
+    // page. Without the box, the page type grows too deep for the compiler to
+    // prove it `Send`.
     Ok(view! {
         <li
             id=(format!("item-{}", item.id))
@@ -304,93 +325,104 @@ pub(crate) async fn item_row(
 
             <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
-                    if grouped {
-                        for value in details.values.iter().filter(|value| !value.identity) {
-                            parsed_chip(value: value)
-                        }
-                    } else {
-                        <span class="font-mono text-sm break-all">(&item.item.title)</span>
-                    }
-                    if preferred {
-                        <span class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300">
-                            "preferred"
-                        </span>
-                    }
+                    <span class="font-mono text-sm break-all">(&item.item.title)</span>
                     if let Some(label) = details.hidden {
                         <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
                             (label)
                         </span>
                     }
-                    match &details.grab {
-                        Some(grabbed) => match &grabbed.error {
-                            None => <span
-                                title=(&grabbed.age)
-                                class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300"
-                            >"grabbed"</span>,
-                            Some(_) => <span
-                                class="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300"
-                            >"grab failed"</span>,
-                        },
-                        None => "",
-                    }
+                    grab_badge(grab: details.grab.as_ref())
                 </div>
 
-                if !grouped && !details.values.is_empty() {
+                if !details.values.is_empty() {
                     parsed_chips(values: &details.values)
                 }
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                    if !grouped {
-                        if details.searches.is_empty() {
-                            <span class="text-slate-600">"unmatched"</span>
+                    if details.searches.is_empty() {
+                        <span class="text-slate-600">"unmatched"</span>
+                        <a
+                            href=(format!("/searches/new?from={}", item.id))
+                            class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                        >
+                            "Save as search"
+                        </a>
+                    } else {
+                        for search in &details.searches {
                             <a
-                                href=(format!("/searches/new?from={}", item.id))
+                                href=(format!("/searches/{}", search.id))
                                 class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
                             >
-                                "Save as search"
+                                (&search.name)
                             </a>
-                        } else {
-                            for search in &details.searches {
-                                <a
-                                    href=(format!("/searches/{}", search.id))
-                                    class="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
-                                >
-                                    (&search.name)
-                                </a>
-                            }
                         }
                     }
-                    <span>(&details.feed_name)</span>
-                    <span>(&details.size)</span>
-                    <span>
-                        if let Some(seeders) = item.item.seeders {
-                            (format::count(seeders as usize, "seeder", "seeders"))
-                        } else {
-                            "seeders unknown"
-                        }
-                    </span>
-                    <span>(&details.age)</span>
+                    release_meta(item: item, details: details)
                 </div>
 
-                if grouped {
-                    <p class="mt-1 font-mono text-xs text-slate-600 break-all">(&item.item.title)</p>
-                }
-
                 if let Some(grabbed) = &details.grab {
-                    <p class="mt-1 text-xs text-slate-500">
-                        if let Some(error) = &grabbed.error {
-                            <span class="text-rose-300">(error)</span>
-                            " · "
-                        }
-                        if grabbed.searches.is_empty() {
-                            "matched no search"
-                        } else {
-                            "matched " (passed(engine, &grabbed.searches))
-                        }
-                    </p>
+                    grab_line(engine: engine, grabbed: grabbed)
                 }
             </div>
         </li>
+    }
+    .boxed())
+}
+
+/// The badge that says how the last grab of a release went, or nothing when
+/// none was tried.
+#[component]
+async fn grab_badge(grab: Option<&Grabbed>) -> Result<impl View> {
+    Ok(view! {
+        match grab {
+            Some(grabbed) => match &grabbed.error {
+                None => <span
+                    title=(&grabbed.age)
+                    class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300"
+                >"grabbed"</span>,
+                Some(_) => <span
+                    class="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-300"
+                >"grab failed"</span>,
+            },
+            None => "",
+        }
+    })
+}
+
+/// The feed, size, seeders, and age of one release, as spans for the detail
+/// line of the row that holds them.
+#[component]
+async fn release_meta(item: &StoredItem, details: &ItemDetails) -> Result<impl View> {
+    Ok(view! {
+        <span>(&details.feed_name)</span>
+        <span>(&details.size)</span>
+        <span>
+            if let Some(seeders) = item.item.seeders {
+                (format::count(seeders as usize, "seeder", "seeders"))
+            } else {
+                "seeders unknown"
+            }
+        </span>
+        <span>(&details.age)</span>
+    })
+}
+
+/// The line under a grabbed release that says why the grab failed, when it
+/// did, and which searches the release matched.
+#[component]
+async fn grab_line(engine: &Engine, grabbed: &Grabbed) -> Result<impl View> {
+    Ok(view! {
+        <p class="mt-1 text-xs text-slate-500">
+            if let Some(error) = &grabbed.error {
+                <span class="text-rose-300">(error)</span>
+                " · "
+            }
+            if grabbed.searches.is_empty() {
+                "matched no search"
+            } else {
+                "matched " (passed(engine, &grabbed.searches))
+            }
+        </p>
     })
 }
 
@@ -412,14 +444,11 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
 }
 
 /// One show or film on the Results page, as a card that folds open on its
-/// releases.
+/// identities.
 ///
-/// Each identity lists its releases as grouped rows, best first. A subject
-/// with one identity names it in the card header rather than under a heading
-/// of its own, so a lone episode reads as one line and its rows.
-///
-/// The header links every search that matches a release of the subject,
-/// because a grouped row names none.
+/// Each identity is one row the reader ticks as a whole, highest first. The
+/// header links every search that matches a release of the subject, because
+/// a row names none.
 #[component]
 pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Result<impl View> {
     let total: usize = subject
@@ -427,10 +456,6 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
         .iter()
         .map(|group| group.releases.len())
         .sum();
-    let single = match subject.groups.as_slice() {
-        [only] => Some(only),
-        _ => None,
-    };
 
     // Boxed, because the card nests every row of its subject. Without the box,
     // the page type grows too deep for the compiler to prove it `Send`.
@@ -438,15 +463,7 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
         <li>
             <details open=(true) class="rounded-lg border border-slate-800 bg-slate-900/40">
                 <summary class="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
-                    <h2 class="text-sm font-semibold text-slate-100">
-                        (&subject.label)
-                        if let Some(group) = single {
-                            " · " (&group.label)
-                            if group.pack {
-                                " · pack"
-                            }
-                        }
-                    </h2>
+                    <h2 class="text-sm font-semibold text-slate-100">(&subject.label)</h2>
                     <span class="text-xs text-slate-500">
                         (format::count(total, "release", "releases"))
                     </span>
@@ -460,39 +477,143 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
                     }
                 </summary>
 
-                <div class="flex flex-col gap-3 px-4 pb-3">
+                <ul class="flex flex-col gap-2 px-4 pb-3">
                     for group in &subject.groups {
-                        <div>
-                            if single.is_none() {
-                                <h3 class="mb-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                                    (&group.label)
-                                    if group.pack {
-                                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
-                                            "pack"
-                                        </span>
-                                    }
-                                    <span>(format::count(group.releases.len(), "release", "releases"))</span>
-                                </h3>
-                            }
-                            <ul class="flex flex-col gap-2">
-                                for release in &group.releases {
-                                    item_row(
-                                        engine: engine,
-                                        item: &release.item,
-                                        details: &release.details,
-                                        selected: release.selected,
-                                        grouped: true,
-                                        preferred: release.preferred,
-                                    )
-                                }
-                            </ul>
-                        </div>
+                        group_row(engine: engine, group: group)
                     }
-                </div>
+                </ul>
             </details>
         </li>
     }
     .boxed())
+}
+
+/// One identity, such as an episode, as a row the reader ticks as a whole.
+///
+/// The row shows the lead release and its box takes it. Every release folds
+/// under the row as a pick, so a reader who wants another copy takes it
+/// without a second row. A tied identity opens the fold and its box takes
+/// nothing until the reader picks, because only the order the releases
+/// arrived in separates its best two.
+///
+/// An identity with no wanted release has nothing to tick. The row shows its
+/// best release with the badge that says why, and dims as an unwanted
+/// [`item_row`] does.
+#[component]
+async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
+    let lead = group.releases.iter().find(|release| release.preferred);
+    let shown = lead.or_else(|| group.releases.first());
+    let chosen = group.releases.iter().any(|release| release.selected);
+
+    Ok(view! {
+        <li class=(class!(
+            "flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 transition-colors hover:border-slate-700 has-checked:border-sky-400/50 has-checked:bg-sky-400/5",
+            "opacity-60" if lead.is_none(),
+        ))>
+            if let Some(lead) = lead {
+                <input
+                    type="checkbox"
+                    name="group"
+                    id=(format!("group-{}", group.key))
+                    value=(if group.tied { String::new() } else { lead.item.id.to_string() })
+                    checked=(chosen)
+                    aria-label="Select this episode"
+                    class="mt-1 size-4 shrink-0 rounded border-slate-700 bg-slate-950"
+                >
+            } else if let Some(label) = shown.and_then(|release| release.details.hidden) {
+                <span class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                    (label)
+                </span>
+            }
+
+            <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-sm font-medium text-slate-100">(&group.label)</span>
+                    if group.pack {
+                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                            "pack"
+                        </span>
+                    }
+                    if let Some(shown) = shown {
+                        for value in shown.details.values.iter().filter(|value| !value.identity) {
+                            parsed_chip(value: value)
+                        }
+                        grab_badge(grab: shown.details.grab.as_ref())
+                    }
+                    if group.tied {
+                        <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                            "pick a release"
+                        </span>
+                    }
+                </div>
+
+                if let Some(shown) = shown {
+                    <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                        release_meta(item: &shown.item, details: &shown.details)
+                    </div>
+                }
+
+                <details open=(group.tied) class="mt-2">
+                    <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-300">
+                        (format::count(group.releases.len(), "release", "releases"))
+                    </summary>
+
+                    <ul class="mt-2 flex flex-col gap-2">
+                        for release in &group.releases {
+                            <li class=(class!(
+                                "flex items-start gap-3 rounded-md border border-slate-800/70 px-3 py-2",
+                                "opacity-60" if release.details.hidden.is_some(),
+                            ))>
+                                if release.details.hidden.is_none() {
+                                    <input
+                                        type="radio"
+                                        name=(format!("pick-{}", group.key))
+                                        value=(release.item.id.to_string())
+                                        checked=(release.selected)
+                                        aria-label="Take this release"
+                                        class="mt-1 size-4 shrink-0 border-slate-700 bg-slate-950"
+                                    >
+                                } else {
+                                    <span class="size-4 shrink-0"></span>
+                                }
+
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        for value in release.details.values.iter().filter(|value| !value.identity) {
+                                            parsed_chip(value: value)
+                                        }
+                                        if release.preferred && !group.tied {
+                                            <span class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300">
+                                                "preferred"
+                                            </span>
+                                        }
+                                        if let Some(label) = release.details.hidden {
+                                            <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                                                (label)
+                                            </span>
+                                        }
+                                        grab_badge(grab: release.details.grab.as_ref())
+                                    </div>
+
+                                    <p class="mt-1 font-mono text-xs text-slate-600 break-all">
+                                        (&release.item.item.title)
+                                    </p>
+
+                                    <div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                                        release_meta(item: &release.item, details: &release.details)
+                                    </div>
+
+                                    if let Some(grabbed) = &release.details.grab {
+                                        grab_line(engine: engine, grabbed: grabbed)
+                                    }
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                </details>
+            </div>
+        </li>
+    })
 }
 
 /// One extraction rule inside the parser editor.
@@ -1094,8 +1215,8 @@ pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result<impl View> {
 
 /// One chip of [`parsed_chips`].
 ///
-/// A grouped [`item_row`] renders the chips of its values that are no
-/// identity in its title line, without the strip around them.
+/// A [`group_row`] renders the chips of its values that are no identity in
+/// its lines, without the strip around them.
 #[component]
 async fn parsed_chip(value: &ParsedValue) -> Result<impl View> {
     Ok(view! {
