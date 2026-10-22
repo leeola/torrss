@@ -458,12 +458,6 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
 /// a row names none.
 #[component]
 pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Result<impl View> {
-    let total: usize = subject
-        .groups
-        .iter()
-        .map(|group| group.releases.len())
-        .sum();
-
     // Boxed, because the card nests every row of its subject. Without the box,
     // the page type grows too deep for the compiler to prove it `Send`.
     Ok(view! {
@@ -471,9 +465,6 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
             <details open=(true) class="rounded-lg border border-slate-800 bg-slate-900/40">
                 <summary class="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
                     <h2 class="text-sm font-semibold text-slate-100">(&subject.label)</h2>
-                    <span class="text-xs text-slate-500">
-                        (format::count(total, "release", "releases"))
-                    </span>
                     for search in &subject.searches {
                         <a
                             href=(format!("/searches/{}", search.id))
