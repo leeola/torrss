@@ -35,7 +35,9 @@ use crate::{
     search::{Condition, Diff, Search},
     server::{
         components::{self, Grabbed, GroupRows, ItemDetails, Matched, ReleaseRow, SubjectRows},
-        format, groups, held,
+        format,
+        gaps::{self, Gap},
+        groups, held,
         listing::{self, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
         query::IdList,
@@ -521,6 +523,17 @@ async fn feed_listing(
         })
         .collect();
 
+    // A gone release counts as unseen, because the tracker no longer serves
+    // it.
+    let mut gaps = gaps::gaps(
+        &engine,
+        standings
+            .iter()
+            .filter(|standing| !matches!(standing, Standing::Gone(_)))
+            .filter_map(Standing::parsed),
+        &held,
+    );
+
     let matching = items.iter().map(|item| engine.matching(&item.item.title));
 
     // The search narrows the rows before they are counted, so the sentence
@@ -642,6 +655,12 @@ async fn feed_listing(
                             })
                             .collect(),
                     })
+                    .collect(),
+                missing: gaps
+                    .remove(&subject.key)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(Gap::label)
                     .collect(),
             }
         })
