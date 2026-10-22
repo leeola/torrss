@@ -3,12 +3,13 @@
 //! The reader chose every torrent the client holds, so the library is the
 //! record of what they accepted. The ranking reads it to place a value that
 //! no stated list names, and to fill a list that the reader never stated.
+//! The tie breaker reads it to order two copies that the lists rank alike.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::engine::Engine;
-use crate::parser::{Field, Parser};
+use crate::parser::{Field, Parser, SEPARATORS};
 use crate::torrent::Torrent;
 
 /// The values the client's torrents carry, built in one pass over the
@@ -24,9 +25,17 @@ pub(crate) struct Library {
     /// field.
     held: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
 
+    /// The title tokens of the claimed torrents by subject, each with the
+    /// number of torrents that carry it.
+    affinity: BTreeMap<String, BTreeMap<String, usize>>,
+
     /// The values of the completed torrents, by field, in the order the
     /// index first lists them.
     seen: BTreeMap<String, Vec<Seen>>,
+
+    /// The title tokens of the completed torrents, each with the number of
+    /// torrents that carry it.
+    habit: BTreeMap<String, usize>,
 }
 
 /// One value of one field, with the number of completed torrents that carry
@@ -54,13 +63,19 @@ impl Library {
             if let Some(parsed) = engine.parse(&torrent.name)
                 && let Some(parser) = engine.parser(&parsed.parser)
             {
-                let fields = library.held.entry(parsed.identity.subject()).or_default();
+                let subject = parsed.identity.subject();
+                let fields = library.held.entry(subject.clone()).or_default();
 
                 for (field, raw) in ranked(parser, &parsed.values) {
                     fields
                         .entry(field.name.clone())
                         .or_default()
                         .insert(field.kind.normalize(raw));
+                }
+
+                let affinity = library.affinity.entry(subject).or_default();
+                for token in tokens(&torrent.name) {
+                    *affinity.entry(token).or_default() += 1;
                 }
             }
 
@@ -80,6 +95,10 @@ impl Library {
                             torrents: 1,
                         }),
                     }
+                }
+
+                for token in tokens(&torrent.name) {
+                    *library.habit.entry(token).or_default() += 1;
                 }
             }
         }
@@ -101,6 +120,36 @@ impl Library {
             .get(subject)
             .and_then(|fields| fields.get(field))
             .is_some_and(|values| values.contains(normalized))
+    }
+
+    /// Returns how similar `title` is to the torrents the reader took of
+    /// `subject`.
+    ///
+    /// Each distinct token of `title` adds the number of claimed torrents of
+    /// `subject` that carry it. A token is a run between separators, and a
+    /// token that no field reads counts too. A streaming service or an HDR
+    /// tag therefore separates two copies that read alike. A claimed torrent
+    /// counts at any progress, as it does for [`Self::holds`].
+    ///
+    /// When no claimed torrent files under `subject`, every completed torrent
+    /// that a parser reads counts instead. A show that the reader holds
+    /// nothing of then follows their habits across the other shows.
+    ///
+    /// Compare two sums only between copies that
+    /// [`Preferences::rank`](crate::preference::Preferences::rank) places
+    /// alike. A token states nothing the reader chose, so it never outranks
+    /// a list.
+    pub(crate) fn affinity(&self, subject: &str, title: &str) -> usize {
+        let counts = self
+            .affinity
+            .get(subject)
+            .filter(|counts| !counts.is_empty())
+            .unwrap_or(&self.habit);
+
+        tokens(title)
+            .iter()
+            .filter_map(|token| counts.get(token))
+            .sum()
     }
 
     /// Returns each value that two or more completed torrents carry for
@@ -148,6 +197,18 @@ fn ranked<'a>(
             .find(|field| field.name == *name && !field.identity)
             .map(|field| (field, raw.as_str()))
     })
+}
+
+/// The distinct words of `name`, lowercased.
+///
+/// A tracker and a client capitalize one name differently, so `ATV` and
+/// `atv` are one token.
+fn tokens(name: &str) -> BTreeSet<String> {
+    name.to_lowercase()
+        .split(SEPARATORS)
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 #[cfg(test)]
@@ -260,6 +321,56 @@ mod tests {
         assert!(
             !library.holds("show|coastal ecology", "publisher", "publicwave"),
             "only a claimed torrent files under a subject"
+        );
+    }
+
+    #[test]
+    fn affinity_sums_the_tokens_the_subjects_torrents_carry() {
+        let library = Library::new(
+            &ENGINE,
+            &[
+                torrent(&episode(HOLLOW, 5, "PublicWave"), 1.0),
+                torrent(&episode(HOLLOW, 3, "PublicWave"), 1.0),
+            ],
+        );
+
+        assert_eq!(
+            library.affinity(
+                "show|the hollow meridian",
+                &episode(HOLLOW, 9, "PublicWave")
+            ),
+            22,
+            "both torrents carry every token but the episode"
+        );
+        assert_eq!(
+            library.affinity(
+                "show|the hollow meridian",
+                &episode(HOLLOW, 9, "OtherGroup")
+            ),
+            20,
+            "neither torrent carries the episode or the group"
+        );
+    }
+
+    #[test]
+    fn a_subject_with_nothing_held_follows_every_completed_torrent() {
+        let title = episode(COASTAL, 9, "PublicWave");
+        let affinity = |torrents: &[Torrent]| {
+            Library::new(&ENGINE, torrents).affinity("show|coastal ecology", &title)
+        };
+
+        assert_eq!(
+            affinity(&[
+                torrent(&episode(HOLLOW, 5, "PublicWave"), 1.0),
+                torrent(&episode(COASTAL, 3, "OtherGroup"), 1.0),
+            ]),
+            17,
+            "both completed torrents count, claimed or not"
+        );
+        assert_eq!(
+            affinity(&[torrent(&episode(HOLLOW, 5, "PublicWave"), 0.5)]),
+            0,
+            "a download in progress is no habit"
         );
     }
 }

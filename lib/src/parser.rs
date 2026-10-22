@@ -17,6 +17,9 @@ pub(crate) mod store;
 
 use std::collections::BTreeMap;
 
+/// The characters a release name writes between its words.
+pub(crate) const SEPARATORS: [char; 5] = ['.', '_', '-', ' ', '\t'];
+
 /// One way of reading a family of filenames apart.
 ///
 /// The fields compose in order into a single regex, so a parser reads a name
@@ -301,7 +304,7 @@ impl FieldKind {
         }
 
         raw.to_lowercase()
-            .split(['.', '_', '-', ' ', '\t'])
+            .split(SEPARATORS)
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(" ")

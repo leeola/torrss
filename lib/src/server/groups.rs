@@ -11,10 +11,16 @@
 //! them as one item, so a grab of either one owns the whole group.
 //!
 //! The input order is the listing order, newest first. It decides which
-//! subject leads, and which release comes first when the preference lists
-//! and the library rank two alike. Two wanted releases ranked alike make the
-//! group tied, because the order they arrived in is no choice of the
-//! reader's.
+//! subject leads.
+//!
+//! The preference lists and the library rank the releases of one identity.
+//! Of two releases they rank alike, the one more similar to the torrents
+//! the client holds comes first, as [`Library::affinity`] counts it. Only
+//! the input order separates two releases of equal affinity. When both are
+//! wanted, the group is tied, because the order they arrived in is no
+//! choice of the reader's.
+
+use std::cmp::Reverse;
 
 use crate::engine::{Engine, Identity, Parsed};
 use crate::parser::FieldKind;
@@ -25,6 +31,10 @@ use crate::preference::library::Library;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Release<'a> {
     pub(super) parsed: &'a Parsed,
+
+    /// The release name, whose tokens order two copies that the lists rank
+    /// alike.
+    pub(super) title: &'a str,
 
     /// Whether the listing wants this release.
     ///
@@ -62,20 +72,22 @@ pub(super) struct Group {
     /// Indices into the input, best first.
     ///
     /// A wanted release comes before an unwanted one, and the preference
-    /// lists and the library order each part. Releases they rank alike keep
-    /// the input order.
+    /// lists and the library order each part. Of releases they rank alike,
+    /// the one with the highest [`Library::affinity`] comes first. Releases
+    /// of equal affinity keep the input order.
     pub(super) releases: Vec<usize>,
 
     /// The first release, when the listing wants it.
     pub(super) preferred: Option<usize>,
 
-    /// Whether the two best releases are both wanted and the lists and the
-    /// library rank them alike.
+    /// Whether the two best releases are both wanted, the lists and the
+    /// library rank them alike, and their affinity is equal.
     ///
     /// Only the order they arrived in separates such a pair, and the reader
     /// never chose that order. The flag marks a group to ask the reader
-    /// about rather than take the newest for them, so two releases that no
-    /// list ranks are a tie too.
+    /// about rather than take the newest for them. Two releases that no list
+    /// ranks are a tie too, unless one is more similar to the torrents the
+    /// client holds.
     pub(super) tied: bool,
 }
 
@@ -102,14 +114,20 @@ struct GroupDraft<'a> {
 impl GroupDraft<'_> {
     /// Orders the releases best first and settles which one leads.
     fn finish(mut self) -> Group {
-        self.releases
-            .sort_by(|a, b| (!a.wanted, &a.rank).cmp(&(!b.wanted, &b.rank)));
+        self.releases.sort_by(|a, b| {
+            (!a.wanted, &a.rank, Reverse(a.affinity)).cmp(&(
+                !b.wanted,
+                &b.rank,
+                Reverse(b.affinity),
+            ))
+        });
 
         let tied = matches!(
             self.releases.as_slice(),
             [first, second, ..] if first.wanted
                 && second.wanted
                 && first.rank == second.rank
+                && first.affinity == second.affinity
         );
 
         Group {
@@ -130,6 +148,7 @@ impl GroupDraft<'_> {
 struct Ranked {
     index: usize,
     rank: Vec<usize>,
+    affinity: usize,
     wanted: bool,
 }
 
@@ -201,6 +220,7 @@ pub(super) fn tree(
         group.releases.push(Ranked {
             index,
             rank: preferences.rank(engine, parsed, library),
+            affinity: library.affinity(&subject_key, release.title),
             wanted: release.wanted,
         });
     }
@@ -340,11 +360,13 @@ mod tests {
             .collect()
     }
 
-    fn wanted(parsed: &[Parsed]) -> Vec<Release<'_>> {
+    fn wanted<'a>(parsed: &'a [Parsed], titles: &[&'a str]) -> Vec<Release<'a>> {
         parsed
             .iter()
-            .map(|parsed| Release {
+            .zip(titles)
+            .map(|(parsed, &title)| Release {
                 parsed,
+                title,
                 wanted: true,
             })
             .collect()
@@ -380,7 +402,7 @@ mod tests {
             &ENGINE,
             preferences,
             &Library::default(),
-            &wanted(&parsed(titles)),
+            &wanted(&parsed(titles), titles),
         )
     }
 
@@ -480,12 +502,14 @@ mod tests {
 
     #[test]
     fn a_group_the_library_holds_for_the_show_leads_an_unknown_one() {
+        let titles = [HOLLOW_1080, HOLLOW_OTHER_GROUP];
+
         assert_eq!(
             tree(
                 &ENGINE,
                 &prefers("publisher", &["MeridianPress"]),
                 &library(&[HOLLOW_NEXT_OTHER_GROUP]),
-                &wanted(&parsed(&[HOLLOW_1080, HOLLOW_OTHER_GROUP])),
+                &wanted(&parsed(&titles), &titles),
             ),
             vec![subject(
                 "show|the hollow meridian",
@@ -513,16 +537,81 @@ mod tests {
     }
 
     #[test]
+    fn affinity_to_held_torrents_leads_a_pair_the_lists_rank_alike() {
+        let titles = [HOLLOW_1080, HOLLOW_OTHER_GROUP];
+
+        assert_eq!(
+            tree(
+                &ENGINE,
+                &Preferences::default(),
+                &library(&[HOLLOW_NEXT_OTHER_GROUP]),
+                &wanted(&parsed(&titles), &titles),
+            ),
+            vec![subject(
+                "show|the hollow meridian",
+                "The Hollow Meridian",
+                vec![group("S04E06", &[1, 0])]
+            )],
+            "the held episode carries OtherGroup, so the older copy leads with no tie"
+        );
+    }
+
+    #[test]
+    fn a_stated_list_outranks_affinity() {
+        let titles = [HOLLOW_1080, HOLLOW_OTHER_GROUP];
+
+        assert_eq!(
+            tree(
+                &ENGINE,
+                &prefers("publisher", &["PublicWave"]),
+                &library(&[HOLLOW_NEXT_OTHER_GROUP]),
+                &wanted(&parsed(&titles), &titles),
+            ),
+            vec![subject(
+                "show|the hollow meridian",
+                "The Hollow Meridian",
+                vec![group("S04E06", &[0, 1])]
+            )],
+            "the list names PublicWave, although the held episode carries OtherGroup"
+        );
+    }
+
+    #[test]
+    fn equal_affinity_stays_tied() {
+        let titles = [HOLLOW_1080, HOLLOW_1080];
+
+        assert_eq!(
+            tree(
+                &ENGINE,
+                &Preferences::default(),
+                &library(&[HOLLOW_NEXT_OTHER_GROUP]),
+                &wanted(&parsed(&titles), &titles),
+            ),
+            vec![subject(
+                "show|the hollow meridian",
+                "The Hollow Meridian",
+                vec![Group {
+                    tied: true,
+                    ..group("S04E06", &[0, 1])
+                }],
+            )],
+            "one release announced twice carries the same tokens"
+        );
+    }
+
+    #[test]
     fn an_unwanted_release_never_leads() {
         let claimed = parsed(&[HOLLOW_1080, HOLLOW_OTHER_GROUP]);
         let releases = |first: bool, second: bool| {
             vec![
                 Release {
                     parsed: &claimed[0],
+                    title: HOLLOW_1080,
                     wanted: first,
                 },
                 Release {
                     parsed: &claimed[1],
+                    title: HOLLOW_OTHER_GROUP,
                     wanted: second,
                 },
             ]

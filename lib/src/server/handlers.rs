@@ -701,9 +701,10 @@ async fn feed_listing(
     // the tree is an index into `matched`.
     let entries: Vec<groups::Release<'_>> = matched
         .iter()
-        .filter_map(|(_, standing, _)| {
+        .filter_map(|(item, standing, _)| {
             standing.parsed().map(|parsed| groups::Release {
                 parsed,
+                title: &item.item.title,
                 wanted: standing.is_wanted(),
             })
         })
