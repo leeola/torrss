@@ -273,6 +273,7 @@ async fn feed(cx: &Cx) -> Result<impl View> {
     let kept = signal(cx, String::new);
     let count = signal(cx, || 0.0);
     let version = signal(cx, || 0.0);
+    let filters_open = signal(cx, || false);
     let fetching = signal(cx, || false);
     let grabbing = signal(cx, || false);
     let reported = signal(cx, String::new);
@@ -362,6 +363,17 @@ async fn feed(cx: &Cx) -> Result<impl View> {
                 <div class="flex items-center gap-2">
                     <button
                         type="button"
+                        :aria-expanded=$(if filters_open.get() { "true" } else { "false" })
+                        class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+                        @click=$(|_e: Event| {
+                            filters_open.toggle();
+                        })
+                    >
+                        $(if filters_open.get() { "Hide filters" } else { "Filters" })
+                    </button>
+
+                    <button
+                        type="button"
                         :disabled=$(fetching.get())
                         class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-3 py-1.5 text-sm text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-600"
                         @click=$(async |_e: Event| {
@@ -406,23 +418,31 @@ async fn feed(cx: &Cx) -> Result<impl View> {
 
             grab_report(reported: $(reported.get()))
 
-            // The box sits here rather than in the shard, because a shard
-            // re-render under the cursor takes the focus with it. The
-            // `#listing` change handler above acts only on the boxes and picks
-            // that select releases, so this one refreshes the count and nothing
-            // else.
-            <input
-                type="search"
-                name="query"
-                placeholder="Filter by title"
-                :value=$(query.get())
-                @input=$(|e: Event| {
-                    kept.set(selected.get());
-                    query.set(e.target.value);
-                    raw!("window.torrssFeed.query(String(${e}.target.value))");
-                })
-                class="mt-3 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
-            >
+            <div :hidden=$(!filters_open.get())>
+                // The box sits here rather than in the shard, because a
+                // shard re-render under the cursor takes the focus with it.
+                // The `#listing` change handler above acts only on the boxes
+                // and picks that select releases, so this one refreshes the
+                // count and nothing else.
+                <input
+                    type="search"
+                    name="query"
+                    placeholder="Filter by title"
+                    :value=$(query.get())
+                    @input=$(|e: Event| {
+                        kept.set(selected.get());
+                        query.set(e.target.value);
+                        raw!("window.torrssFeed.query(String(${e}.target.value))");
+                    })
+                    class="mt-3 w-full rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                >
+
+                feed_filters(
+                    filter: $(filter.get()),
+                    show: $(show.get()),
+                    search: $(search.get()),
+                )
+            </div>
 
             feed_listing(
                 filter: $(filter.get()),
@@ -433,6 +453,94 @@ async fn feed(cx: &Cx) -> Result<impl View> {
                 version: $(version.get()),
             )
         </div>
+    })
+}
+
+/// The chips that narrow the listing to one feed, one view, and one search.
+///
+/// A chip shows as pressed when the filter values name it, so the chips
+/// re-render on every filter change. They sit inside `#listing`, whose
+/// delegated click handler turns a chip click into that change.
+///
+/// The chips are a shard apart from [`feed_listing`], because they sit in the
+/// filter panel. A page signal opens and closes the panel, and a shard has no
+/// access to the signals its caller declared.
+#[shard]
+async fn feed_filters(cx: &Cx, filter: String, show: String, search: String) -> Result<impl View> {
+    let active = Some(filter).filter(|id| !id.is_empty());
+
+    let registry = app_context::<Arc<FeedRegistry>>(cx);
+    // Named `registered` rather than `feeds`, because the `#[page]` attribute
+    // on the `/feeds` page below puts a unit struct named `feeds` in
+    // this scope.
+    let registered = registry.entries();
+
+    let engine = app_context::<Arc<Searches>>(cx).engine();
+    let wanted = show != "all" && show != "unmatched";
+
+    Ok(view! {
+        // The chips belong to the shard, because only a re-render presses the
+        // one the reader picked. A component takes concrete values, so a chip
+        // reads no signal of the page's own.
+        //
+        // No chip carries a selection. The browser holds it, so a filter
+        // change re-renders the rows and leaves the set alone.
+        <nav class="mt-6 flex flex-wrap gap-2">
+            components::filter_chip(
+                name: "feed-filter",
+                value: "",
+                label: "All",
+                current: active.is_none(),
+            )
+            for entry in &registered {
+                components::filter_chip(
+                    name: "feed-filter",
+                    value: entry.id.as_str(),
+                    label: entry.name.as_str(),
+                    current: active.as_deref() == Some(entry.id.as_str()),
+                )
+            }
+        </nav>
+
+        <nav class="mt-2 flex flex-wrap gap-2">
+            components::filter_chip(
+                name: "show-mode",
+                value: "",
+                label: "Wanted",
+                current: wanted,
+            )
+            components::filter_chip(
+                name: "show-mode",
+                value: "all",
+                label: "All",
+                current: show == "all",
+            )
+            components::filter_chip(
+                name: "show-mode",
+                value: "unmatched",
+                label: "Unmatched",
+                current: show == "unmatched",
+            )
+        </nav>
+
+        // A paused search gets a chip too. Its rows sit outside the wanted
+        // view, so the reader picks the All mode to see them.
+        <nav class="mt-2 flex flex-wrap gap-2">
+            components::filter_chip(
+                name: "search-filter",
+                value: "",
+                label: "All searches",
+                current: search.is_empty(),
+            )
+            for saved in engine.searches() {
+                components::filter_chip(
+                    name: "search-filter",
+                    value: saved.id.as_str(),
+                    label: saved.name.as_str(),
+                    current: search == saved.id,
+                )
+            }
+        </nav>
     })
 }
 
@@ -686,69 +794,6 @@ async fn feed_listing(
         .collect::<Vec<_>>();
 
     Ok(view! {
-        // The chips belong to the shard, because only a re-render presses the
-        // one the reader picked. A component takes concrete values, so a chip
-        // reads no signal of the page's own.
-        //
-        // No chip carries a selection. The browser holds it, so a filter
-        // change re-renders the rows and leaves the set alone.
-        <nav class="mt-6 flex flex-wrap gap-2">
-            components::filter_chip(
-                name: "feed-filter",
-                value: "",
-                label: "All",
-                current: active.is_none(),
-            )
-            for entry in &registered {
-                components::filter_chip(
-                    name: "feed-filter",
-                    value: entry.id.as_str(),
-                    label: entry.name.as_str(),
-                    current: active.as_deref() == Some(entry.id.as_str()),
-                )
-            }
-        </nav>
-
-        <nav class="mt-2 flex flex-wrap gap-2">
-            components::filter_chip(
-                name: "show-mode",
-                value: "",
-                label: "Wanted",
-                current: wanted,
-            )
-            components::filter_chip(
-                name: "show-mode",
-                value: "all",
-                label: "All",
-                current: show == "all",
-            )
-            components::filter_chip(
-                name: "show-mode",
-                value: "unmatched",
-                label: "Unmatched",
-                current: show == "unmatched",
-            )
-        </nav>
-
-        // A paused search gets a chip too. Its rows sit outside the wanted
-        // view, so the reader picks the All mode to see them.
-        <nav class="mt-2 flex flex-wrap gap-2">
-            components::filter_chip(
-                name: "search-filter",
-                value: "",
-                label: "All searches",
-                current: search.is_empty(),
-            )
-            for saved in engine.searches() {
-                components::filter_chip(
-                    name: "search-filter",
-                    value: saved.id.as_str(),
-                    label: saved.name.as_str(),
-                    current: search == saved.id,
-                )
-            }
-        </nav>
-
         <p class="mt-3 text-sm text-slate-400">
             match show.as_str() {
                 "all" => (format::count(ids.len(), "item", "items")),
