@@ -511,15 +511,17 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
 
 /// One identity, such as an episode, as a row the reader ticks as a whole.
 ///
-/// The row shows the lead release and its box takes it. Every release folds
-/// under the row as a pick, so a reader who wants another copy takes it
-/// without a second row. A tied identity opens the fold and its box takes
-/// nothing until the reader picks, because only the order the releases
-/// arrived in separates its best two.
+/// The row names the identity, and its box takes the lead release. The name
+/// parts, feed, size, seeders, and age of each release sit in the fold,
+/// because a closed row is a choice of episode and not of torrent.
 ///
-/// An identity with no wanted release has nothing to tick. The row shows its
-/// best release with the badge that says why, and dims as an unwanted
-/// [`item_row`] does.
+/// Every release folds under the row as a pick, so a reader who wants
+/// another copy takes it without a second row. A tied identity opens the
+/// fold and its box takes nothing until the reader picks, because only the
+/// order the releases arrived in separates its best two.
+///
+/// An identity with no wanted release has nothing to tick. The row shows the
+/// badge that says why, and dims as an unwanted [`item_row`] does.
 #[component]
 async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
     let lead = group.releases.iter().find(|release| release.preferred);
@@ -556,9 +558,6 @@ async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
                         </span>
                     }
                     if let Some(shown) = shown {
-                        for value in shown.details.values.iter().filter(|value| !value.identity) {
-                            parsed_chip(value: value)
-                        }
                         grab_badge(grab: shown.details.grab.as_ref())
                     }
                     if group.tied {
@@ -567,12 +566,6 @@ async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
                         </span>
                     }
                 </div>
-
-                if let Some(shown) = shown {
-                    <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                        release_meta(item: &shown.item, details: &shown.details)
-                    </div>
-                }
 
                 <details open=(group.tied) class="mt-2">
                     <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-300">
@@ -1236,8 +1229,8 @@ pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result<impl View> {
 
 /// One chip of [`parsed_chips`].
 ///
-/// A [`group_row`] renders the chips of its values that are no identity in
-/// its lines, without the strip around them.
+/// A [`group_row`] renders the chips of the values that are no identity in
+/// its pick lines, without the strip around them.
 #[component]
 async fn parsed_chip(value: &ParsedValue) -> Result<impl View> {
     Ok(view! {
