@@ -19,6 +19,14 @@ pub(super) enum Standing {
     /// The library already holds this identity, so another copy adds nothing.
     Owned(Parsed),
 
+    /// The release is a span, such as a season pack, and the library holds a
+    /// release inside it.
+    ///
+    /// The pack repeats part of what the reader has, while the rest of the
+    /// season stays missing. The row hides for the overlap, and the page does
+    /// not call it owned.
+    Overlapping(Parsed),
+
     /// The last grab found the tracker no longer serving the release, so
     /// another copy of its identity is wanted in its place.
     Gone(Parsed),
@@ -37,6 +45,7 @@ impl Standing {
         match self {
             Self::Wanted(parsed)
             | Self::Owned(parsed)
+            | Self::Overlapping(parsed)
             | Self::Gone(parsed)
             | Self::Disabled(parsed) => Some(parsed),
             Self::Unmatched => None,
@@ -55,6 +64,7 @@ impl Standing {
         match self {
             Self::Wanted(_) => None,
             Self::Owned(_) => Some("owned"),
+            Self::Overlapping(_) => Some("overlapping"),
             Self::Gone(_) => Some("gone"),
             Self::Disabled(_) => Some("paused"),
             Self::Unmatched => Some("unmatched"),
@@ -81,20 +91,25 @@ pub(super) struct ParsedValue {
     pub(super) identity: bool,
 }
 
-/// What the client holds, in the form a standing asks about.
+/// What the client holds, in the two forms a standing asks about.
 pub(super) struct Holdings {
     /// Each held identity, in the rendered form [`Identity::spans`] returns.
     identities: HashSet<String>,
+
+    /// Every span a held identity falls inside, from [`Identity::spans`].
+    spans: HashSet<String>,
 }
 
 impl Holdings {
     pub(super) fn new(held: &[Parsed]) -> Self {
-        Self {
-            identities: held
-                .iter()
-                .map(|parsed| parsed.identity.to_string())
-                .collect(),
+        let mut identities = HashSet::new();
+        let mut spans = HashSet::new();
+        for parsed in held {
+            identities.insert(parsed.identity.to_string());
+            spans.extend(parsed.identity.spans());
         }
+
+        Self { identities, spans }
     }
 
     /// Whether the library holds the release or a span around it.
@@ -105,6 +120,14 @@ impl Holdings {
             .spans()
             .iter()
             .any(|span| self.identities.contains(span))
+    }
+
+    /// Whether a held release falls inside `identity`.
+    ///
+    /// It is also true when the library holds `identity` itself, so a caller
+    /// tests [`Self::owns`] first.
+    pub(super) fn overlaps(&self, identity: &Identity) -> bool {
+        self.spans.contains(&identity.to_string())
     }
 }
 
@@ -145,9 +168,16 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 /// stored episode never owns the pack, which carries the rest of the season
 /// too.
 ///
+/// A span counts as overlapping when the library holds a release inside it.
+/// An announced season pack therefore hides once the client holds one episode
+/// of that season. An announced episode never hides for a held neighbor,
+/// because an episode holds nothing.
+///
 /// `gone` says the last grab of the release found the tracker no longer
 /// serving it. An owned release stays owned, because the library holds it
-/// whatever the tracker serves.
+/// whatever the tracker serves. A gone span reads as gone rather than as
+/// overlapping, because the library holds no copy of it and the tracker no
+/// longer serves it.
 pub(super) fn standing(
     engine: &Engine,
     enabled: &HashSet<String>,
@@ -169,6 +199,10 @@ pub(super) fn standing(
 
     if gone {
         return Standing::Gone(parsed);
+    }
+
+    if holdings.overlaps(&parsed.identity) {
+        return Standing::Overlapping(parsed);
     }
 
     Standing::Wanted(parsed)
@@ -224,6 +258,8 @@ mod tests {
         "The.Hollow.Meridian.S04E06.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
     const HOLLOW_720: &str =
         "The.Hollow.Meridian.S04E06.720p.Broadcast.AAC.Stereo.H.264-OtherGroup.mkv";
+    const HOLLOW_NEXT: &str =
+        "The.Hollow.Meridian.S04E07.1080p.Broadcast.AAC.Stereo.H.264-PublicWave.mkv";
     const NONSENSE: &str = "just some words with no structure at all";
     /// A whole season announced as one release, named after its folder. It
     /// covers the season the episode constants above name.
@@ -297,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn owned_episode_never_owns_its_pack() {
+    fn a_held_episode_hides_the_pack_of_its_season() {
         assert_eq!(
             standing(
                 &ENGINE,
@@ -306,8 +342,23 @@ mod tests {
                 false,
                 HOLLOW_PACK,
             ),
-            parsed(HOLLOW_PACK),
-            "a pack carries more than the one episode the library holds"
+            Standing::Overlapping(ENGINE.parse(HOLLOW_PACK).expect("claimed")),
+            "the pack repeats an episode the client holds"
+        );
+    }
+
+    #[test]
+    fn a_held_episode_never_hides_another_episode() {
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &enabled(&["series-hollow-meridian"]),
+                &holdings_of(HOLLOW_1080),
+                false,
+                HOLLOW_NEXT,
+            ),
+            parsed(HOLLOW_NEXT),
+            "an episode holds nothing, so a held neighbor says nothing about it"
         );
     }
 
@@ -350,6 +401,21 @@ mod tests {
     }
 
     #[test]
+    fn a_gone_pack_stays_gone_when_it_overlaps() {
+        assert_eq!(
+            standing(
+                &ENGINE,
+                &enabled(&["series-hollow-meridian"]),
+                &holdings_of(HOLLOW_1080),
+                true,
+                HOLLOW_PACK,
+            ),
+            Standing::Gone(ENGINE.parse(HOLLOW_PACK).expect("claimed")),
+            "the tracker no longer serves the pack, and the library holds no copy of it"
+        );
+    }
+
+    #[test]
     fn a_disabled_search_hides_what_it_claims() {
         let Standing::Wanted(expected) = parsed(HOLLOW_1080) else {
             unreachable!()
@@ -386,6 +452,7 @@ mod tests {
         for standing in [
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
+            Standing::Overlapping(claimed.clone()),
             Standing::Gone(claimed.clone()),
             Standing::Disabled(claimed.clone()),
         ] {
@@ -451,6 +518,7 @@ mod tests {
         let labels: Vec<(bool, Option<&str>)> = [
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
+            Standing::Overlapping(claimed.clone()),
             Standing::Gone(claimed.clone()),
             Standing::Disabled(claimed),
             Standing::Unmatched,
@@ -464,6 +532,7 @@ mod tests {
             [
                 (true, None),
                 (false, Some("owned")),
+                (false, Some("overlapping")),
                 (false, Some("gone")),
                 (false, Some("paused")),
                 (false, Some("unmatched")),

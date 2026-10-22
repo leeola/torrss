@@ -627,7 +627,8 @@ async fn feed_listing(
         .collect();
 
     // A gone release counts as unseen, because the tracker no longer serves
-    // it.
+    // it. An overlapping pack counts as seen, because the tracker still
+    // serves it and the All view lists it.
     let mut gaps = gaps::gaps(
         &engine,
         standings
@@ -660,6 +661,10 @@ async fn feed_listing(
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Owned(_)))
         .count();
+    let overlapping_count = listed
+        .iter()
+        .filter(|(_, standing, _)| matches!(standing, Standing::Overlapping(_)))
+        .count();
     let disabled_count = listed
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Disabled(_)))
@@ -672,7 +677,8 @@ async fn feed_listing(
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Unmatched))
         .count();
-    let hidden_count = owned_count + disabled_count + gone_count + unmatched_count;
+    let hidden_count =
+        owned_count + overlapping_count + disabled_count + gone_count + unmatched_count;
 
     let wanted = show != "all" && show != "unmatched";
 
@@ -807,6 +813,7 @@ async fn feed_listing(
             if wanted && hidden_count > 0 {
                 ", hidden: "
                 (owned_count) " owned, "
+                (overlapping_count) " overlapping, "
                 (disabled_count) " paused, "
                 (gone_count) " gone, "
                 (unmatched_count) " unmatched"
