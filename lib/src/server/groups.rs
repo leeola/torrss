@@ -36,6 +36,9 @@ pub(super) struct Release<'a> {
 /// A show or a film, with every identity the listing holds of it.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Subject {
+    /// The [`Identity::subject`] key the subject files under.
+    pub(super) key: String,
+
     /// The subject as its newest release names it, with `.` and `_` read as
     /// spaces.
     pub(super) label: String,
@@ -208,6 +211,7 @@ pub(super) fn tree(
             draft.groups.sort_by(|a, b| b.order.cmp(&a.order));
 
             Subject {
+                key: draft.key,
                 label: draft.label,
                 groups: draft.groups.into_iter().map(GroupDraft::finish).collect(),
             }
@@ -380,8 +384,9 @@ mod tests {
         )
     }
 
-    fn subject(label: &str, groups: Vec<Group>) -> Subject {
+    fn subject(key: &str, label: &str, groups: Vec<Group>) -> Subject {
         Subject {
+            key: key.to_owned(),
             label: label.to_owned(),
             groups,
         }
@@ -406,6 +411,7 @@ mod tests {
                 &[HOLLOW_1080, HOLLOW_OTHER_GROUP, HOLLOW_NEXT]
             ),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![
                     group("S04E07", &[2]),
@@ -423,6 +429,7 @@ mod tests {
         assert_eq!(
             tree_of(&Preferences::default(), &[HOLLOW_PACK, HOLLOW_S01E03]),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![
                     group("S01E03", &[1]),
@@ -444,6 +451,7 @@ mod tests {
                 &[HOLLOW_1080, HOLLOW_OTHER_GROUP]
             ),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![group("S04E06", &[1, 0])]
             )],
@@ -459,6 +467,7 @@ mod tests {
                 &[HOLLOW_1080, HOLLOW_OTHER_GROUP]
             ),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![Group {
                     tied: true,
@@ -479,6 +488,7 @@ mod tests {
                 &wanted(&parsed(&[HOLLOW_1080, HOLLOW_OTHER_GROUP])),
             ),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![group("S04E06", &[1, 0])]
             )],
@@ -491,6 +501,7 @@ mod tests {
         assert_eq!(
             tree_of(&Preferences::default(), &[HOLLOW_1080, HOLLOW_OTHER_GROUP]),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![Group {
                     tied: true,
@@ -525,6 +536,7 @@ mod tests {
                 &releases(false, true)
             ),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![group("S04E06", &[1, 0])]
             )],
@@ -538,6 +550,7 @@ mod tests {
                 &releases(false, false)
             ),
             vec![subject(
+                "show|the hollow meridian",
                 "The Hollow Meridian",
                 vec![Group {
                     preferred: None,
@@ -550,8 +563,20 @@ mod tests {
 
     #[test]
     fn subjects_follow_their_newest_release() {
-        let film = |at| subject("Coastal Drift", vec![group("2024", &[at])]);
-        let show = |at| subject("The Hollow Meridian", vec![group("S04E06", &[at])]);
+        let film = |at| {
+            subject(
+                "title|coastal drift",
+                "Coastal Drift",
+                vec![group("2024", &[at])],
+            )
+        };
+        let show = |at| {
+            subject(
+                "show|the hollow meridian",
+                "The Hollow Meridian",
+                vec![group("S04E06", &[at])],
+            )
+        };
 
         assert_eq!(
             tree_of(&Preferences::default(), &[FILM, HOLLOW_1080]),
@@ -568,6 +593,7 @@ mod tests {
         assert_eq!(
             tree_of(&Preferences::default(), &[FILM, FILM_UHD]),
             vec![subject(
+                "title|coastal drift",
                 "Coastal Drift",
                 vec![Group {
                     tied: true,
