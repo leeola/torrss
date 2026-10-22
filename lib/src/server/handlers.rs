@@ -281,8 +281,6 @@ async fn feed(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <script>(Unescaped::new_unchecked(FEED_ACTIONS))</script>
 
-        <h1 class="text-2xl font-semibold tracking-tight">"Results"</h1>
-
         <div
             id="listing"
             // Every control the shard renders is caught here, where the
@@ -340,7 +338,7 @@ async fn feed(cx: &Cx) -> Result<impl View> {
         >
             <div
                 id="results"
-                class="mt-6 flex scroll-mt-24 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3"
+                class="flex scroll-mt-24 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3"
             >
                 <div class="flex flex-wrap items-center gap-3">
                     <span class="text-sm text-slate-300">
