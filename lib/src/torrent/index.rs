@@ -4,7 +4,7 @@
 //! than from the client. One query per request beats one client call per
 //! request, and the page still renders when the client is down.
 //!
-//! Names are stored as the client reports them, and [`identities`] reads them
+//! Names are stored as the client reports them, and [`claimed`] reads them
 //! through the engine at query time. A parser edit therefore changes what
 //! counts as owned with no rescan.
 //!
@@ -12,12 +12,13 @@
 //! of changes, so a torrent removed in the client is known only by its
 //! absence from the next scan.
 
+#[cfg(test)]
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
-use crate::engine::Engine;
+use crate::engine::{Engine, Parsed};
 use crate::torrent::{Torrent, TorrentId, TorrentState};
 
 /// Reads the whole index, newest addition first.
@@ -98,18 +99,28 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<Vec<Torrent>, sqlx::Error> 
     Ok(torrents)
 }
 
-/// Returns the identity of every indexed name the engine reads.
+/// Returns the parse of every indexed name a search claims.
 ///
-/// The whole set comes back at once, because the feed page tests every listed
+/// The whole list comes back at once, because the feed page tests every listed
 /// item against it. A lookup per item costs one pass of the engine per row.
 ///
 /// A name no search claims contributes nothing. A client holds plenty this
 /// application never grabbed, and such a name answers no question the feed
 /// page asks.
-pub(crate) fn identities(engine: &Engine, torrents: &[Torrent]) -> HashSet<String> {
+pub(crate) fn claimed(engine: &Engine, torrents: &[Torrent]) -> Vec<Parsed> {
     torrents
         .iter()
         .filter_map(|torrent| engine.parse(&torrent.name))
+        .collect()
+}
+
+/// Returns the identity of every indexed name the engine reads.
+///
+/// A scan test reads what the scan stored through this.
+#[cfg(test)]
+pub(crate) fn identities(engine: &Engine, torrents: &[Torrent]) -> HashSet<String> {
+    claimed(engine, torrents)
+        .iter()
         .map(|parsed| parsed.identity.to_string())
         .collect()
 }
@@ -150,7 +161,7 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use sqlx::SqlitePool;
 
-    use super::{all, identities, replace};
+    use super::{all, claimed, replace};
     use crate::search::fixture::ENGINE;
     use crate::torrent::{Torrent, TorrentId, TorrentState};
 
@@ -239,7 +250,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn identities_reads_every_parsed_name(pool: SqlitePool) {
+    async fn claimed_reads_every_parsed_name(pool: SqlitePool) {
         replace(
             &pool,
             at(1),
@@ -251,7 +262,10 @@ mod tests {
         let stored = all(&pool).await.expect("index");
 
         assert_eq!(
-            identities(&ENGINE, &stored),
+            claimed(&ENGINE, &stored)
+                .iter()
+                .map(|parsed| parsed.identity.to_string())
+                .collect::<HashSet<_>>(),
             set(&[HOLLOW_KEY]),
             "a name no parser reads contributes no identity"
         );

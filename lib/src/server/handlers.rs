@@ -486,7 +486,11 @@ async fn feed_listing(
 
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let torrents = index::all(&services.db).await?;
-    let owned = index::identities(&engine, &torrents);
+    let held = index::claimed(&engine, &torrents);
+    let owned: HashSet<String> = held
+        .iter()
+        .map(|parsed| parsed.identity.to_string())
+        .collect();
     let library = Library::new(&engine, &torrents);
     let preferences = preference::store::all(&services.db)
         .await?
