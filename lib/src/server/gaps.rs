@@ -5,10 +5,6 @@
 //! reader has to look for them somewhere else, so the Results page names
 //! them.
 
-// FIXME: `gaps` has no caller outside the tests. The missing runs on the
-// subject card of the Results page are what it waits on.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::engine::{Engine, Parsed};
