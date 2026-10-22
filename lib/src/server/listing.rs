@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::engine::{Engine, Parsed};
+use crate::engine::{Engine, Identity, Parsed};
 use crate::store::StoredItem;
 
 /// Where one title stands against the searches and the library.
@@ -81,6 +81,33 @@ pub(super) struct ParsedValue {
     pub(super) identity: bool,
 }
 
+/// What the client holds, in the form a standing asks about.
+pub(super) struct Holdings {
+    /// Each held identity, in the rendered form [`Identity::spans`] returns.
+    identities: HashSet<String>,
+}
+
+impl Holdings {
+    pub(super) fn new(held: &[Parsed]) -> Self {
+        Self {
+            identities: held
+                .iter()
+                .map(|parsed| parsed.identity.to_string())
+                .collect(),
+        }
+    }
+
+    /// Whether the library holds the release or a span around it.
+    ///
+    /// A held season pack therefore owns each episode of its season.
+    pub(super) fn owns(&self, identity: &Identity) -> bool {
+        identity
+            .spans()
+            .iter()
+            .any(|span| self.identities.contains(span))
+    }
+}
+
 /// Resolves what a parse captured back to the fields that captured it.
 ///
 /// The order is the parser's own field order, which is the order the parts
@@ -124,7 +151,7 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 pub(super) fn standing(
     engine: &Engine,
     enabled: &HashSet<String>,
-    owned: &HashSet<String>,
+    holdings: &Holdings,
     gone: bool,
     title: &str,
 ) -> Standing {
@@ -136,12 +163,7 @@ pub(super) fn standing(
         return Standing::Disabled(parsed);
     }
 
-    if parsed
-        .identity
-        .spans()
-        .iter()
-        .any(|span| owned.contains(span))
-    {
+    if holdings.owns(&parsed.identity) {
         return Standing::Owned(parsed);
     }
 
@@ -193,7 +215,7 @@ mod tests {
     use chrono::DateTime;
     use url::Url;
 
-    use super::{Standing, distinct_titles, parsed_values, standing, title_contains};
+    use super::{Holdings, Standing, distinct_titles, parsed_values, standing, title_contains};
     use crate::feed::fake;
     use crate::search::fixture::ENGINE;
     use crate::store::StoredItem;
@@ -211,8 +233,12 @@ mod tests {
         Standing::Wanted(ENGINE.parse(title).expect("claimed"))
     }
 
-    fn owned_of(title: &str) -> HashSet<String> {
-        HashSet::from([ENGINE.parse(title).expect("claimed").identity.to_string()])
+    fn holdings_of(title: &str) -> Holdings {
+        Holdings::new(&[ENGINE.parse(title).expect("claimed")])
+    }
+
+    fn nothing() -> Holdings {
+        Holdings::new(&[])
     }
 
     fn enabled(ids: &[&str]) -> HashSet<String> {
@@ -225,7 +251,7 @@ mod tests {
             standing(
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
-                &HashSet::new(),
+                &nothing(),
                 false,
                 HOLLOW_1080,
             ),
@@ -243,7 +269,7 @@ mod tests {
             standing(
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
-                &owned_of(HOLLOW_1080),
+                &holdings_of(HOLLOW_1080),
                 false,
                 HOLLOW_1080,
             ),
@@ -261,7 +287,7 @@ mod tests {
             standing(
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
-                &owned_of(HOLLOW_PACK),
+                &holdings_of(HOLLOW_PACK),
                 false,
                 HOLLOW_1080,
             ),
@@ -276,7 +302,7 @@ mod tests {
             standing(
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
-                &owned_of(HOLLOW_1080),
+                &holdings_of(HOLLOW_1080),
                 false,
                 HOLLOW_PACK,
             ),
@@ -295,7 +321,7 @@ mod tests {
             standing(
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
-                &HashSet::new(),
+                &nothing(),
                 true,
                 HOLLOW_1080,
             ),
@@ -314,7 +340,7 @@ mod tests {
             standing(
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
-                &owned_of(HOLLOW_1080),
+                &holdings_of(HOLLOW_1080),
                 true,
                 HOLLOW_1080,
             ),
@@ -330,13 +356,7 @@ mod tests {
         };
 
         assert_eq!(
-            standing(
-                &ENGINE,
-                &HashSet::new(),
-                &HashSet::new(),
-                false,
-                HOLLOW_1080
-            ),
+            standing(&ENGINE, &HashSet::new(), &nothing(), false, HOLLOW_1080),
             Standing::Disabled(expected),
             "the search that claims this title is switched off"
         );
@@ -345,7 +365,7 @@ mod tests {
     #[test]
     fn a_title_no_search_wants_is_unmatched() {
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &HashSet::new(), false, HOLLOW_720),
+            standing(&ENGINE, &HashSet::new(), &nothing(), false, HOLLOW_720),
             Standing::Unmatched,
             "the parser reads the 720p name, and no search admits that resolution"
         );
@@ -354,7 +374,7 @@ mod tests {
     #[test]
     fn title_no_search_claims_is_unmatched() {
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &HashSet::new(), false, NONSENSE),
+            standing(&ENGINE, &HashSet::new(), &nothing(), false, NONSENSE),
             Standing::Unmatched,
         );
     }

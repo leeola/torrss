@@ -38,7 +38,7 @@ use crate::{
         format,
         gaps::{self, Gap},
         groups, held,
-        listing::{self, Standing},
+        listing::{self, Holdings, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
         query::IdList,
         verdict,
@@ -595,10 +595,7 @@ async fn feed_listing(
     let engine = app_context::<Arc<Searches>>(cx).engine();
     let torrents = index::all(&services.db).await?;
     let held = index::claimed(&engine, &torrents);
-    let owned: HashSet<String> = held
-        .iter()
-        .map(|parsed| parsed.identity.to_string())
-        .collect();
+    let holdings = Holdings::new(&held);
     let library = Library::new(&engine, &torrents);
     let preferences = preference::store::all(&services.db)
         .await?
@@ -622,7 +619,7 @@ async fn feed_listing(
             listing::standing(
                 &engine,
                 &enabled,
-                &owned,
+                &holdings,
                 gone.contains(&item.id),
                 &item.item.title,
             )
