@@ -1,9 +1,9 @@
-//! Names the episodes a show's numbering implies that nothing lists.
+//! Names the episodes a show's numbering implies that no search claims.
 //!
 //! An announced S04E10 beside a held S04E01 and S04E02 says that S04E03
-//! through S04E09 exist. When neither the feed nor the client lists them, the
-//! reader has to look for them somewhere else, so the Results page names
-//! them.
+//! through S04E09 exist. When no search claims a copy of them, from the feed
+//! or from the client, the Results page names them. The reader then relaxes a
+//! search or looks for them elsewhere.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -67,8 +67,11 @@ struct Season {
 /// high, and a subject with no run has no entry.
 ///
 /// A season pack, announced or held, covers its whole season, because the
-/// reader grabs or holds every episode through it. `announced` is what the
-/// feed serves, so a caller leaves out a release the tracker deleted.
+/// reader grabs or holds every episode through it.
+///
+/// `announced` and `held` are what searches claim, so a copy that no search
+/// wants fills no gap. `announced` is what the feed serves, so a caller leaves
+/// out a release the tracker deleted.
 pub(super) fn gaps<'a>(
     engine: &Engine,
     announced: impl IntoIterator<Item = &'a Parsed>,
