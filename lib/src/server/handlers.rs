@@ -2127,7 +2127,7 @@ async fn editor(
                         class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
                     <p class="mt-1 text-xs text-slate-500">
-                        "Comma-separated. A release this search matches is added to the client with these tags."
+                        "Comma-separated. A release this search matches is added to the client with these tags. Leave it blank to use the parser's tags."
                     </p>
                 </div>
 

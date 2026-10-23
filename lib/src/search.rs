@@ -73,7 +73,7 @@ pub(crate) struct Search {
     ///
     /// The entries keep the order the reader typed them in, with no blank
     /// and no repeat. A title that several searches match carries the union
-    /// of their lists.
+    /// of their lists. An empty list carries the parser's tags in its place.
     pub(crate) tags: Vec<String>,
 }
 

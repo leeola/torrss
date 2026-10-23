@@ -16,6 +16,7 @@ use crate::clock::Clock;
 use crate::download::{DownloadError, Downloader};
 use crate::engine::Engine;
 use crate::feed::FeedAuth;
+use crate::search::Search;
 use crate::store::StoredItem;
 use crate::store::grabs;
 use crate::torrent::{AddTorrent, TorrentClient, TorrentError, TorrentSource};
@@ -47,7 +48,7 @@ pub(crate) enum GrabError {
 /// and the client cannot present either.
 ///
 /// The torrent carries the client tags of every search that matches the
-/// title.
+/// title, or of its parser when the search names none.
 ///
 /// The recorded outcome survives a failure, so the page shows a grab that
 /// did not work. When both the grab and the recording fail, the grab's error
@@ -145,13 +146,17 @@ async fn source(
 /// Each search that claims the title meant its tags, so the grab carries
 /// all of them. A tag keeps the place it first appears in, in the order
 /// the searches match and their lists state.
+///
+/// A search that names no tags carries the tags of the parser it reads
+/// with, so a reader who tags every search of one shape alike writes the
+/// tag once. A search with tags of its own carries only those.
 pub(crate) fn tags_of(engine: &Engine, searches: &[String]) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
 
     for tag in searches
         .iter()
         .filter_map(|id| engine.search(id))
-        .flat_map(|search| &search.tags)
+        .flat_map(|search| effective_tags(engine, search))
     {
         if !tags.contains(tag) {
             tags.push(tag.clone());
@@ -159,6 +164,18 @@ pub(crate) fn tags_of(engine: &Engine, searches: &[String]) -> Vec<String> {
     }
 
     tags
+}
+
+/// Returns the tags of `search`, or of its parser when `search` names none.
+fn effective_tags<'a>(engine: &'a Engine, search: &'a Search) -> &'a [String] {
+    if !search.tags.is_empty() {
+        return &search.tags;
+    }
+
+    engine
+        .parser_of(search)
+        .map(|parser| parser.tags.as_slice())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -209,20 +226,30 @@ mod tests {
             .expect("the row was just stored")
     }
 
-    /// The fixture engine with tags on its two episode searches, which share
-    /// `hd`.
+    /// The fixture engine with tags on the episode parser and on one of its
+    /// two searches.
+    ///
+    /// The `series-episodes` parser carries `television` and `hd`.
+    /// `series-hollow-meridian` carries its own `hd`, and
+    /// `series-ashfall-county` carries nothing.
     fn tagged_engine() -> Engine {
+        let mut parsers = fixture::parsers();
+
+        for parser in &mut parsers {
+            if parser.id == "series-episodes" {
+                parser.tags = vec!["television".to_owned(), "hd".to_owned()];
+            }
+        }
+
         let mut searches = fixture::searches();
 
         for search in &mut searches {
-            search.tags = match search.id.as_str() {
-                "series-hollow-meridian" => vec!["television".to_owned(), "hd".to_owned()],
-                "series-ashfall-county" => vec!["hd".to_owned(), "drama".to_owned()],
-                _ => Vec::new(),
-            };
+            if search.id == "series-hollow-meridian" {
+                search.tags = vec!["hd".to_owned()];
+            }
         }
 
-        Engine::new(fixture::parsers(), searches).expect("every fixture pattern is a valid regex")
+        Engine::new(parsers, searches).expect("every fixture pattern is a valid regex")
     }
 
     #[test]
@@ -235,8 +262,17 @@ mod tests {
                     "series-ashfall-county".to_owned(),
                 ],
             ),
-            ["television", "hd", "drama"],
-            "a shared tag appears once, in first-match order"
+            ["hd", "television"],
+            "a search with tags gives its own, a search with none gives its parser's, each once"
+        );
+    }
+
+    #[test]
+    fn a_search_with_no_tags_carries_its_parsers() {
+        assert_eq!(
+            tags_of(&tagged_engine(), &["series-ashfall-county".to_owned()]),
+            ["television", "hd"],
+            "an empty search list falls back to the parser"
         );
     }
 
@@ -477,10 +513,10 @@ mod tests {
         assert_eq!(
             fakes.torrents.added(),
             vec![AddTorrent {
-                tags: vec!["television".to_owned(), "hd".to_owned()],
+                tags: vec!["hd".to_owned()],
                 ..AddTorrent::new(TorrentSource::Magnet(url(MAGNET)))
             }],
-            "the show search's tags ride along"
+            "the show search names its own tags, so the parser's stay out"
         );
     }
 
