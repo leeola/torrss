@@ -226,7 +226,7 @@ pub(super) fn tree(
                     .map(|part| Part::from(part.as_str()))
                     .collect(),
                 label: group_label(engine, parsed),
-                pack: identity.key.last().is_some_and(String::is_empty),
+                pack: identity.is_span(),
                 releases: Vec::new(),
             },
         );
@@ -275,7 +275,7 @@ fn find_or_push<T>(
 ///
 /// The raw value keeps the capitals the release wrote, which the normalized
 /// key drops.
-fn subject_label(parsed: &Parsed) -> String {
+pub(super) fn subject_label(parsed: &Parsed) -> String {
     raw(parsed, parsed.identity.subject_field())
         .unwrap_or_else(|| parsed.identity.key.first().map_or("", String::as_str))
         .replace(['.', '_'], " ")
@@ -287,7 +287,7 @@ fn subject_label(parsed: &Parsed) -> String {
 /// row run together. Every other part reads as the release wrote it, set off
 /// with `-`. An empty part is the open end of a span, which the label leaves
 /// out.
-fn group_label(engine: &Engine, parsed: &Parsed) -> String {
+pub(super) fn group_label(engine: &Engine, parsed: &Parsed) -> String {
     let parts = past_subject(&parsed.identity);
 
     // Without the parser nothing says which part is a season, so only the

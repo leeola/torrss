@@ -19,6 +19,7 @@ mod parsers;
 mod preferences;
 mod query;
 mod router;
+mod seasons;
 mod serve;
 mod templates;
 mod trace;

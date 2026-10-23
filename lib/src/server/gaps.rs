@@ -41,12 +41,12 @@ impl Gap {
 }
 
 /// Where one release sits in the numbering of its show.
-struct Slot {
+pub(super) struct Slot {
     subject: String,
-    season: Option<u64>,
+    pub(super) season: Option<u64>,
 
     /// [`None`] for a season pack, whose key leaves the episode empty.
-    episode: Option<u64>,
+    pub(super) episode: Option<u64>,
 }
 
 /// What the listing and the client carry of one season.
@@ -115,7 +115,7 @@ pub(super) fn gaps<'a>(
 ///
 /// Answers [`None`] when its parser has no episode among its identity
 /// fields, as for a film or a dated show. Such a release implies no other.
-fn slot(engine: &Engine, parsed: &Parsed) -> Option<Slot> {
+pub(super) fn slot(engine: &Engine, parsed: &Parsed) -> Option<Slot> {
     let parser = engine.parser(&parsed.parser)?;
     let part = |kind: FieldKind| {
         parser

@@ -137,6 +137,15 @@ impl Identity {
             self.key.first().map_or("", String::as_str)
         )
     }
+
+    /// Returns whether the identity stands for several releases, such as a
+    /// season pack.
+    ///
+    /// It reads the trailing empty part that marks a span, as [`Identity`]
+    /// describes.
+    pub(crate) fn is_span(&self) -> bool {
+        self.key.last().is_some_and(String::is_empty)
+    }
 }
 
 impl Display for Identity {
