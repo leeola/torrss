@@ -145,7 +145,7 @@ async fn source(
 /// Each search that claims the title meant its tags, so the grab carries
 /// all of them. A tag keeps the place it first appears in, in the order
 /// the searches match and their lists state.
-fn tags_of(engine: &Engine, searches: &[String]) -> Vec<String> {
+pub(crate) fn tags_of(engine: &Engine, searches: &[String]) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
 
     for tag in searches

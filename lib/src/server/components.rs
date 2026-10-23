@@ -235,6 +235,15 @@ pub(crate) struct SubjectRows {
     /// declaration order.
     pub searches: Vec<Matched>,
 
+    /// The client tags a grab carries when every listed search matches the
+    /// release.
+    ///
+    /// The list comes from [`crate::grab::tags_of`], which also makes the
+    /// list of a grab. Each tag shows once, at the place it first appears in
+    /// the searches and their lists. A card whose searches carry no tag holds
+    /// an empty list.
+    pub tags: Vec<String>,
+
     pub groups: Vec<GroupRows>,
 
     /// The ids of the releases the Fetch all button takes, comma-separated
@@ -490,7 +499,9 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
 ///
 /// Each identity is one row the reader ticks as a whole, highest first. The
 /// header links every search that matches a release of the subject, because
-/// a row names none.
+/// a row names none. The header also names the client tags of those
+/// searches, so the reader sees how the client sorts a grab before they tick
+/// a row.
 ///
 /// The Fetch all button in the header grabs the lead of every identity in
 /// one click. Like a box, it posts nothing. The page's delegated click
@@ -530,6 +541,9 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
                         >
                             (&search.name)
                         </a>
+                    }
+                    if !subject.tags.is_empty() {
+                        tag_badges(tags: &subject.tags)
                     }
                 </summary>
 
@@ -1126,6 +1140,9 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
 }
 
 /// The client tags a grab carries, as a `tagged` label and one pill per tag.
+///
+/// [`search_card`] and [`subject_card`] share it, so the tags look the same
+/// on the Searches page and on the Results page.
 ///
 /// The caller guards an empty list, so a card with no tag adds no empty
 /// element.

@@ -758,7 +758,7 @@ async fn feed_listing(
         .into_iter()
         .enumerate()
         .map(|(subject_index, subject)| {
-            let searches = engine
+            let searches: Vec<Matched> = engine
                 .searches()
                 .filter(|saved| {
                     subject
@@ -772,6 +772,11 @@ async fn feed_listing(
                     name: saved.name.clone(),
                 })
                 .collect();
+
+            let tags = {
+                let ids: Vec<String> = searches.iter().map(|search| search.id.clone()).collect();
+                grab::tags_of(&engine, &ids)
+            };
 
             let leads = subject
                 .leads()
@@ -805,6 +810,7 @@ async fn feed_listing(
             SubjectRows {
                 label: subject.label,
                 searches,
+                tags,
                 groups: groups
                     .into_iter()
                     .enumerate()
