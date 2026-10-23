@@ -51,7 +51,7 @@ pub(super) fn seasons(engine: &Engine, held: Vec<Held>, subject: &str) -> Vec<Se
             }
 
             let (season, episode) =
-                gaps::slot(engine, parsed).map_or((None, None), |slot| (slot.season, slot.episode));
+                gaps::slot(engine, parsed).map_or((None, None), |slot| slot.numbering());
 
             Some((
                 season,

@@ -237,13 +237,6 @@ pub(crate) struct SubjectRows {
 
     pub groups: Vec<GroupRows>,
 
-    /// The runs of episodes that no search claims a copy of, in the feed or in
-    /// the client, low to high.
-    ///
-    /// Each run reads as [`Gap::label`](super::gaps::Gap::label) renders it.
-    /// The list is empty for a subject with no run.
-    pub missing: Vec<String>,
-
     /// The ids of the releases the Fetch all button takes, comma-separated
     /// in group order, or empty when no identity has a lead.
     ///
@@ -539,20 +532,6 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
                         </a>
                     }
                 </summary>
-
-                if !subject.missing.is_empty() {
-                    <p
-                        class="flex flex-wrap items-center gap-2 px-4 pb-2 text-xs text-slate-500"
-                        title="Episodes below the highest known one that no search claims a copy of, in the feed or in the client"
-                    >
-                        "Missing"
-                        for run in &subject.missing {
-                            <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
-                                (run)
-                            </span>
-                        }
-                    </p>
-                }
 
                 <ul class="flex flex-col gap-2 px-4 pb-3">
                     for group in &subject.groups {

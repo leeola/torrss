@@ -89,6 +89,9 @@ pub(super) struct Group {
     /// lists and the library order each part. Of releases they rank alike,
     /// the one with the highest [`Library::affinity`] comes first. Releases
     /// of equal affinity keep the input order.
+    ///
+    /// The list is empty only for a missing episode, which [`Self::missing`]
+    /// builds.
     pub(super) releases: Vec<usize>,
 
     /// The first release, when the listing wants it.
@@ -103,6 +106,22 @@ pub(super) struct Group {
     /// ranks are a tie too, unless one is more similar to the torrents the
     /// client holds.
     pub(super) tied: bool,
+}
+
+impl Group {
+    /// An episode the numbering implies that no listed release carries.
+    ///
+    /// [`tree`] never builds one. The Results page adds it beside the groups
+    /// that `tree` built.
+    pub(super) fn missing(label: String) -> Self {
+        Self {
+            label,
+            pack: false,
+            releases: Vec::new(),
+            preferred: None,
+            tied: false,
+        }
+    }
 }
 
 /// A subject while the walk fills it.

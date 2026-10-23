@@ -2,13 +2,20 @@
 //!
 //! An announced S04E10 beside a held S04E01 and S04E02 says that S04E03
 //! through S04E09 exist. When no search claims a copy of them, from the feed
-//! or from the client, the Results page names them. The reader then relaxes a
-//! search or looks for them elsewhere.
+//! or from the client, the Results page lists each as a greyed row of the
+//! card. The reader then relaxes a search or looks for them elsewhere.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::engine::{Engine, Parsed};
 use crate::parser::FieldKind;
+
+/// Where a release sits in its show's numbering, as season and episode.
+///
+/// [`None`] marks a part the parser does not number. It sorts below any
+/// number, as a pack sorts below the episodes of its season in
+/// [`groups::tree`](super::groups::tree).
+pub(super) type Numbering = (Option<u64>, Option<u64>);
 
 /// One run of consecutive missing episodes of a season, from `first` to
 /// `last` inclusive.
@@ -38,15 +45,33 @@ impl Gap {
             format!("{season}E{:0>2}\u{2013}E{:0>2}", self.first, self.last)
         }
     }
+
+    /// Returns each episode of the run as a run of one, highest first, so
+    /// [`Self::label`] names each as `S04E03`.
+    pub(super) fn episodes(&self) -> impl Iterator<Item = Gap> {
+        let season = self.season;
+
+        (self.first..=self.last).rev().map(move |number| Gap {
+            season,
+            first: number,
+            last: number,
+        })
+    }
 }
 
 /// Where one release sits in the numbering of its show.
 pub(super) struct Slot {
     subject: String,
-    pub(super) season: Option<u64>,
+    season: Option<u64>,
 
     /// [`None`] for a season pack, whose key leaves the episode empty.
-    pub(super) episode: Option<u64>,
+    episode: Option<u64>,
+}
+
+impl Slot {
+    pub(super) fn numbering(&self) -> Numbering {
+        (self.season, self.episode)
+    }
 }
 
 /// What the listing and the client carry of one season.
@@ -111,6 +136,40 @@ pub(super) fn gaps<'a>(
     gaps
 }
 
+/// Places each missing episode of `runs` among `rows`, highest first.
+///
+/// The Results card lists a missing episode as a row beside the ones around
+/// it, so it reads where the reader expects it. `rows` read highest first,
+/// as [`groups::tree`](super::groups::tree) orders them, and `runs` read low
+/// to high, as [`gaps`] returns them. Each missing episode lands before the
+/// first row whose numbering sorts below it, and `missing` builds its row
+/// from its label.
+///
+/// A row with no numbering, such as a film year or a dated episode, stops no
+/// missing episode and keeps its place. The missing episodes below every
+/// numbered row follow the last row.
+pub(super) fn interleave<T>(
+    rows: Vec<(Option<Numbering>, T)>,
+    runs: &[Gap],
+    missing: impl Fn(String) -> T,
+) -> Vec<T> {
+    let mut gaps = runs.iter().rev().flat_map(Gap::episodes).peekable();
+    let mut placed = Vec::with_capacity(rows.len());
+
+    for (numbering, row) in rows {
+        if let Some(numbering) = numbering {
+            while let Some(gap) = gaps.next_if(|gap| (gap.season, Some(gap.first)) > numbering) {
+                placed.push(missing(gap.label()));
+            }
+        }
+
+        placed.push(row);
+    }
+
+    placed.extend(gaps.map(|gap| missing(gap.label())));
+    placed
+}
+
 /// Places `parsed` in the numbering of its show.
 ///
 /// Answers [`None`] when its parser has no episode among its identity
@@ -162,7 +221,7 @@ fn missing(season: Option<u64>, episodes: &BTreeSet<u64>) -> Vec<Gap> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{Gap, gaps};
+    use super::{Gap, Numbering, gaps, interleave};
     use crate::engine::Parsed;
     use crate::search::fixture::ENGINE;
 
@@ -269,6 +328,71 @@ mod tests {
                 .label(),
             ],
             ["S04E03\u{2013}E09", "S04E05", "E03\u{2013}E09"],
+        );
+    }
+
+    /// One numbered row of the card, labeled as a release name writes it.
+    fn row(season: u64, number: u64) -> (Option<Numbering>, String) {
+        (
+            Some((Some(season), Some(number))),
+            format!("S{season:0>2}E{number:0>2}"),
+        )
+    }
+
+    fn interleaved(rows: Vec<(Option<Numbering>, String)>, runs: &[Gap]) -> Vec<String> {
+        interleave(rows, runs, |label| label)
+    }
+
+    #[test]
+    fn a_missing_episode_sits_between_the_rows_around_it() {
+        assert_eq!(
+            interleaved(vec![row(4, 10), row(4, 2)], &[run(4, 3, 9)]),
+            [
+                "S04E10", "S04E09", "S04E08", "S04E07", "S04E06", "S04E05", "S04E04", "S04E03",
+                "S04E02"
+            ],
+        );
+    }
+
+    #[test]
+    fn a_later_season_leads_the_missing_episodes_of_an_earlier_one() {
+        assert_eq!(
+            interleaved(vec![row(5, 1), row(4, 10)], &[run(4, 3, 9)]),
+            [
+                "S05E01", "S04E10", "S04E09", "S04E08", "S04E07", "S04E06", "S04E05", "S04E04",
+                "S04E03"
+            ],
+        );
+    }
+
+    #[test]
+    fn a_run_below_every_row_follows_the_last_row() {
+        assert_eq!(
+            interleaved(vec![row(4, 10)], &[run(4, 3, 5)]),
+            ["S04E10", "S04E05", "S04E04", "S04E03"],
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_numbering_keeps_its_place() {
+        assert_eq!(
+            interleaved(
+                vec![row(4, 10), (None, "2024".to_owned()), row(4, 8)],
+                &[run(4, 9, 9)]
+            ),
+            ["S04E10", "2024", "S04E09", "S04E08"],
+            "the film year stops no missing episode, so S04E09 waits for the next numbered row"
+        );
+    }
+
+    #[test]
+    fn episodes_name_each_episode_of_a_run_highest_first() {
+        assert_eq!(
+            run(4, 3, 5)
+                .episodes()
+                .map(|gap| gap.label())
+                .collect::<Vec<_>>(),
+            ["S04E05", "S04E04", "S04E03"],
         );
     }
 }

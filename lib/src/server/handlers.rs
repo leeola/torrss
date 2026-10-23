@@ -39,7 +39,7 @@ use crate::{
             SubjectRows,
         },
         format,
-        gaps::{self, Gap},
+        gaps::{self, Numbering},
         groups, held,
         listing::{self, Holdings, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
@@ -780,11 +780,32 @@ async fn feed_listing(
                 .join(",");
             let href = href(subject_holdings, (SubjectKey(subject.key.as_str()),)).resolve(cx);
 
+            // Every release of a group shares its identity, so the first one
+            // places the group.
+            let numbered: Vec<(Option<Numbering>, groups::Group)> = subject
+                .groups
+                .into_iter()
+                .map(|group| {
+                    let numbering = group
+                        .releases
+                        .first()
+                        .and_then(|&index| matched[index].1.parsed())
+                        .and_then(|parsed| gaps::slot(&engine, parsed))
+                        .map(|slot| slot.numbering());
+
+                    (numbering, group)
+                })
+                .collect();
+            let groups = gaps::interleave(
+                numbered,
+                &gaps.remove(&subject.key).unwrap_or_default(),
+                groups::Group::missing,
+            );
+
             SubjectRows {
                 label: subject.label,
                 searches,
-                groups: subject
-                    .groups
+                groups: groups
                     .into_iter()
                     .enumerate()
                     .map(|(group_index, group)| GroupRows {
@@ -815,12 +836,6 @@ async fn feed_listing(
                             })
                             .collect(),
                     })
-                    .collect(),
-                missing: gaps
-                    .remove(&subject.key)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(Gap::label)
                     .collect(),
                 leads,
                 href,
