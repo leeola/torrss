@@ -1114,6 +1114,16 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
                     <span>
                         (format::count(search.conditions.len(), "condition", "conditions"))
                     </span>
+                    if !search.tags.is_empty() {
+                        <div class="flex flex-wrap items-center gap-1">
+                            <span>"tagged"</span>
+                            for tag in &search.tags {
+                                <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-slate-400">
+                                    (tag)
+                                </span>
+                            }
+                        </div>
+                    }
                 </div>
             </a>
         </li>
