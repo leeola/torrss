@@ -1107,8 +1107,19 @@ pub(crate) async fn link_button(#[into] href: String, label: &str) -> Result<imp
 /// `parser` is the one this search reads with, which an engine that compiled
 /// always answers. [`None`] renders no badge rather than an error, because a
 /// missing one is a set the process refused to run.
+///
+/// The tag badges name the tags a grab of a match carries. Those are the
+/// parser's when the search names none of its own.
 #[component]
 pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Result<impl View> {
+    let tags = if search.tags.is_empty() {
+        parser
+            .map(|parser| parser.tags.as_slice())
+            .unwrap_or_default()
+    } else {
+        search.tags.as_slice()
+    };
+
     Ok(view! {
         <li id=(format!("search-{}", search.id)) class="scroll-mt-24">
             <a
@@ -1130,8 +1141,8 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
                     <span>
                         (format::count(search.conditions.len(), "condition", "conditions"))
                     </span>
-                    if !search.tags.is_empty() {
-                        tag_badges(tags: &search.tags)
+                    if !tags.is_empty() {
+                        tag_badges(tags: tags)
                     }
                 </div>
             </a>
@@ -1141,8 +1152,9 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
 
 /// The client tags a grab carries, as a `tagged` label and one pill per tag.
 ///
-/// [`search_card`] and [`subject_card`] share it, so the tags look the same
-/// on the Searches page and on the Results page.
+/// [`search_card`], [`parser_card`], and [`subject_card`] share it, so the
+/// tags look the same on the Searches page, the Parsers page, and the
+/// Results page.
 ///
 /// The caller guards an empty list, so a card with no tag adds no empty
 /// element.
@@ -1680,9 +1692,9 @@ pub(crate) async fn match_section(
 
 /// One parser on the parser index.
 ///
-/// The card carries the name and how many fields the parser composes, and no
-/// state badge. A parser claims nothing, so there is nothing about it to be
-/// on or off.
+/// The card carries the name, how many fields the parser composes, and the
+/// parser's client tags. It carries no state badge. A parser claims nothing,
+/// so there is nothing about it to be on or off.
 #[component]
 pub(crate) async fn parser_card(parser: &Parser) -> Result<impl View> {
     Ok(view! {
@@ -1700,9 +1712,14 @@ pub(crate) async fn parser_card(parser: &Parser) -> Result<impl View> {
                     }
                 </div>
 
-                <p class="mt-1 text-xs text-slate-500">
-                    (format::count(parser.fields.len(), "field", "fields"))
-                </p>
+                <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                    <span>
+                        (format::count(parser.fields.len(), "field", "fields"))
+                    </span>
+                    if !parser.tags.is_empty() {
+                        tag_badges(tags: &parser.tags)
+                    }
+                </div>
             </a>
         </li>
     })
