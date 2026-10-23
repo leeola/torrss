@@ -243,6 +243,14 @@ pub(crate) struct SubjectRows {
     /// Each run reads as [`Gap::label`](super::gaps::Gap::label) renders it.
     /// The list is empty for a subject with no run.
     pub missing: Vec<String>,
+
+    /// The ids of the releases the Fetch all button takes, comma-separated
+    /// in group order, or empty when no identity has a lead.
+    ///
+    /// The list has the shape [`IdList`](super::query::IdList) reads,
+    /// because the button carries it as its value and the grab reads it as
+    /// a selection.
+    pub leads: String,
 }
 
 /// One identity of a subject, such as an episode or a season pack, with its
@@ -456,6 +464,10 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
 /// Each identity is one row the reader ticks as a whole, highest first. The
 /// header links every search that matches a release of the subject, because
 /// a row names none.
+///
+/// The Fetch all button in the header grabs the lead of every identity in
+/// one click. Like a box, it posts nothing. The page's delegated click
+/// handler reads its list and hands it to the grab procedure.
 #[component]
 pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Result<impl View> {
     // Boxed, because the card nests every row of its subject. Without the box,
@@ -465,6 +477,17 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
             <details open=(true) class="rounded-lg border border-slate-800 bg-slate-900/40">
                 <summary class="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
                     <h2 class="text-sm font-semibold text-slate-100">(&subject.label)</h2>
+                    if !subject.leads.is_empty() {
+                        <button
+                            type="button"
+                            name="fetch-all"
+                            value=(&subject.leads)
+                            title="Grab the lead release of every episode on this card"
+                            class="cursor-pointer rounded-md border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-xs text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+                        >
+                            "Fetch all"
+                        </button>
+                    }
                     for search in &subject.searches {
                         <a
                             href=(format!("/searches/{}", search.id))

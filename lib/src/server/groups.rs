@@ -58,6 +58,20 @@ pub(super) struct Subject {
     pub(super) groups: Vec<Group>,
 }
 
+impl Subject {
+    /// The releases a grab of the whole subject takes, one per identity in
+    /// group order.
+    ///
+    /// A tied identity yields nothing, because only the reader separates its
+    /// best two. An identity with no wanted release yields nothing either.
+    pub(super) fn leads(&self) -> impl Iterator<Item = usize> {
+        self.groups
+            .iter()
+            .filter(|group| !group.tied)
+            .filter_map(|group| group.preferred)
+    }
+}
+
 /// One identity, such as an episode, a season pack, or a film year, with
 /// every listed release of it.
 #[derive(Debug, PartialEq, Eq)]
@@ -647,6 +661,31 @@ mod tests {
                 }],
             )],
             "no release is wanted, so none is preferred"
+        );
+    }
+
+    #[test]
+    fn leads_take_the_preferred_release_of_each_untied_identity() {
+        let card = subject(
+            "show|the hollow meridian",
+            "The Hollow Meridian",
+            vec![
+                group("S04E07", &[2]),
+                Group {
+                    tied: true,
+                    ..group("S04E06", &[0, 1])
+                },
+                Group {
+                    preferred: None,
+                    ..group("S04E05", &[3])
+                },
+            ],
+        );
+
+        assert_eq!(
+            card.leads().collect::<Vec<_>>(),
+            vec![2],
+            "a tie and an unwanted identity yield nothing"
         );
     }
 

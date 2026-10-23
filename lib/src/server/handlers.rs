@@ -67,6 +67,10 @@ path_param!(feed_id);
 /// the episode's release and ticks the box. A tied row's box names no lead,
 /// so it stays clear until the reader picks.
 ///
+/// `take` resolves a card's lead list against the reader's picks, so a pick
+/// on a row wins over its lead. `drop` removes a grabbed list from the set,
+/// so the count and a later Grab leave it out.
+///
 /// The view operations keep the address bar in step with the signals that
 /// drive the listing, so a reader shares the view they found. They replace
 /// the entry rather than push one, because restoring the signals on a back
@@ -135,6 +139,18 @@ window.torrssFeed = {
     return '';
   },
   count: () => window.torrssFeed.chosen.size,
+  take: (list) => list.split(',').filter((id) => id).map((id) => {
+    const box = window.torrssFeed.boxes().find((one) => one.name === 'group' && one.value === id);
+    const pick = box && window.torrssFeed.picks(box.id.slice('group-'.length)).find((one) => one.checked);
+    return pick ? pick.value : id;
+  }).join(','),
+  drop: (list) => {
+    for (const id of list.split(',')) {
+      window.torrssFeed.chosen.delete(id);
+    }
+
+    return window.torrssFeed.list();
+  },
   show: (feed) => {
     window.torrssFeed.view.set('feed', feed);
     window.torrssFeed.sync();
@@ -312,7 +328,7 @@ async fn feed(cx: &Cx) -> Result<impl View> {
             // A view change re-renders the rows the shard lists. `kept` takes
             // the selection first and changes in the same tick, so the shard
             // checks the same rows again from one request.
-            @click=$(|e: Event| {
+            @click=$(async |e: Event| {
                 if e.target.name == "feed-filter" {
                     kept.set(selected.get());
                     filter.set(e.target.value);
@@ -333,6 +349,29 @@ async fn feed(cx: &Cx) -> Result<impl View> {
 
                 if e.target.name == "dismiss-report" {
                     reported.set("".to_owned());
+                }
+
+                // A card's Fetch all grabs its lead list as the toolbar's Grab
+                // grabs the selection. The guard ignores a second click while
+                // a grab runs.
+                if e.target.name == "fetch-all" {
+                    if !grabbing.get() {
+                        grabbing.set(true);
+                        let list = raw!(
+                            "cx.hydrate(window.torrssFeed.take(String(${e}.target.value)))",
+                            String::new()
+                        );
+                        grab_items(list.clone()).await;
+                        grabbing.set(false);
+                        reported.set(list);
+                        selected.set(raw!(
+                            "cx.hydrate(window.torrssFeed.drop(String(${list})))",
+                            String::new()
+                        ));
+                        kept.set(selected.get());
+                        count.set(raw!("cx.hydrate(window.torrssFeed.count())", 0.0));
+                        version.increment();
+                    }
                 }
             })
         >
@@ -730,6 +769,12 @@ async fn feed_listing(
                 })
                 .collect();
 
+            let leads = subject
+                .leads()
+                .map(|index| matched[index].0.id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+
             SubjectRows {
                 label: subject.label,
                 searches,
@@ -772,6 +817,7 @@ async fn feed_listing(
                     .iter()
                     .map(Gap::label)
                     .collect(),
+                leads,
             }
         })
         .collect();
