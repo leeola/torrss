@@ -1798,6 +1798,7 @@ async fn new_search(cx: &Cx) -> Result<impl View> {
             parser: String::new(),
             conditions: Vec::new(),
             tests: Vec::new(),
+            tags: Vec::new(),
         },
     };
 
@@ -1849,6 +1850,7 @@ fn stored_draft(search: &Search) -> SearchForm {
                     .collect(),
             })
             .collect(),
+        tags: search.tags.clone(),
     }
 }
 
@@ -1866,6 +1868,7 @@ async fn editor(
     draft: &SearchForm,
 ) -> Result<impl View> {
     let name = draft.name.clone();
+    let tags = draft.tags.join(", ");
 
     let search_id = search.map(|search| search.id.clone()).unwrap_or_default();
 
@@ -2014,6 +2017,23 @@ async fn editor(
                             </option>
                         }
                     </select>
+                    // The input carries no handler either. The form's
+                    // delegated one serializes it with every other input,
+                    // so a keystroke reaches the draft that Save writes.
+                    <label for="tags" class="mt-3 block text-xs text-slate-500">
+                        "Tags in the client"
+                    </label>
+                    <input
+                        type="text"
+                        id="tags"
+                        name="tags"
+                        value=(&tags)
+                        placeholder="television, 4k"
+                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                    >
+                    <p class="mt-1 text-xs text-slate-500">
+                        "Comma-separated. A release this search matches is added to the client with these tags."
+                    </p>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
@@ -2474,7 +2494,7 @@ async fn create_search(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             parser: posted.parser,
             conditions: posted.conditions,
             tests: posted.tests,
-            tags: Vec::new(),
+            tags: posted.tags,
         })
         .await
         .map_err(write_failed)?;
@@ -2514,7 +2534,7 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
             parser: posted.parser,
             conditions: posted.conditions,
             tests: posted.tests,
-            tags: Vec::new(),
+            tags: posted.tags,
         })
         .await;
 

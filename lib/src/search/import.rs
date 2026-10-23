@@ -384,6 +384,7 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> SearchForm {
                 title: title.to_owned(),
                 expected: BTreeMap::new(),
             }],
+            tags: Vec::new(),
         };
     };
 
@@ -418,6 +419,7 @@ pub(crate) fn seed(engine: &Engine, title: &str) -> SearchForm {
             title: title.to_owned(),
             expected,
         }],
+        tags: Vec::new(),
     }
 }
 

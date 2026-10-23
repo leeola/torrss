@@ -40,6 +40,9 @@ pub(crate) struct SearchForm {
     pub(crate) conditions: Vec<Condition>,
 
     pub(crate) tests: Vec<TitleTest>,
+
+    /// The client tags, which the form posts as one comma-separated input.
+    pub(crate) tags: Vec<String>,
 }
 
 /// One condition row as the form posted it, before it becomes a
@@ -63,6 +66,7 @@ struct ConditionRow {
 struct Posted {
     name: String,
     parser: String,
+    tags: String,
 
     conditions: BTreeMap<usize, ConditionRow>,
 
@@ -182,6 +186,7 @@ impl SearchForm {
                         .collect(),
                 })
                 .collect(),
+            tags: super::parse_tags(&posted.tags),
         })
     }
 
@@ -194,6 +199,7 @@ impl SearchForm {
 
         pairs.append_pair("name", &self.name);
         pairs.append_pair("parser", &self.parser);
+        pairs.append_pair("tags", &self.tags.join(", "));
 
         for (index, condition) in self.conditions.iter().enumerate() {
             pairs.append_pair(&format!("condition.{index}.field"), &condition.field);
@@ -240,6 +246,7 @@ fn read(body: &str) -> Posted {
         match key.as_ref() {
             "name" => posted.name = value.into_owned(),
             "parser" => posted.parser = value.into_owned(),
+            "tags" => posted.tags = value.into_owned(),
             _ => {
                 read_test(&mut posted.tests, &key, &value);
                 read_condition(&mut posted.conditions, &key, &value);
@@ -287,6 +294,7 @@ mod tests {
                 parser: "series".to_owned(),
                 conditions: Vec::new(),
                 tests: Vec::new(),
+                tags: Vec::new(),
             }),
             "a search with no condition claims every title its parser reads"
         );
@@ -304,6 +312,7 @@ mod tests {
                 parser: "series".to_owned(),
                 conditions: Vec::new(),
                 tests: Vec::new(),
+                tags: Vec::new(),
             }),
             "a blank name is inferred at the write"
         );
@@ -377,6 +386,15 @@ mod tests {
     }
 
     #[test]
+    fn tags_read_as_a_trimmed_list() {
+        assert_eq!(
+            SearchForm::parse("parser=series&tags=television%2C+hd%2C").map(|form| form.tags),
+            Ok(vec!["television".to_owned(), "hd".to_owned()]),
+            "spaces and a trailing comma drop"
+        );
+    }
+
+    #[test]
     fn an_encoded_form_parses_back_to_itself() {
         let saved = SearchForm {
             name: "The Hollow Meridian".to_owned(),
@@ -393,6 +411,7 @@ mod tests {
                     ("season".to_owned(), "4".to_owned()),
                 ]),
             }],
+            tags: vec!["television".to_owned(), "hd".to_owned()],
         };
 
         assert_eq!(
@@ -435,6 +454,7 @@ mod tests {
                     value: String::new(),
                 }],
                 tests: Vec::new(),
+                tags: Vec::new(),
             }),
             "the editor compares nothing until the reader picks a parser, so neither blocks a \
              draft"
