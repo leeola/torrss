@@ -280,6 +280,11 @@ pub(crate) struct GroupRows {
     /// newest.
     pub tied: bool,
 
+    /// The releases of the identity, best first.
+    ///
+    /// An empty list is an episode the numbering implies that no search
+    /// claims a copy of, in the feed or in the client. The row shows it
+    /// greyed, with nothing to tick.
     pub releases: Vec<ReleaseRow>,
 }
 
@@ -573,17 +578,26 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
 ///
 /// An identity with no wanted release has nothing to tick. The row shows the
 /// badge that says why, and dims as an unwanted [`item_row`] does.
+///
+/// An identity with no release at all is a missing episode. The row greys it
+/// further and names it with a badge.
 #[component]
 async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
     let lead = group.releases.iter().find(|release| release.preferred);
     let shown = lead.or_else(|| group.releases.first());
     let chosen = group.releases.iter().any(|release| release.selected);
+    let missing = group.releases.is_empty();
 
     Ok(view! {
-        <li class=(class!(
-            "flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 transition-colors hover:border-slate-700 has-checked:border-sky-400/50 has-checked:bg-sky-400/5",
-            "opacity-60" if lead.is_none(),
-        ))>
+        <li
+            class=(class!(
+                "flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 transition-colors hover:border-slate-700 has-checked:border-sky-400/50 has-checked:bg-sky-400/5",
+                "opacity-60" if lead.is_none() && !missing,
+                "opacity-40" if missing,
+            ))
+            aria-disabled=(missing.then_some("true"))
+            title=(missing.then_some("No search claims a copy of this episode, in the feed or in the client"))
+        >
             if let Some(lead) = lead {
                 <input
                     type="checkbox"
@@ -598,6 +612,8 @@ async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
                 <span class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
                     (label)
                 </span>
+            } else if missing {
+                <span class="size-4 shrink-0"></span>
             }
 
             <div class="min-w-0 flex-1">
@@ -606,6 +622,11 @@ async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
                     if group.pack {
                         <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
                             "pack"
+                        </span>
+                    }
+                    if missing {
+                        <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                            "missing"
                         </span>
                     }
                     if let Some(shown) = shown {
@@ -618,64 +639,66 @@ async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
                     }
                 </div>
 
-                <details open=(group.tied) class="mt-2">
-                    <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-300">
-                        (format::count(group.releases.len(), "release", "releases"))
-                    </summary>
+                if !missing {
+                    <details open=(group.tied) class="mt-2">
+                        <summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-300">
+                            (format::count(group.releases.len(), "release", "releases"))
+                        </summary>
 
-                    <ul class="mt-2 flex flex-col gap-2">
-                        for release in &group.releases {
-                            <li class=(class!(
-                                "flex items-start gap-3 rounded-md border border-slate-800/70 px-3 py-2",
-                                "opacity-60" if release.details.hidden.is_some(),
-                            ))>
-                                if release.details.hidden.is_none() {
-                                    <input
-                                        type="radio"
-                                        name=(format!("pick-{}", group.key))
-                                        value=(release.item.id.to_string())
-                                        checked=(release.selected)
-                                        aria-label="Take this release"
-                                        class="mt-1 size-4 shrink-0 border-slate-700 bg-slate-950"
-                                    >
-                                } else {
-                                    <span class="size-4 shrink-0"></span>
-                                }
-
-                                <div class="min-w-0 flex-1">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        for value in release.details.values.iter().filter(|value| !value.identity) {
-                                            parsed_chip(value: value)
-                                        }
-                                        if release.preferred && !group.tied {
-                                            <span class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300">
-                                                "preferred"
-                                            </span>
-                                        }
-                                        if let Some(label) = release.details.hidden {
-                                            <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
-                                                (label)
-                                            </span>
-                                        }
-                                        grab_badge(grab: release.details.grab.as_ref())
-                                    </div>
-
-                                    <p class="mt-1 font-mono text-xs text-slate-600 break-all">
-                                        (&release.item.item.title)
-                                    </p>
-
-                                    <div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                                        release_meta(item: &release.item, details: &release.details)
-                                    </div>
-
-                                    if let Some(grabbed) = &release.details.grab {
-                                        grab_line(engine: engine, grabbed: grabbed)
+                        <ul class="mt-2 flex flex-col gap-2">
+                            for release in &group.releases {
+                                <li class=(class!(
+                                    "flex items-start gap-3 rounded-md border border-slate-800/70 px-3 py-2",
+                                    "opacity-60" if release.details.hidden.is_some(),
+                                ))>
+                                    if release.details.hidden.is_none() {
+                                        <input
+                                            type="radio"
+                                            name=(format!("pick-{}", group.key))
+                                            value=(release.item.id.to_string())
+                                            checked=(release.selected)
+                                            aria-label="Take this release"
+                                            class="mt-1 size-4 shrink-0 border-slate-700 bg-slate-950"
+                                        >
+                                    } else {
+                                        <span class="size-4 shrink-0"></span>
                                     }
-                                </div>
-                            </li>
-                        }
-                    </ul>
-                </details>
+
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            for value in release.details.values.iter().filter(|value| !value.identity) {
+                                                parsed_chip(value: value)
+                                            }
+                                            if release.preferred && !group.tied {
+                                                <span class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300">
+                                                    "preferred"
+                                                </span>
+                                            }
+                                            if let Some(label) = release.details.hidden {
+                                                <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+                                                    (label)
+                                                </span>
+                                            }
+                                            grab_badge(grab: release.details.grab.as_ref())
+                                        </div>
+
+                                        <p class="mt-1 font-mono text-xs text-slate-600 break-all">
+                                            (&release.item.item.title)
+                                        </p>
+
+                                        <div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                                            release_meta(item: &release.item, details: &release.details)
+                                        </div>
+
+                                        if let Some(grabbed) = &release.details.grab {
+                                            grab_line(engine: engine, grabbed: grabbed)
+                                        }
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    </details>
+                }
             </div>
         </li>
     })
