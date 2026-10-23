@@ -46,6 +46,9 @@ pub(crate) enum GrabError {
 /// first, because it carries the passkey and cookies that fetched the feed
 /// and the client cannot present either.
 ///
+/// The torrent carries the client tags of every search that matches the
+/// title.
+///
 /// The recorded outcome survives a failure, so the page shows a grab that
 /// did not work. When both the grab and the recording fail, the grab's error
 /// is the one returned: that is the failure the caller asked about.
@@ -65,7 +68,8 @@ pub(crate) async fn grab(
         debug!(search.id = id, "search passed");
     }
 
-    let submitted = submit(downloader, client, item, auth).await;
+    let tags = tags_of(engine, &searches);
+    let submitted = submit(downloader, client, item, auth, &tags).await;
     let status = match &submitted {
         Err(GrabError::Download {
             source: DownloadError::Status { code },
@@ -98,11 +102,15 @@ async fn submit(
     client: &dyn TorrentClient,
     item: &StoredItem,
     auth: &FeedAuth,
+    tags: &[String],
 ) -> Result<(), GrabError> {
     let source = source(downloader, item, auth).await?;
 
     client
-        .add(&AddTorrent::new(source))
+        .add(&AddTorrent {
+            tags: tags.to_vec(),
+            ..AddTorrent::new(source)
+        })
         .await
         .context(ClientSnafu)
 }
@@ -132,6 +140,27 @@ async fn source(
     })
 }
 
+/// Returns the union of the client tags of `searches`, each tag once.
+///
+/// Each search that claims the title meant its tags, so the grab carries
+/// all of them. A tag keeps the place it first appears in, in the order
+/// the searches match and their lists state.
+fn tags_of(engine: &Engine, searches: &[String]) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+
+    for tag in searches
+        .iter()
+        .filter_map(|id| engine.search(id))
+        .flat_map(|search| &search.tags)
+    {
+        if !tags.contains(tag) {
+            tags.push(tag.clone());
+        }
+    }
+
+    tags
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -140,13 +169,14 @@ mod tests {
     use sqlx::SqlitePool;
     use url::Url;
 
-    use super::grab;
+    use super::{grab, tags_of};
     use crate::clock::Clock;
     use crate::download::DownloadError;
+    use crate::engine::Engine;
     use std::collections::BTreeMap;
 
     use crate::feed::{FeedAuth, FeedItem, fake};
-    use crate::search::fixture::ENGINE;
+    use crate::search::fixture::{self, ENGINE};
     use crate::services::Services;
     use crate::store;
     use crate::store::grabs::{self, Grab};
@@ -177,6 +207,37 @@ mod tests {
             .await
             .expect("item")
             .expect("the row was just stored")
+    }
+
+    /// The fixture engine with tags on its two episode searches, which share
+    /// `hd`.
+    fn tagged_engine() -> Engine {
+        let mut searches = fixture::searches();
+
+        for search in &mut searches {
+            search.tags = match search.id.as_str() {
+                "series-hollow-meridian" => vec!["television".to_owned(), "hd".to_owned()],
+                "series-ashfall-county" => vec!["hd".to_owned(), "drama".to_owned()],
+                _ => Vec::new(),
+            };
+        }
+
+        Engine::new(fixture::parsers(), searches).expect("every fixture pattern is a valid regex")
+    }
+
+    #[test]
+    fn tags_of_unions_matched_searches_in_order() {
+        assert_eq!(
+            tags_of(
+                &tagged_engine(),
+                &[
+                    "series-hollow-meridian".to_owned(),
+                    "series-ashfall-county".to_owned(),
+                ],
+            ),
+            ["television", "hd", "drama"],
+            "a shared tag appears once, in first-match order"
+        );
     }
 
     #[sqlx::test]
@@ -389,6 +450,37 @@ mod tests {
                 }
             )]),
             "a parser claims nothing, so only the show search is recorded"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_matched_search_tags_the_add(pool: SqlitePool) {
+        let (services, fakes) = Services::fake(pool);
+        let item = stored(
+            &services.db,
+            fake::item("The.Hollow.Meridian.S04E06.1080p.Broadcast-PublicWave.mkv").magnet(MAGNET),
+        )
+        .await;
+
+        grab(
+            &tagged_engine(),
+            &services.db,
+            services.downloads.as_ref(),
+            services.torrents.as_ref(),
+            services.clock.as_ref(),
+            &item,
+            &FeedAuth::default(),
+        )
+        .await
+        .expect("grab");
+
+        assert_eq!(
+            fakes.torrents.added(),
+            vec![AddTorrent {
+                tags: vec!["television".to_owned(), "hd".to_owned()],
+                ..AddTorrent::new(TorrentSource::Magnet(url(MAGNET)))
+            }],
+            "the show search's tags ride along"
         );
     }
 
