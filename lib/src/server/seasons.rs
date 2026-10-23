@@ -4,10 +4,6 @@
 //! answers what the reader already has of it, so it lists the held torrents
 //! of the show season by season.
 
-// FIXME: `seasons` has no caller outside the tests. The subject page is what
-// it waits on.
-#![allow(dead_code)]
-
 use super::held::Held;
 use super::{gaps, groups};
 use crate::engine::Engine;

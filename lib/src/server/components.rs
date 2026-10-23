@@ -295,6 +295,29 @@ pub(crate) struct ReleaseRow {
     pub preferred: bool,
 }
 
+/// One season of a subject's page, as the client holds it.
+pub(crate) struct SeasonRows {
+    /// [`None`] for a parser that numbers no season, such as a film's, which
+    /// renders no heading.
+    pub number: Option<u64>,
+
+    pub rows: Vec<HeldRow>,
+}
+
+/// One torrent the client holds, as the page of its subject lists it.
+pub(crate) struct HeldRow {
+    pub label: String,
+    pub pack: bool,
+    pub torrent: Torrent,
+
+    /// How long ago the client accepted the grab that moved the torrent, or
+    /// nothing for a torrent it held before any grab was recorded.
+    ///
+    /// It arrives rendered, because the row has no clock, as
+    /// [`ItemDetails::age`] says.
+    pub ingested: Option<String>,
+}
+
 /// One title no search claims, prefixed by the checkbox that selects it.
 ///
 /// The checkbox posts nothing. The page reads it, keeps the selection in the
@@ -1234,6 +1257,57 @@ async fn progress_bar(progress: f32) -> Result<impl View> {
             </div>
             <span>(&percent)</span>
         </div>
+    })
+}
+
+/// One season of a subject's page, with every torrent the client holds of
+/// it.
+///
+/// The identity leads and the torrent name dims, because the page answers
+/// which episodes the reader has and the name is detail.
+#[component]
+pub(crate) async fn held_season(season: &SeasonRows) -> Result<impl View> {
+    Ok(view! {
+        <section class="mt-6">
+            if let Some(number) = season.number {
+                <h2 class="text-sm font-semibold text-slate-300">"Season " (number)</h2>
+            }
+
+            <ul class="mt-2 flex flex-col gap-2">
+                for row in &season.rows {
+                    <li class="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-sm font-medium text-slate-100">(&row.label)</span>
+                            if row.pack {
+                                <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-xs text-slate-400">
+                                    "pack"
+                                </span>
+                            }
+                            state_badge(state: &row.torrent.state)
+                        </div>
+
+                        <p class="mt-1 font-mono text-xs text-slate-600 break-all">
+                            (&row.torrent.name)
+                        </p>
+
+                        progress_bar(progress: row.torrent.progress)
+
+                        <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                            <span>(format::size(Some(row.torrent.size)))</span>
+                            if let TorrentState::Error(reason) = &row.torrent.state {
+                                <span>(reason)</span>
+                            }
+                            <span>
+                                match &row.ingested {
+                                    Some(age) => { "ingested " (age) },
+                                    None => "held before any grab was recorded",
+                                }
+                            </span>
+                        </div>
+                    </li>
+                }
+            </ul>
+        </section>
     })
 }
 

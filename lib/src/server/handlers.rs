@@ -34,14 +34,17 @@ use crate::{
     search::registry::{SaveError, Searches},
     search::{Condition, Diff, Search},
     server::{
-        components::{self, Grabbed, GroupRows, ItemDetails, Matched, ReleaseRow, SubjectRows},
+        components::{
+            self, Grabbed, GroupRows, HeldRow, ItemDetails, Matched, ReleaseRow, SeasonRows,
+            SubjectRows,
+        },
         format,
         gaps::{self, Gap},
         groups, held,
         listing::{self, Holdings, Standing},
         matches::{self, Edits, Match, PatternError, Rules},
         query::IdList,
-        verdict,
+        seasons, verdict,
     },
     services::Services,
     store::grabs::{self, Grab},
@@ -52,6 +55,7 @@ use crate::{
 
 path_param!(search_id);
 path_param!(feed_id);
+path_param!(subject_key);
 
 /// The selection the feed page keeps while the listing re-renders.
 ///
@@ -1121,6 +1125,74 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
     .await;
 
     Ok(registry.entries().len() as f64)
+}
+
+/// What the client holds of one show or film, season by season.
+///
+/// `subject_key` is the [`Identity::subject`](crate::engine::Identity::subject)
+/// key a Results card links with. A key the client holds nothing of renders
+/// an empty page rather than a 404, because a card of a show the reader is
+/// still collecting links here too.
+///
+/// The heading then falls back to the key's value. That is the normalized
+/// name, because no held release writes it with its capitals.
+#[page("/subjects/{subject_key}")]
+async fn subject_holdings(cx: &Cx) -> Result<impl View> {
+    let key = path_param::<SubjectKey>(cx);
+    let services = app_context::<Services>(cx);
+    let now = services.clock.now();
+    let engine = app_context::<Arc<Searches>>(cx).engine();
+
+    let accepted = grabs::accepted(&services.db).await?;
+    let torrents = index::all(&services.db).await?;
+    let placed = seasons::seasons(&engine, held::held(&engine, torrents, &accepted), key);
+
+    let label = seasons::label(&placed).unwrap_or_else(|| {
+        key.split_once('|')
+            .map_or(key, |(_, value)| value)
+            .to_owned()
+    });
+    let count: usize = placed.iter().map(|season| season.rows.len()).sum();
+
+    let shown: Vec<SeasonRows> = placed
+        .into_iter()
+        .map(|season| SeasonRows {
+            number: season.number,
+            rows: season
+                .rows
+                .into_iter()
+                .map(|row| HeldRow {
+                    label: row.label,
+                    pack: row.pack,
+                    ingested: row.held.grabbed_at.map(|at| format::age(now, Some(at))),
+                    torrent: row.held.torrent,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(view! {
+        <nav class="text-sm text-slate-500">
+            <a href="/" class="hover:text-slate-300">"Results"</a>
+            " / "
+            <span class="text-slate-300">(&label)</span>
+        </nav>
+
+        <h1 class="mt-3 text-2xl font-semibold tracking-tight">(&label)</h1>
+        <p class="mt-1 text-sm text-slate-400">
+            (format::count(count, "torrent", "torrents")) " of this subject in the client."
+        </p>
+
+        if shown.is_empty() {
+            <p class="mt-4 rounded-lg border border-slate-800 px-4 py-8 text-center text-sm text-slate-500">
+                "The client holds nothing of this subject."
+            </p>
+        } else {
+            for season in &shown {
+                components::held_season(season: season)
+            }
+        }
+    })
 }
 
 #[page("/searches")]
