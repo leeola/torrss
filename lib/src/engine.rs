@@ -1121,6 +1121,7 @@ mod tests {
             name: id.to_owned(),
             fields,
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         }
     }

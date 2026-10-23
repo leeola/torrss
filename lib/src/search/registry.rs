@@ -458,6 +458,7 @@ mod tests {
                 identity: true,
             }],
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         }
     }

@@ -96,6 +96,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags().into_iter().filter(|tag| tag.name == "extension"))
             .collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: true,
         },
         // The show is lazy, so it stops at the first season token. The year
@@ -143,6 +144,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(series_tags)
             .collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: true,
         },
         // This one claims no episode name. The episode is not tight, so the
@@ -179,6 +181,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: true,
         },
         // The season keeps the Season kind, so it normalizes as a number and
@@ -210,6 +213,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: true,
         },
         // The three date parts are the identity, so an episode of this shape
@@ -252,6 +256,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: true,
         },
         // The movie run is greedy, so the last year in the title is the one
@@ -278,6 +283,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: true,
         },
     ]
@@ -734,6 +740,14 @@ mod tests {
     #[test]
     fn every_shipped_parser_is_built_in() {
         assert!(parsers().iter().all(|parser| parser.built_in));
+    }
+
+    #[test]
+    fn no_shipped_parser_carries_a_tag() {
+        assert!(
+            parsers().iter().all(|parser| parser.tags.is_empty()),
+            "a built-in parser is tagged by copying it"
+        );
     }
 
     #[test]

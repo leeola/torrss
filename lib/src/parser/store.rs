@@ -16,9 +16,11 @@ use super::{Field, FieldKind, Parser, TitleTest};
 
 /// Adds a parser, or replaces the one already stored under its id.
 const UPSERT: &str = "
-    INSERT INTO parsers (id, name)
-    VALUES (?1, ?2)
-    ON CONFLICT (id) DO UPDATE SET name = excluded.name
+    INSERT INTO parsers (id, name, tags)
+    VALUES (?1, ?2, ?3)
+    ON CONFLICT (id) DO UPDATE SET
+        name = excluded.name,
+        tags = excluded.tags
 ";
 
 /// Reads every parser by name, which is the order the index lists them.
@@ -26,7 +28,7 @@ const UPSERT: &str = "
 /// The name orders them rather than the id. The id is a slug the reader
 /// never sees, and ordering by it leaves a renamed parser where its old name
 /// sorted.
-const SELECT_PARSERS: &str = "SELECT id, name FROM parsers ORDER BY name";
+const SELECT_PARSERS: &str = "SELECT id, name, tags FROM parsers ORDER BY name";
 
 /// Reads every field of every parser, grouped by parser and in order.
 ///
@@ -74,15 +76,16 @@ impl ParserStore {
     /// does not know. Every stored value was one when it was written, so the
     /// row is corrupt rather than merely unexpected.
     pub(crate) async fn list(&self) -> Result<Vec<Parser>, sqlx::Error> {
-        let mut parsers = sqlx::query_as::<_, (String, String)>(SELECT_PARSERS)
+        let mut parsers = sqlx::query_as::<_, (String, String, String)>(SELECT_PARSERS)
             .fetch_all(&self.pool)
             .await?
             .into_iter()
-            .map(|(id, name)| Parser {
+            .map(|(id, name, tags)| Parser {
                 id,
                 name,
                 fields: Vec::new(),
                 tests: Vec::new(),
+                tags: super::parse_tags(&tags),
                 built_in: false,
             })
             .collect::<Vec<_>>();
@@ -150,6 +153,7 @@ impl ParserStore {
         sqlx::query(UPSERT)
             .bind(&parser.id)
             .bind(&parser.name)
+            .bind(parser.tags.join(","))
             .execute(&mut *tx)
             .await?;
 
@@ -268,12 +272,13 @@ mod tests {
             name: id.to_owned(),
             fields,
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         }
     }
 
-    /// Two fields, whose order the position column keeps, and one saved test
-    /// naming both of them.
+    /// Two fields, whose order the position column keeps, one saved test
+    /// naming both of them, and two tags.
     fn series() -> Parser {
         Parser {
             tests: vec![TitleTest {
@@ -283,6 +288,7 @@ mod tests {
                     ("season".to_owned(), "4".to_owned()),
                 ]),
             }],
+            tags: vec!["television".to_owned(), "hd".to_owned()],
             ..parser(
                 "series",
                 vec![
@@ -319,7 +325,7 @@ mod tests {
                 parser("archive", vec![text_field("year", r"\.\d{4}")]),
                 series(),
             ],
-            "ordered by name, each with its fields in position order"
+            "ordered by name, each with its fields in position order and its tags in typed order"
         );
     }
 

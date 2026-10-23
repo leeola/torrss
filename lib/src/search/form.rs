@@ -19,6 +19,7 @@ use snafu::{OptionExt, ensure};
 use url::form_urlencoded;
 
 use super::{Condition, Op};
+use crate::parser;
 use crate::parser::TitleTest;
 use crate::parser::form::{
     FormError, MissingParserSnafu, MissingValueSnafu, TestRow, UnknownOpSnafu, draft_test,
@@ -186,7 +187,7 @@ impl SearchForm {
                         .collect(),
                 })
                 .collect(),
-            tags: super::parse_tags(&posted.tags),
+            tags: parser::parse_tags(&posted.tags),
         })
     }
 

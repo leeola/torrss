@@ -136,6 +136,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
                 ),
             ],
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         },
         Parser {
@@ -204,6 +205,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
                 ),
             ],
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         },
         Parser {
@@ -253,6 +255,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
                 ),
             ],
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         },
     ]

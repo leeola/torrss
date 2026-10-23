@@ -123,6 +123,7 @@ async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
         tests: parser
             .map(|parser| parser.tests.clone())
             .unwrap_or_default(),
+        tags: parser.map(|parser| parser.tags.clone()).unwrap_or_default(),
     }
     .encode();
     let initial_rows = initial_draft.clone();
@@ -361,6 +362,7 @@ async fn built_in_parser(cx: &Cx, parser: &Parser) -> Result<impl View> {
         name: parser.name.clone(),
         fields: parser.fields.clone(),
         tests: parser.tests.clone(),
+        tags: parser.tags.clone(),
     }
     .encode();
 
@@ -547,6 +549,7 @@ async fn create_parser(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             name: posted.name,
             fields: posted.fields,
             tests: posted.tests,
+            tags: Vec::new(),
             built_in: false,
         })
         .await
@@ -578,6 +581,7 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
             name: posted.name,
             fields: posted.fields,
             tests: posted.tests,
+            tags: Vec::new(),
             built_in: false,
         })
         .await;
@@ -620,6 +624,7 @@ async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
             name,
             fields: parser.fields.clone(),
             tests: parser.tests.clone(),
+            tags: Vec::new(),
             built_in: false,
         }
     };

@@ -31,6 +31,9 @@ pub(crate) struct ParserForm {
     pub(crate) name: String,
     pub(crate) fields: Vec<Field>,
     pub(crate) tests: Vec<TitleTest>,
+
+    /// The client tags, which the form posts as one comma-separated input.
+    pub(crate) tags: Vec<String>,
 }
 
 /// The rows a parser editor holds, kept exactly as the form posted them.
@@ -64,6 +67,7 @@ impl ParserRows {
 #[derive(Default)]
 struct Posted {
     name: String,
+    tags: String,
 
     /// Ordered by index, so the fields come out in the order the editor
     /// showed them however the browser ordered the pairs.
@@ -142,6 +146,7 @@ impl ParserForm {
                         .collect(),
                 })
                 .collect(),
+            tags: super::parse_tags(&posted.tags),
         })
     }
 
@@ -155,6 +160,7 @@ impl ParserForm {
         let mut pairs = form_urlencoded::Serializer::new(String::new());
 
         pairs.append_pair("name", &self.name);
+        pairs.append_pair("tags", &self.tags.join(", "));
 
         for (index, field) in self.fields.iter().enumerate() {
             encode_field(&mut pairs, index, field);
@@ -224,13 +230,14 @@ fn read(body: &str) -> Posted {
     let mut posted = Posted::default();
 
     for (key, value) in form_urlencoded::parse(body.as_bytes()) {
-        if key == "name" {
-            posted.name = value.into_owned();
-            continue;
+        match key.as_ref() {
+            "name" => posted.name = value.into_owned(),
+            "tags" => posted.tags = value.into_owned(),
+            _ => {
+                read_test(&mut posted.tests, &key, &value);
+                read_row(&mut posted.rows, &key, &value);
+            }
         }
-
-        read_test(&mut posted.tests, &key, &value);
-        read_row(&mut posted.rows, &key, &value);
     }
 
     posted
@@ -513,6 +520,7 @@ mod tests {
                     text("season", r"S\d+", false, false),
                 ],
                 tests: Vec::new(),
+                tags: Vec::new(),
             }),
             "the index orders the rows, and an absent checkbox reads false"
         );
@@ -619,6 +627,15 @@ mod tests {
     }
 
     #[test]
+    fn tags_read_as_a_trimmed_list() {
+        assert_eq!(
+            ParserForm::parse("name=Series&tags=television%2C+hd%2C").map(|form| form.tags),
+            Ok(vec!["television".to_owned(), "hd".to_owned()]),
+            "spaces and a trailing comma drop"
+        );
+    }
+
+    #[test]
     fn an_encoded_form_parses_back_to_itself() {
         let series = ParserForm {
             name: "Series Episodes".to_owned(),
@@ -640,6 +657,7 @@ mod tests {
                     ("season".to_owned(), "4".to_owned()),
                 ]),
             }],
+            tags: vec!["television".to_owned(), "hd".to_owned()],
         };
 
         assert_eq!(

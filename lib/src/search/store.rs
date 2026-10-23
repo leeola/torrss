@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use sqlx::{Row, SqlitePool};
 
 use super::{Condition, Op, Search};
+use crate::parser;
 use crate::parser::TitleTest;
 
 /// Adds a search, or replaces the one already stored under its id.
@@ -96,7 +97,7 @@ impl SearchStore {
                     parser,
                     conditions: Vec::new(),
                     tests: Vec::new(),
-                    tags: super::parse_tags(&tags),
+                    tags: parser::parse_tags(&tags),
                 })
                 .collect::<Vec<_>>();
 
@@ -278,6 +279,7 @@ mod tests {
                 identity: true,
             }],
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         }
     }

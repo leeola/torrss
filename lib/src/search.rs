@@ -350,26 +350,9 @@ pub(crate) fn inferred_name(conditions: &[Condition], parser: &str) -> String {
     name
 }
 
-/// Returns the tags a comma-separated list names, in order.
-///
-/// Each entry is trimmed, a blank one drops, and a repeat keeps only its
-/// first place. The search form and the store both read a list through
-/// this, so a typed list and a stored one hold the same tags.
-pub(crate) fn parse_tags(text: &str) -> Vec<String> {
-    let mut tags: Vec<String> = Vec::new();
-
-    for tag in text.split(',').map(str::trim).filter(|tag| !tag.is_empty()) {
-        if !tags.iter().any(|seen| seen == tag) {
-            tags.push(tag.to_owned());
-        }
-    }
-
-    tags
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Condition, Op, inferred_name, parse_tags};
+    use super::{Condition, Op, inferred_name};
     use crate::parser::FieldKind;
 
     fn condition(field: &str, op: Op, value: &str) -> Condition {
@@ -486,15 +469,6 @@ mod tests {
             ),
             "episodeNumber absent",
             "an operator that takes no value renders without one"
-        );
-    }
-
-    #[test]
-    fn parse_tags_drops_blank_and_repeated_entries() {
-        assert_eq!(
-            parse_tags(" television, hd,,television "),
-            vec!["television", "hd"],
-            "blank and repeated entries drop"
         );
     }
 }

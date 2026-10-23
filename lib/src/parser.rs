@@ -3,7 +3,9 @@
 //! A parser is a list of [`Field`]s in the order a filename carries them.
 //! Composed, they become the one regex that cuts a name into the values
 //! behind it. A parser answers what a name says and nothing about whether
-//! anyone wants it, so it has no switch and claims no title.
+//! anyone wants it, so it has no switch and claims no title. The tag list is
+//! the one thing a parser says about what happens to a release, as a default
+//! its searches fall back to.
 //!
 //! [`FieldKind`] says how a matched string converts, and a premade kind
 //! carries the pattern its fields match with. [`PRESETS`] are the rows a
@@ -43,6 +45,14 @@ pub(crate) struct Parser {
     /// Nothing outside the editor runs these. They exist so a field change
     /// that breaks a title the reader cared about says so as they type.
     pub(crate) tests: Vec<TitleTest>,
+
+    /// The client tags a search that reads with this parser carries when it
+    /// names none of its own.
+    ///
+    /// The entries keep the order the reader typed them in, with no blank and
+    /// no repeat. A built-in parser carries none, because no save reaches it.
+    /// A reader who wants one tagged tags a copy.
+    pub(crate) tags: Vec<String>,
 
     /// Whether the binary carries this parser.
     ///
@@ -462,13 +472,30 @@ pub(crate) const PRESETS: &[Preset] = &[
     },
 ];
 
+/// Returns the tags a comma-separated list names, in order.
+///
+/// Each entry is trimmed, a blank one drops, and a repeat keeps only its
+/// first place. Every form and store that holds a tag list reads it through
+/// this, so a typed list and a stored one hold the same tags.
+pub(crate) fn parse_tags(text: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+
+    for tag in text.split(',').map(str::trim).filter(|tag| !tag.is_empty()) {
+        if !tags.iter().any(|seen| seen == tag) {
+            tags.push(tag.to_owned());
+        }
+    }
+
+    tags
+}
+
 #[cfg(test)]
 mod tests {
     use regex::Regex;
 
     use std::collections::BTreeSet;
 
-    use super::{Field, FieldKind, PRESETS, Parser};
+    use super::{Field, FieldKind, PRESETS, Parser, parse_tags};
     use crate::engine::{Component, Engine, compose};
     use crate::search::Search;
 
@@ -522,6 +549,7 @@ mod tests {
             name: "Scene".to_owned(),
             fields: names.iter().copied().map(preset_field).collect(),
             tests: Vec::new(),
+            tags: Vec::new(),
             built_in: false,
         }
     }
@@ -565,6 +593,7 @@ mod tests {
                 name: "Scene".to_owned(),
                 fields: fields.to_vec(),
                 tests: Vec::new(),
+                tags: Vec::new(),
                 built_in: false,
             }],
             vec![Search {
@@ -856,6 +885,15 @@ mod tests {
                 ("season".to_owned(), "2".to_owned()),
             ],
             "the gap after a show that is not tight does not cut the run short"
+        );
+    }
+
+    #[test]
+    fn parse_tags_drops_blank_and_repeated_entries() {
+        assert_eq!(
+            parse_tags(" television, hd,,television "),
+            vec!["television", "hd"],
+            "blank and repeated entries drop"
         );
     }
 }
