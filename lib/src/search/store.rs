@@ -26,11 +26,12 @@ use crate::parser::TitleTest;
 /// runtime decision about a search, not part of the rules they edit, so
 /// saving an edit never turns a running search off.
 const UPSERT: &str = "
-    INSERT INTO searches (id, name, parser, enabled)
-    VALUES (?1, ?2, ?3, ?4)
+    INSERT INTO searches (id, name, parser, enabled, tags)
+    VALUES (?1, ?2, ?3, ?4, ?5)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
-        parser = excluded.parser
+        parser = excluded.parser,
+        tags = excluded.tags
 ";
 
 /// Reads every search by name, which is the order the admin index lists them.
@@ -38,7 +39,7 @@ const UPSERT: &str = "
 /// The name orders them rather than the id. The id is a slug the reader
 /// never sees, and ordering by it leaves a renamed search where its old
 /// name sorted.
-const SELECT_SEARCHES: &str = "SELECT id, name, parser, enabled FROM searches ORDER BY name";
+const SELECT_SEARCHES: &str = "SELECT id, name, parser, enabled, tags FROM searches ORDER BY name";
 
 /// Reads every condition of every search, grouped by search and in order.
 const SELECT_CONDITIONS: &str = "
@@ -83,19 +84,21 @@ impl SearchStore {
     /// build does not know. Every stored value was one when it was written,
     /// so the row is corrupt rather than merely unexpected.
     pub(crate) async fn list(&self) -> Result<Vec<Search>, sqlx::Error> {
-        let mut searches = sqlx::query_as::<_, (String, String, String, bool)>(SELECT_SEARCHES)
-            .fetch_all(&self.pool)
-            .await?
-            .into_iter()
-            .map(|(id, name, parser, enabled)| Search {
-                id,
-                name,
-                enabled,
-                parser,
-                conditions: Vec::new(),
-                tests: Vec::new(),
-            })
-            .collect::<Vec<_>>();
+        let mut searches =
+            sqlx::query_as::<_, (String, String, String, bool, String)>(SELECT_SEARCHES)
+                .fetch_all(&self.pool)
+                .await?
+                .into_iter()
+                .map(|(id, name, parser, enabled, tags)| Search {
+                    id,
+                    name,
+                    enabled,
+                    parser,
+                    conditions: Vec::new(),
+                    tests: Vec::new(),
+                    tags: super::parse_tags(&tags),
+                })
+                .collect::<Vec<_>>();
 
         for row in sqlx::query(SELECT_CONDITIONS).fetch_all(&self.pool).await? {
             let owner: String = row.try_get("search")?;
@@ -170,6 +173,7 @@ impl SearchStore {
             .bind(&search.name)
             .bind(&search.parser)
             .bind(search.enabled)
+            .bind(search.tags.join(","))
             .execute(&mut *tx)
             .await?;
 
@@ -286,10 +290,12 @@ mod tests {
             parser: "series".to_owned(),
             conditions: Vec::new(),
             tests: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
-    /// One condition and one saved test, so both lists cross the table.
+    /// One condition, one saved test, and two tags, so every list crosses
+    /// the table.
     fn narrowed() -> Search {
         Search {
             conditions: vec![Condition {
@@ -304,6 +310,7 @@ mod tests {
                     ("season".to_owned(), "4".to_owned()),
                 ]),
             }],
+            tags: vec!["television".to_owned(), "hd".to_owned()],
             ..search("hollow")
         }
     }
@@ -351,7 +358,7 @@ mod tests {
         assert_eq!(
             store.list().await.expect("list"),
             vec![search("archive"), narrowed()],
-            "ordered by name, each with its conditions and tests"
+            "ordered by name, each with its conditions, tests, and tags"
         );
     }
 
@@ -368,8 +375,8 @@ mod tests {
         assert_eq!(
             store.list().await.expect("list"),
             vec![edited],
-            "a dropped condition and a dropped test both go, and the switch is not part of \
-             the edit"
+            "a dropped condition, a dropped test, and dropped tags all go, and the switch is \
+             not part of the edit"
         );
     }
 

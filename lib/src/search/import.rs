@@ -655,6 +655,7 @@ mod tests {
                 parser: "series-copy".to_owned(),
                 conditions: vec![equals("show", "The Hollow Meridian")],
                 tests: Vec::new(),
+                tags: Vec::new(),
             }],
         )
         .expect("the fixture patterns compile");

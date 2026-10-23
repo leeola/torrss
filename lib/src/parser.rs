@@ -574,6 +574,7 @@ mod tests {
                 parser: "scene".to_owned(),
                 conditions: Vec::new(),
                 tests: Vec::new(),
+                tags: Vec::new(),
             }],
         )
         .expect("the fields compose into one regex");

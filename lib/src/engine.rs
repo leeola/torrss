@@ -893,6 +893,7 @@ mod tests {
             parser: parser.to_owned(),
             conditions,
             tests: Vec::new(),
+            tags: Vec::new(),
         }
     }
 

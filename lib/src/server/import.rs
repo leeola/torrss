@@ -599,6 +599,7 @@ async fn import_searches(cx: &Cx, RawForm(body): RawForm) -> Result<SeeOther> {
                 parser: suggestion.parser,
                 conditions,
                 tests: Vec::new(),
+                tags: Vec::new(),
             })
             .await
             .map_err(handlers::write_failed)?;

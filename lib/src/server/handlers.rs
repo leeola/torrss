@@ -2474,6 +2474,7 @@ async fn create_search(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             parser: posted.parser,
             conditions: posted.conditions,
             tests: posted.tests,
+            tags: Vec::new(),
         })
         .await
         .map_err(write_failed)?;
@@ -2513,6 +2514,7 @@ async fn save_draft(cx: &Cx, id: String, draft: String) -> Result<Result<String,
             parser: posted.parser,
             conditions: posted.conditions,
             tests: posted.tests,
+            tags: Vec::new(),
         })
         .await;
 

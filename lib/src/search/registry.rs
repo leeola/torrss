@@ -313,6 +313,7 @@ mod tests {
             parser: parser.to_owned(),
             conditions: Vec::new(),
             tests: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
