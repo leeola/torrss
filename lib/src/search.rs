@@ -82,7 +82,10 @@ pub(crate) struct Search {
 /// A [`Diff::Removed`] title keeps the highlighting it had before the
 /// edit. The row shows what the edit gives up. An unhighlighted filename
 /// loses that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The variant order is the order the Matches section lists rows in, which
+/// [`Self::ALL`] repeats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Diff {
     /// The edit made this filename match. It did not before.
     Added,

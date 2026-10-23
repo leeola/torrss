@@ -27,6 +27,13 @@ use crate::engine::{Component, compose};
 use crate::parser::{Field, FieldKind, Segment};
 use crate::search::{Condition, Diff};
 
+/// The most rows the Matches section lists under one chip.
+///
+/// The cap keeps a feed of ten thousand titles from becoming ten thousand
+/// rows on every keystroke. Two hundred rows is one screenful of scrolling,
+/// at about 700 bytes of HTML each.
+pub(super) const LISTED_ROWS: usize = 200;
+
 /// Every field attribute the editor's form carries, keyed by field name.
 ///
 /// The editor's own control (`diff`) shares the query string with the field
@@ -333,6 +340,26 @@ pub(super) fn diff(before: &Rules, after: &Rules, title: &str) -> Diffed {
     }
 }
 
+/// Returns the rows of `matched` that `filter` admits, ordered by state and
+/// cut to `limit`.
+///
+/// [`None`] admits every row. The states sort in the order [`Diff`]
+/// declares them, so a gained or lost title lists above an unchanged one
+/// and an unclaimed one lists last.
+///
+/// The sort is stable. `store::items` orders newest first, so each state
+/// keeps that order.
+pub(super) fn listed(matched: &[Match], filter: Option<Diff>, limit: usize) -> Vec<&Match> {
+    let mut listed: Vec<&Match> = matched
+        .iter()
+        .filter(|one| filter.is_none_or(|state| one.diff == state))
+        .collect();
+
+    listed.sort_by_key(|one| one.diff);
+    listed.truncate(limit);
+    listed
+}
+
 /// Returns each rule's name and the normalized text it read from `title`, or
 /// nothing when the rules do not claim it.
 ///
@@ -447,7 +474,7 @@ fn segments(title: &str, mut captured: Vec<Capture<'_>>) -> Vec<Segment> {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::{Edits, PatternError, diff, rules, values};
+    use super::{Edits, Match, PatternError, diff, listed, rules, values};
     use crate::parser::{
         Field, FieldKind,
         FieldKind::{Season, Text},
@@ -635,6 +662,37 @@ pub(super) mod tests {
             states,
             [Diff::Kept, Diff::Removed, Diff::Excluded, Diff::Kept],
             "kept, removed, excluded, then kept again"
+        );
+    }
+
+    #[test]
+    fn listed_orders_by_state_then_caps() {
+        let row = |id: i64, diff: Diff| Match {
+            id,
+            title: format!("Coastal.Ecology.S01E0{id}"),
+            segments: Vec::new(),
+            values: Vec::new(),
+            diff,
+            feed: "fixture".to_owned(),
+        };
+        let all = [
+            row(1, Diff::Excluded),
+            row(2, Diff::Kept),
+            row(3, Diff::Added),
+            row(4, Diff::Removed),
+        ];
+        let ids = |listed: Vec<&Match>| listed.iter().map(|one| one.id).collect::<Vec<_>>();
+
+        assert_eq!(
+            ids(listed(&all, None, 3)),
+            [3, 4, 2],
+            "gained, lost, then unchanged, and the cap drops the unclaimed row"
+        );
+        assert_eq!(ids(listed(&all, None, 10)), [3, 4, 2, 1]);
+        assert_eq!(
+            ids(listed(&all, Some(Diff::Excluded), 10)),
+            [1],
+            "a chosen state admits only its own rows"
         );
     }
 

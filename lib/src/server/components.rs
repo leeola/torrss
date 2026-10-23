@@ -5,7 +5,7 @@ use topcoat::{
 
 use super::format;
 use super::listing::ParsedValue;
-use super::matches::{Match, PatternError};
+use super::matches::{self, LISTED_ROWS, Match, PatternError};
 use super::verdict::Verdict;
 use crate::engine::Engine;
 use crate::feed::store::FeedCheck;
@@ -1571,7 +1571,8 @@ window.torrssRows = {
 /// The stored titles the edited rules claim, and what the edit changed.
 ///
 /// The list carries whichever diff state the reader chose, or every one of
-/// them when they chose none.
+/// them when they chose none. It lists at most [`LISTED_ROWS`] rows, ordered
+/// by state, while the chip counts cover every stored title.
 ///
 /// The chosen state is browser state rather than a query key, because the
 /// draft it filters is browser state too. A reload that carries the filter
@@ -1585,10 +1586,11 @@ pub(crate) async fn match_section(
 ) -> Result<impl View> {
     let count = |state: Diff| matched.iter().filter(|one| one.diff == state).count();
 
-    let listed: Vec<_> = matched
+    let in_state = matched
         .iter()
         .filter(|one| filter.is_none_or(|state| one.diff == state))
-        .collect();
+        .count();
+    let listed = matches::listed(matched, filter, LISTED_ROWS);
 
     Ok(view! {
         <section id="matches" class="mt-8 scroll-mt-24">
@@ -1632,10 +1634,15 @@ pub(crate) async fn match_section(
                 </p>
             } else {
                 <ul class="mt-4 flex flex-col gap-2">
-                    for one in listed {
+                    for one in &listed {
                         match_row(matched: one, editor: editor)
                     }
                 </ul>
+                if listed.len() < in_state {
+                    <p class="mt-3 text-xs text-slate-500">
+                        (listed.len()) " of " (in_state) " listed, newest first. Pick a state to narrow the list."
+                    </p>
+                }
             }
         </section>
     })
