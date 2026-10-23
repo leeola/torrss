@@ -109,6 +109,9 @@ async fn parser_editor_page(cx: &Cx) -> Result<impl View> {
 #[component]
 async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
     let name = parser.map(|parser| parser.name.clone()).unwrap_or_default();
+    let tags = parser
+        .map(|parser| parser.tags.join(", "))
+        .unwrap_or_default();
 
     let parser_id = parser.map(|parser| parser.id.clone()).unwrap_or_default();
     let stored_id = parser_id.clone();
@@ -197,6 +200,23 @@ async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
                         placeholder="Scene Episodes"
                         class="w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-2xl font-semibold tracking-tight text-slate-100 focus:border-slate-600 focus:outline-none"
                     >
+                    // The input carries no handler. The form's delegated one
+                    // serializes it with every other input, so a keystroke
+                    // reaches the draft that Save writes.
+                    <label for="tags" class="mt-3 block text-xs text-slate-500">
+                        "Tags in the client"
+                    </label>
+                    <input
+                        type="text"
+                        id="tags"
+                        name="tags"
+                        value=(&tags)
+                        placeholder="television, 4k"
+                        class="mt-1 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                    >
+                    <p class="mt-1 text-xs text-slate-500">
+                        "Comma-separated. A search that reads with this parser and names no tags of its own adds its releases to the client with these tags."
+                    </p>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
@@ -356,6 +376,9 @@ async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
 /// [`Searches::save_parser`] refuses a built-in id, so the editor's Save and
 /// Delete have nothing to write. The reader sees what the parser reads and
 /// takes a copy under their own name to change it.
+///
+/// The page shows no tag input, because a built-in parser carries no tags
+/// and a reader tags a copy.
 #[component]
 async fn built_in_parser(cx: &Cx, parser: &Parser) -> Result<impl View> {
     let draft = ParserForm {
@@ -549,7 +572,7 @@ async fn create_parser(cx: &Cx, form: RawForm) -> Result<SeeOther> {
             name: posted.name,
             fields: posted.fields,
             tests: posted.tests,
-            tags: Vec::new(),
+            tags: posted.tags,
             built_in: false,
         })
         .await
@@ -581,7 +604,7 @@ async fn save_parser_draft(cx: &Cx, id: String, draft: String) -> Result<Result<
             name: posted.name,
             fields: posted.fields,
             tests: posted.tests,
-            tags: Vec::new(),
+            tags: posted.tags,
             built_in: false,
         })
         .await;
@@ -624,7 +647,7 @@ async fn copy_parser(cx: &Cx) -> Result<SeeOther> {
             name,
             fields: parser.fields.clone(),
             tests: parser.tests.clone(),
-            tags: Vec::new(),
+            tags: parser.tags.clone(),
             built_in: false,
         }
     };
