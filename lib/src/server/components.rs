@@ -1117,18 +1117,29 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
                         (format::count(search.conditions.len(), "condition", "conditions"))
                     </span>
                     if !search.tags.is_empty() {
-                        <div class="flex flex-wrap items-center gap-1">
-                            <span>"tagged"</span>
-                            for tag in &search.tags {
-                                <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-slate-400">
-                                    (tag)
-                                </span>
-                            }
-                        </div>
+                        tag_badges(tags: &search.tags)
                     }
                 </div>
             </a>
         </li>
+    })
+}
+
+/// The client tags a grab carries, as a `tagged` label and one pill per tag.
+///
+/// The caller guards an empty list, so a card with no tag adds no empty
+/// element.
+#[component]
+async fn tag_badges(tags: &[String]) -> Result<impl View> {
+    Ok(view! {
+        <div class="flex flex-wrap items-center gap-1 text-xs text-slate-500">
+            <span>"tagged"</span>
+            for tag in tags {
+                <span class="rounded-full bg-slate-800/70 px-2 py-0.5 text-slate-400">
+                    (tag)
+                </span>
+            }
+        </div>
     })
 }
 
