@@ -1146,18 +1146,6 @@ pub(crate) async fn torrent_row(
     values: &[ParsedValue],
     ingested: Option<&str>,
 ) -> Result<impl View> {
-    // Each tint is a whole literal, because the Tailwind scanner reads class
-    // names out of source text and never sees one joined at runtime.
-    let (word, tint) = match &torrent.state {
-        TorrentState::Queued => ("queued", "bg-slate-500/15 text-slate-300"),
-        TorrentState::Downloading => ("downloading", "bg-sky-400/15 text-sky-300"),
-        TorrentState::Seeding => ("seeding", "bg-emerald-500/15 text-emerald-300"),
-        TorrentState::Paused => ("paused", "bg-amber-500/15 text-amber-300"),
-        TorrentState::Error(_) => ("error", "bg-rose-500/15 text-rose-300"),
-    };
-
-    let percent = format::percent(torrent.progress);
-
     Ok(view! {
         <li class=(class!(
             "rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3",
@@ -1165,7 +1153,7 @@ pub(crate) async fn torrent_row(
         ))>
             <div class="flex flex-wrap items-center gap-2">
                 <span class="font-mono text-sm break-all">(&torrent.name)</span>
-                <span class=(format!("rounded-full px-2 py-0.5 text-xs {tint}"))>(word)</span>
+                state_badge(state: &torrent.state)
                 if search.is_none() {
                     <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
                         "unmatched"
@@ -1177,14 +1165,7 @@ pub(crate) async fn torrent_row(
                 parsed_chips(values: values)
             }
 
-            <div class="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                // The width is an inline style because it differs per row, and
-                // only a literal class reaches the stylesheet.
-                <div class="h-1 w-32 overflow-hidden rounded bg-slate-800">
-                    <div class="h-1 bg-sky-400" style=(format!("width: {percent}"))></div>
-                </div>
-                <span>(&percent)</span>
-            </div>
+            progress_bar(progress: torrent.progress)
 
             <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                 match search {
@@ -1218,6 +1199,41 @@ pub(crate) async fn torrent_row(
                 </span>
             </div>
         </li>
+    })
+}
+
+/// The state of one torrent, as a tinted pill.
+#[component]
+async fn state_badge(state: &TorrentState) -> Result<impl View> {
+    // Each tint is a whole literal, because the Tailwind scanner reads class
+    // names out of source text and never sees one joined at runtime.
+    let (word, tint) = match state {
+        TorrentState::Queued => ("queued", "bg-slate-500/15 text-slate-300"),
+        TorrentState::Downloading => ("downloading", "bg-sky-400/15 text-sky-300"),
+        TorrentState::Seeding => ("seeding", "bg-emerald-500/15 text-emerald-300"),
+        TorrentState::Paused => ("paused", "bg-amber-500/15 text-amber-300"),
+        TorrentState::Error(_) => ("error", "bg-rose-500/15 text-rose-300"),
+    };
+
+    Ok(view! {
+        <span class=(format!("rounded-full px-2 py-0.5 text-xs {tint}"))>(word)</span>
+    })
+}
+
+/// How much of one torrent the client has, as a bar and a percentage.
+#[component]
+async fn progress_bar(progress: f32) -> Result<impl View> {
+    let percent = format::percent(progress);
+
+    Ok(view! {
+        <div class="mt-2 flex items-center gap-2 text-xs text-slate-500">
+            // The width is an inline style because it differs per row, and
+            // only a literal class reaches the stylesheet.
+            <div class="h-1 w-32 overflow-hidden rounded bg-slate-800">
+                <div class="h-1 bg-sky-400" style=(format!("width: {percent}"))></div>
+            </div>
+            <span>(&percent)</span>
+        </div>
     })
 }
 
