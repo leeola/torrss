@@ -11,7 +11,7 @@ use topcoat::{
         error::{
             RouterErrorExt, SeeOther, bad_request, internal_server_error, not_found, see_other,
         },
-        page, path_param, query_params, route,
+        href, page, path_param, query_params, route,
     },
     runtime::{Event, procedure, shard, signal},
     view::Unescaped,
@@ -778,6 +778,7 @@ async fn feed_listing(
                 .map(|index| matched[index].0.id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
+            let href = href(subject_holdings, (SubjectKey(subject.key.as_str()),)).resolve(cx);
 
             SubjectRows {
                 label: subject.label,
@@ -822,6 +823,7 @@ async fn feed_listing(
                     .map(Gap::label)
                     .collect(),
                 leads,
+                href,
             }
         })
         .collect();

@@ -251,6 +251,12 @@ pub(crate) struct SubjectRows {
     /// because the button carries it as its value and the grab reads it as
     /// a selection.
     pub leads: String,
+
+    /// The URL of the page that lists what the client holds of the subject.
+    ///
+    /// The handler resolves it, because the route and its parameter type
+    /// live beside that page.
+    pub href: String,
 }
 
 /// One identity of a subject, such as an episode or a season pack, with its
@@ -499,7 +505,15 @@ pub(crate) async fn subject_card(engine: &Engine, subject: &SubjectRows) -> Resu
         <li>
             <details open=(true) class="rounded-lg border border-slate-800 bg-slate-900/40">
                 <summary class="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
-                    <h2 class="text-sm font-semibold text-slate-100">(&subject.label)</h2>
+                    <h2 class="text-sm font-semibold text-slate-100">
+                        <a
+                            href=(&subject.href)
+                            title="What the client holds of this subject"
+                            class="hover:underline hover:decoration-dotted"
+                        >
+                            (&subject.label)
+                        </a>
+                    </h2>
                     if !subject.leads.is_empty() {
                         <button
                             type="button"
