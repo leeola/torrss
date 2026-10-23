@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Invented Tracker</title>
+    <link>https://tracker.invalid/</link>
+    <description>An invented feed in the UNIT3D shape that exists only to test the parser.</description>
+    <item>
+      <title>Invented.Series.S02.1080p.BluRay.x265-GROUP</title>
+      <category>TV Show</category>
+      <contentlength>4209067622</contentlength>
+      <link>https://tracker.invalid/torrent/download/invented-series-s02.key</link>
+      <guid>invented-series-s02</guid>
+      <description><![CDATA[<p>An invented season of an invented series.</p>]]></description>
+      <pubDate>Thu, 06 Mar 2025 18:30:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

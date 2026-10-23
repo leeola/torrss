@@ -26,6 +26,7 @@ chrono = "0.4.45"
 clap = "4.6.6"
 feed-rs = "3.0.0"
 qbit-rs = { version = "0.6.0", default-features = false, features = ["reqwest", "rustls-tls"] }
+quick-xml = "0.42.0"
 regex = "1.13.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
 serde = "1.0.229"
