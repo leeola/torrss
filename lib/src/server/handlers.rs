@@ -497,15 +497,15 @@ async fn feed(cx: &Cx) -> Result<impl View> {
     })
 }
 
-/// The chips that narrow the listing to one feed, one view, and one search.
+/// The buttons that narrow the listing to one feed, one view, and one search.
 ///
-/// A chip shows as pressed when the filter values name it, so the chips
+/// A button shows as pressed when the filter values name it, so the buttons
 /// re-render on every filter change. They sit inside `#listing`, whose
-/// delegated click handler turns a chip click into that change.
+/// delegated click handler turns a button click into that change.
 ///
-/// The chips are a shard apart from [`feed_listing`], because they sit in the
-/// filter panel. A page signal opens and closes the panel, and a shard has no
-/// access to the signals its caller declared.
+/// The buttons are a shard apart from [`feed_listing`], because they sit in
+/// the filter panel. A page signal opens and closes the panel, and a shard
+/// has no access to the signals its caller declared.
 #[shard]
 async fn feed_filters(cx: &Cx, filter: String, show: String, search: String) -> Result<impl View> {
     let active = Some(filter).filter(|id| !id.is_empty());
@@ -520,21 +520,21 @@ async fn feed_filters(cx: &Cx, filter: String, show: String, search: String) -> 
     let wanted = show != "all" && show != "unmatched";
 
     Ok(view! {
-        // The chips belong to the shard, because only a re-render presses the
-        // one the reader picked. A component takes concrete values, so a chip
-        // reads no signal of the page's own.
+        // The buttons belong to the shard, because only a re-render presses
+        // the one the reader picked. A component takes concrete values, so a
+        // button reads no signal of the page's own.
         //
-        // No chip carries a selection. The browser holds it, so a filter
+        // No button carries a selection. The browser holds it, so a filter
         // change re-renders the rows and leaves the set alone.
         <nav class="mt-6 flex flex-wrap gap-2">
-            components::filter_chip(
+            components::filter_button(
                 name: "feed-filter",
                 value: "",
                 label: "All",
                 current: active.is_none(),
             )
             for entry in &registered {
-                components::filter_chip(
+                components::filter_button(
                     name: "feed-filter",
                     value: entry.id.as_str(),
                     label: entry.name.as_str(),
@@ -544,19 +544,19 @@ async fn feed_filters(cx: &Cx, filter: String, show: String, search: String) -> 
         </nav>
 
         <nav class="mt-2 flex flex-wrap gap-2">
-            components::filter_chip(
+            components::filter_button(
                 name: "show-mode",
                 value: "",
                 label: "Wanted",
                 current: wanted,
             )
-            components::filter_chip(
+            components::filter_button(
                 name: "show-mode",
                 value: "all",
                 label: "All",
                 current: show == "all",
             )
-            components::filter_chip(
+            components::filter_button(
                 name: "show-mode",
                 value: "unmatched",
                 label: "Unmatched",
@@ -564,17 +564,17 @@ async fn feed_filters(cx: &Cx, filter: String, show: String, search: String) -> 
             )
         </nav>
 
-        // A paused search gets a chip too. Its rows sit outside the wanted
+        // A paused search gets a button too. Its rows sit outside the wanted
         // view, so the reader picks the All mode to see them.
         <nav class="mt-2 flex flex-wrap gap-2">
-            components::filter_chip(
+            components::filter_button(
                 name: "search-filter",
                 value: "",
                 label: "All searches",
                 current: search.is_empty(),
             )
             for saved in engine.searches() {
-                components::filter_chip(
+                components::filter_button(
                     name: "search-filter",
                     value: saved.id.as_str(),
                     label: saved.name.as_str(),
@@ -1798,7 +1798,7 @@ async fn test_feed(cx: &Cx) -> Result<impl View> {
 /// Registers a feed, and reports its id or why it was refused.
 ///
 /// A blank name falls back to the URL host, then to the whole URL, so a
-/// registration always has something to show in a chip and a row.
+/// registration always has something to show in a filter button and a row.
 ///
 /// A refusal arrives inside [`Ok`] rather than as an error. A procedure's
 /// [`Err`] reaches no expression in the browser, so a caller that reads one
@@ -2294,7 +2294,7 @@ async fn editor(
             // them submits the form around them, and the section holds no
             // input for the form's `@input` to read.
             //
-            // The chips are rendered by the shard, so their click is caught
+            // The buttons are rendered by the shard, so their click is caught
             // here, where the signal lives.
             <div @click=$(|e: Event| if e.target.name == "diff-filter" {
                 diff.set(e.target.value);

@@ -43,13 +43,13 @@ pub(crate) async fn filename(segments: &[Segment], editor: &str) -> Result<impl 
     })
 }
 
-/// One chip of a row that narrows the listing.
+/// One button of a row that narrows the listing.
 ///
-/// The chip carries its value in its own value, so one delegated handler
-/// reads every chip of a row. `name` is what that handler matches on, which
-/// is how two rows of chips settle two different things.
+/// The button carries its value in its own value, so one delegated handler
+/// reads every button of a row. `name` is what that handler matches on,
+/// which is how two rows of buttons settle two different things.
 #[component]
-pub(crate) async fn filter_chip(
+pub(crate) async fn filter_button(
     name: &str,
     value: &str,
     label: &str,
@@ -82,10 +82,10 @@ pub(crate) struct Matched {
     pub name: String,
 }
 
-/// One entry in the diff filter bar, carrying its own count.
+/// One button in the diff filter bar, carrying its own count.
 ///
-/// The chip names its state in its own value, so one delegated handler reads
-/// every chip. An empty value is every state rather than one.
+/// The button names its state in its own value, so one delegated handler
+/// reads every button. An empty value is every state rather than one.
 #[component]
 pub(crate) async fn diff_filter(
     value: &str,
@@ -1614,7 +1614,7 @@ window.torrssRows = {
 ///
 /// The list carries whichever diff state the reader chose, or every one of
 /// them when they chose none. It lists at most [`LISTED_ROWS`] rows, ordered
-/// by state, while the chip counts cover every stored title.
+/// by state, while the filter counts cover every stored title.
 ///
 /// The chosen state is browser state rather than a query key, because the
 /// draft it filters is browser state too. A reload that carries the filter

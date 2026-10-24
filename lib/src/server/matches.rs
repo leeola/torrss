@@ -27,7 +27,7 @@ use crate::engine::{Component, compose};
 use crate::parser::{Field, FieldKind, Segment};
 use crate::search::{Condition, Diff};
 
-/// The most rows the Matches section lists under one chip.
+/// The most rows the Matches section lists under one filter.
 ///
 /// The cap keeps a feed of ten thousand titles from becoming ten thousand
 /// rows on every keystroke. Two hundred rows is one screenful of scrolling,

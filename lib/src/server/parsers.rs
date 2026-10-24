@@ -355,7 +355,7 @@ async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
             // control the section renders is a `type="button"`, so none of
             // them submits the form around them.
             //
-            // The chips are rendered by the shard, so their click is caught
+            // The buttons are rendered by the shard, so their click is caught
             // here, where the signal lives.
             <div @click=$(|e: Event| if e.target.name == "diff-filter" {
                 diff.set(e.target.value);
@@ -460,7 +460,7 @@ async fn built_in_parser(cx: &Cx, parser: &Parser) -> Result<impl View> {
             </ul>
         </div>
 
-        // The chips the shard renders post their filter back through this,
+        // The buttons the shard renders post their filter back through this,
         // as they do in the editor.
         <div @click=$(|e: Event| if e.target.name == "diff-filter" {
             diff.set(e.target.value);
