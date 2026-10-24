@@ -87,13 +87,43 @@ pub(crate) async fn unwanted(pool: &SqlitePool) -> Result<Unwanted, sqlx::Error>
     Ok(Unwanted::new(values))
 }
 
+/// Replaces the values refused for `field`.
+///
+/// An empty `values` leaves the field refusing nothing, which is how a reader
+/// takes back the last refusal.
+///
+/// The whole write is one transaction, so a failure part way leaves the
+/// previous set rather than half of the new one.
+pub(crate) async fn replace_unwanted(
+    pool: &SqlitePool,
+    field: &str,
+    values: &[String],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("DELETE FROM unwanted WHERE field = ?1")
+        .bind(field)
+        .execute(&mut *tx)
+        .await?;
+
+    for value in values {
+        sqlx::query("INSERT INTO unwanted (field, value) VALUES (?1, ?2)")
+            .bind(field)
+            .bind(value)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use sqlx::SqlitePool;
 
-    use super::{Preferences, Unwanted, all, replace, unwanted};
+    use super::{Preferences, Unwanted, all, replace, replace_unwanted, unwanted};
 
     fn list(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -123,23 +153,52 @@ mod tests {
 
     #[sqlx::test]
     async fn a_refused_set_reads_back(pool: SqlitePool) {
-        for (field, value) in [
-            ("source", "Telecast"),
-            ("codec", "VP9"),
-            ("source", "Broadcast"),
-        ] {
-            sqlx::query("INSERT INTO unwanted (field, value) VALUES (?1, ?2)")
-                .bind(field)
-                .bind(value)
-                .execute(&pool)
-                .await
-                .expect("seed");
-        }
+        replace_unwanted(&pool, "source", &list(&["Telecast", "Broadcast"]))
+            .await
+            .expect("write");
+        replace_unwanted(&pool, "codec", &list(&["VP9"]))
+            .await
+            .expect("write");
 
         assert_eq!(
             unwanted(&pool).await.expect("read"),
             refused(&[("codec", &["VP9"]), ("source", &["Broadcast", "Telecast"])]),
             "each field gathers its own values"
+        );
+    }
+
+    #[sqlx::test]
+    async fn an_empty_refusal_drops_the_field(pool: SqlitePool) {
+        replace_unwanted(&pool, "source", &list(&["Telecast"]))
+            .await
+            .expect("write");
+        replace_unwanted(&pool, "source", &[])
+            .await
+            .expect("take back");
+
+        assert_eq!(
+            unwanted(&pool).await.expect("read"),
+            Unwanted::default(),
+            "a field that refuses nothing is absent rather than empty"
+        );
+    }
+
+    #[sqlx::test]
+    async fn one_field_refusal_leaves_another_alone(pool: SqlitePool) {
+        replace_unwanted(&pool, "source", &list(&["Telecast", "Broadcast"]))
+            .await
+            .expect("write");
+        replace_unwanted(&pool, "codec", &list(&["VP9"]))
+            .await
+            .expect("write");
+        replace_unwanted(&pool, "source", &list(&["Broadcast"]))
+            .await
+            .expect("rewrite");
+
+        assert_eq!(
+            unwanted(&pool).await.expect("read"),
+            refused(&[("codec", &["VP9"]), ("source", &["Broadcast"])]),
+            "the delete names one field, so the other keeps its set"
         );
     }
 

@@ -35,6 +35,11 @@ impl Unwanted {
             .map(String::as_str)
     }
 
+    /// Every field that refuses a value, in name order.
+    pub(crate) fn fields(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
+
     /// Whether a field of `parsed` reads a refused value.
     ///
     /// Both sides normalize through the field's kind before they compare, so

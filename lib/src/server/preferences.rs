@@ -1,14 +1,16 @@
-//! The page a reader states their preference lists on.
+//! The page a reader states their preference lists and refused values on.
 //!
 //! A search says which releases are wanted. These lists say which copy of
-//! one is best, so the home page keeps that copy and hides the rest.
+//! one is best, so the home page keeps that copy and hides the rest. A
+//! refused value hides every copy that reads it.
 //!
-//! Every control here edits one field's list and writes it whole, because
-//! that is the shape the store keeps. Each procedure reads the stored list,
-//! or the library's suggestion for a field with none, before it edits. An
-//! edit therefore acts on the list a fresh render shows rather than on what
-//! the browser last rendered.
+//! Every control here edits one field's list or refused set and writes it
+//! whole, because that is the shape the store keeps. Each procedure reads
+//! the stored values, or the library's suggestion for a list with none,
+//! before it edits. An edit therefore acts on what a fresh render shows
+//! rather than on what the browser last rendered.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use topcoat::{
@@ -39,7 +41,8 @@ async fn preferences(cx: &Cx) -> Result<impl View> {
             "These lists rank the results of every search. The first value
             wins, and a value no list names ranks below every value one does.
             A field with no list follows the library, where the value the most
-            completed torrents hold comes first."
+            completed torrents hold comes first. A value a card refuses hides
+            every release that reads it, whatever the lists say."
         </p>
 
         // Every control the shard renders is caught here, where the signal
@@ -63,12 +66,18 @@ async fn preferences(cx: &Cx) -> Result<impl View> {
                 } else if e.target.name == "keep-suggested" {
                     keep_suggested(target).await;
                     version.increment();
+                } else if e.target.name == "remove-unwanted" {
+                    remove_unwanted(target).await;
+                    version.increment();
                 }
             })
             // The input carries its field in its id, because its value is
             // the value being added.
             @change=$(async |e: Event| if e.target.name == "new-value" {
                 add_preference(e.target.id, e.target.value).await;
+                version.increment();
+            } else if e.target.name == "new-unwanted" {
+                add_unwanted(e.target.id, e.target.value).await;
                 version.increment();
             })
         >
@@ -77,11 +86,12 @@ async fn preferences(cx: &Cx) -> Result<impl View> {
     })
 }
 
-/// One card per field a list ranks by, with the values it holds.
+/// One card per field a list ranks by, with the values it holds and the
+/// values it refuses.
 ///
-/// A field no parser reads is listed after the rest when a list still names
-/// it. A parser edit strands such a list, and a stranded one needs a way
-/// out.
+/// A field no parser reads is listed after the rest when a list or a
+/// refused value still names it. A parser edit strands such a list or set,
+/// and a stranded one needs a way out.
 #[shard]
 async fn preference_cards(cx: &Cx, version: f64) -> Result<impl View> {
     // This is read for its change alone. An edit bumps it so the card shows
@@ -92,16 +102,19 @@ async fn preference_cards(cx: &Cx, version: f64) -> Result<impl View> {
     let engine = app_context::<Arc<Searches>>(cx).engine();
 
     let stated = preference::store::all(&services.db).await?;
+    let refused = preference::store::unwanted(&services.db).await?;
     let library = Library::new(&engine, &index::all(&services.db).await?);
     let mut fields = preference::rankable_fields(&engine);
 
-    let stranded: Vec<String> = stated
+    // A set rather than a list, because a field that strands both a list and
+    // a refused set still gets one card.
+    let stranded: BTreeSet<&str> = stated
         .fields()
+        .chain(refused.fields())
         .filter(|named| !fields.iter().any(|known| known == named))
-        .map(ToOwned::to_owned)
         .collect();
 
-    fields.extend(stranded);
+    fields.extend(stranded.into_iter().map(ToOwned::to_owned));
 
     // One entry per card, built here rather than in the view, because a row
     // borrows its value for as long as the view lives.
@@ -174,6 +187,24 @@ async fn preference_cards(cx: &Cx, version: f64) -> Result<impl View> {
                             placeholder="Type a value and press Enter"
                             class="mt-3 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
                         >
+
+                        <h3 class="mt-4 text-xs font-semibold text-slate-400">"Unwanted"</h3>
+                        if refused.values(field).next().is_none() {
+                            <p class="mt-1 text-xs text-slate-500">"No value is refused."</p>
+                        } else {
+                            <ul class="mt-2 flex flex-col gap-2">
+                                for (index, value) in refused.values(field).enumerate() {
+                                    unwanted_row(field: field, index: index, value: value)
+                                }
+                            </ul>
+                        }
+                        <input
+                            id=(format!("unwanted:{field}"))
+                            name="new-unwanted"
+                            type="text"
+                            placeholder="Type a value to refuse and press Enter"
+                            class="mt-3 w-full max-w-sm rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:border-slate-600 focus:outline-none"
+                        >
                     </li>
                 }
             </ul>
@@ -224,6 +255,26 @@ async fn list_row(
             <button
                 type="button"
                 name="remove-value"
+                value=(format!("{field}:{index}"))
+                class="inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
+            >
+                "remove"
+            </button>
+        </li>
+    })
+}
+
+/// One value a card refuses, with the control that takes the refusal back.
+#[component]
+async fn unwanted_row(field: &str, index: usize, value: &str) -> Result<impl View> {
+    Ok(view! {
+        <li class="flex flex-wrap items-center gap-3">
+            <span class="min-w-0 flex-1 font-mono text-sm break-all text-slate-200">
+                (value)
+            </span>
+            <button
+                type="button"
+                name="remove-unwanted"
                 value=(format!("{field}:{index}"))
                 class="inline-block rounded-md border border-sky-400/50 bg-sky-400/10 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-400/20"
             >
@@ -324,6 +375,60 @@ async fn keep_suggested(cx: &Cx, field: String) -> Result<bool> {
     Ok(write(app_context::<Services>(cx), &field, &values).await)
 }
 
+/// Refuses `value` for the field `id` names, and reports whether it landed.
+///
+/// `id` is the input's id, the field name after an `unwanted:` prefix. The
+/// prefix keeps it apart from the card's list input, whose id is the bare
+/// field name. An id without the prefix refuses nothing.
+///
+/// A blank value and one the set already holds both add nothing.
+#[procedure]
+async fn add_unwanted(cx: &Cx, id: String, value: String) -> Result<bool> {
+    let Some(field) = id.strip_prefix("unwanted:") else {
+        return Ok(false);
+    };
+
+    let value = value.trim();
+
+    if value.is_empty() {
+        return Ok(false);
+    }
+
+    let services = app_context::<Services>(cx);
+    let mut values = refused(cx, field).await?;
+
+    if values.iter().any(|held| held == value) {
+        return Ok(false);
+    }
+
+    values.push(value.to_owned());
+
+    Ok(write_unwanted(services, field, &values).await)
+}
+
+/// Takes back one refused value by its place, and reports whether one was
+/// there.
+///
+/// The place counts in value order, which is the order the card lists the
+/// values in.
+#[procedure]
+async fn remove_unwanted(cx: &Cx, target: String) -> Result<bool> {
+    let Some((field, index)) = place(&target) else {
+        return Ok(false);
+    };
+
+    let services = app_context::<Services>(cx);
+    let mut values = refused(cx, field).await?;
+
+    if index >= values.len() {
+        return Ok(false);
+    }
+
+    values.remove(index);
+
+    Ok(write_unwanted(services, field, &values).await)
+}
+
 /// Reads a `field:index` control value apart.
 ///
 /// The split takes the last colon, so a field name carrying one still
@@ -351,6 +456,20 @@ async fn write(services: &Services, field: &str, values: &[String]) -> bool {
     }
 }
 
+/// Writes the values one field refuses, and reports whether they stored.
+///
+/// A failed write logs the cause and reports `false`, as [`write`] does.
+async fn write_unwanted(services: &Services, field: &str, values: &[String]) -> bool {
+    match preference::store::replace_unwanted(&services.db, field, values).await {
+        Ok(()) => true,
+        Err(error) => {
+            error!(error = %error, "unwanted value not stored");
+
+            false
+        }
+    }
+}
+
 /// The list the card for `field` shows, which every edit starts from.
 ///
 /// That is the stated list, or the order the library suggests when the
@@ -372,4 +491,13 @@ async fn effective(cx: &Cx, field: &str) -> Result<Vec<String>> {
         .into_iter()
         .map(|(value, _)| value)
         .collect())
+}
+
+/// The values the card for `field` refuses, which every refusal edit starts
+/// from, in the order the card lists them.
+async fn refused(cx: &Cx, field: &str) -> Result<Vec<String>> {
+    let services = app_context::<Services>(cx);
+    let unwanted = preference::store::unwanted(&services.db).await?;
+
+    Ok(unwanted.values(field).map(ToOwned::to_owned).collect())
 }
