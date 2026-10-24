@@ -377,8 +377,9 @@ async fn parser_editor(cx: &Cx, parser: Option<&Parser>) -> Result<impl View> {
 /// Delete have nothing to write. The reader sees what the parser reads and
 /// takes a copy under their own name to change it.
 ///
-/// The page shows no tag input, because a built-in parser carries no tags
-/// and a reader tags a copy.
+/// The page shows the parser's client tags as badges rather than as an
+/// input, because no save reaches a built-in parser. A reader who wants
+/// another default copies it.
 #[component]
 async fn built_in_parser(cx: &Cx, parser: &Parser) -> Result<impl View> {
     let draft = ParserForm {
@@ -414,6 +415,11 @@ async fn built_in_parser(cx: &Cx, parser: &Parser) -> Result<impl View> {
                     "Built into torrss and read-only here. Copy it to change the fields under
                     your own name."
                 </p>
+                if !parser.tags.is_empty() {
+                    <div class="mt-2">
+                        components::tag_badges(tags: &parser.tags)
+                    </div>
+                }
             </div>
 
             <form method="post" action=(format!("/parsers/{}/copy", parser.id))>

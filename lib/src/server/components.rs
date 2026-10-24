@@ -1152,14 +1152,14 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
 
 /// The client tags a grab carries, as a `tagged` label and one badge per tag.
 ///
-/// [`search_card`], [`parser_card`], and [`subject_card`] share it, so the
-/// tags look the same on the Searches page, the Parsers page, and the home
-/// page.
+/// [`search_card`], [`parser_card`], [`subject_card`], and `built_in_parser`
+/// in [`super::parsers`] share it, so the tags look the same on the Searches
+/// page, the Parsers page, the home page, and the page of a built-in parser.
 ///
 /// The caller guards an empty list, so a card with no tag adds no empty
 /// element.
 #[component]
-async fn tag_badges(tags: &[String]) -> Result<impl View> {
+pub(crate) async fn tag_badges(tags: &[String]) -> Result<impl View> {
     Ok(view! {
         <div class="flex flex-wrap items-center gap-1 text-xs text-slate-500">
             <span>"tagged"</span>
