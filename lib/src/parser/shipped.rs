@@ -10,6 +10,11 @@
 //! therefore find `show`, `season`, `episodeNumber`, and `resolution` under
 //! one name, whichever parser read them.
 //!
+//! Each carries one client tag that names what it reads, `television`,
+//! `film`, or `anime`. A search on it that names no tags of its own carries
+//! that tag, so the client sorts its queue by content type. A reader who
+//! wants another default copies the parser.
+//!
 //! A separator is `[. _]`. A tracker writes a name in dots, and a client
 //! writes the folder it unpacked into in spaces. The resolution admits `(`
 //! as well, because a tracker that brackets its quality tags opens the run
@@ -96,7 +101,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags().into_iter().filter(|tag| tag.name == "extension"))
             .collect(),
             tests: Vec::new(),
-            tags: Vec::new(),
+            tags: vec!["anime".to_owned()],
             built_in: true,
         },
         // The show is lazy, so it stops at the first season token. The year
@@ -144,7 +149,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(series_tags)
             .collect(),
             tests: Vec::new(),
-            tags: Vec::new(),
+            tags: vec!["television".to_owned()],
             built_in: true,
         },
         // This one claims no episode name. The episode is not tight, so the
@@ -181,7 +186,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
-            tags: Vec::new(),
+            tags: vec!["television".to_owned()],
             built_in: true,
         },
         // The season keeps the Season kind, so it normalizes as a number and
@@ -213,7 +218,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
-            tags: Vec::new(),
+            tags: vec!["television".to_owned()],
             built_in: true,
         },
         // The three date parts are the identity, so an episode of this shape
@@ -256,7 +261,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
-            tags: Vec::new(),
+            tags: vec!["television".to_owned()],
             built_in: true,
         },
         // The movie run is greedy, so the last year in the title is the one
@@ -283,7 +288,7 @@ pub(crate) fn parsers() -> Vec<Parser> {
             .chain(tags())
             .collect(),
             tests: Vec::new(),
-            tags: Vec::new(),
+            tags: vec!["film".to_owned()],
             built_in: true,
         },
     ]
@@ -743,10 +748,21 @@ mod tests {
     }
 
     #[test]
-    fn no_shipped_parser_carries_a_tag() {
-        assert!(
-            parsers().iter().all(|parser| parser.tags.is_empty()),
-            "a built-in parser is tagged by copying it"
+    fn each_shipped_parser_carries_its_content_type() {
+        assert_eq!(
+            parsers()
+                .iter()
+                .map(|parser| (parser.id.as_str(), parser.tags.clone()))
+                .collect::<Vec<_>>(),
+            [
+                ("anime", vec!["anime".to_owned()]),
+                ("series", vec!["television".to_owned()]),
+                ("series-loose", vec!["television".to_owned()]),
+                ("series-x", vec!["television".to_owned()]),
+                ("series-daily", vec!["television".to_owned()]),
+                ("film", vec!["film".to_owned()]),
+            ],
+            "a search on a shipped parser falls back to its content type"
         );
     }
 

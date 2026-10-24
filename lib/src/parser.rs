@@ -50,8 +50,9 @@ pub(crate) struct Parser {
     /// names none of its own.
     ///
     /// The entries keep the order the reader typed them in, with no blank and
-    /// no repeat. A built-in parser carries none, because no save reaches it.
-    /// A reader who wants one tagged tags a copy.
+    /// no repeat. A shipped parser carries the content type of what it reads,
+    /// such as `television`. No save reaches it, so a reader who wants another
+    /// default copies it.
     pub(crate) tags: Vec<String>,
 
     /// Whether the binary carries this parser.
