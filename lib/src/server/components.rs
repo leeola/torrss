@@ -386,7 +386,7 @@ pub(crate) async fn item_row(
                 </div>
 
                 if !details.values.is_empty() {
-                    parsed_chips(values: &details.values)
+                    value_labels(values: &details.values)
                 }
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -660,7 +660,7 @@ async fn group_row(engine: &Engine, group: &GroupRows) -> Result<impl View> {
                                     <div class="min-w-0 flex-1">
                                         <div class="flex flex-wrap items-center gap-2">
                                             for value in release.details.values.iter().filter(|value| !value.identity) {
-                                                parsed_chip(value: value)
+                                                value_label(value: value)
                                             }
                                             if release.preferred && !group.tied {
                                                 <span class="rounded-full bg-sky-400/15 px-2 py-0.5 text-xs text-sky-300">
@@ -1251,7 +1251,7 @@ pub(crate) async fn torrent_row(
             </div>
 
             if !values.is_empty() {
-                parsed_chips(values: values)
+                value_labels(values: values)
             }
 
             progress_bar(progress: torrent.progress)
@@ -1377,32 +1377,32 @@ pub(crate) async fn held_season(season: &SeasonRows) -> Result<impl View> {
     })
 }
 
-/// The values a search read out of one name, one chip per field.
+/// The values a search read out of one name, one label per field.
 ///
-/// Each chip is tinted by its field's position and ringed when that field
+/// Each label is tinted by its field's position and ringed when that field
 /// decides whether two releases are the same. The field's name is on hover,
-/// because a value reads for itself and a label beside every one crowds the
+/// because a value reads for itself and a name beside every one crowds the
 /// row.
 ///
 /// The caller guards an empty list, so this renders one strip and a row with
 /// nothing parsed adds no empty element.
 #[component]
-pub(crate) async fn parsed_chips(values: &[ParsedValue]) -> Result<impl View> {
+pub(crate) async fn value_labels(values: &[ParsedValue]) -> Result<impl View> {
     Ok(view! {
         <div class="mt-1.5 flex flex-wrap gap-1">
             for value in values {
-                parsed_chip(value: value)
+                value_label(value: value)
             }
         </div>
     })
 }
 
-/// One chip of [`parsed_chips`].
+/// One label of [`value_labels`].
 ///
-/// A [`group_row`] renders the chips of the values that are no identity in
+/// A [`group_row`] renders the labels of the values that are no identity in
 /// its pick lines, without the strip around them.
 #[component]
-async fn parsed_chip(value: &ParsedValue) -> Result<impl View> {
+async fn value_label(value: &ParsedValue) -> Result<impl View> {
     Ok(view! {
         <span
             title=(if value.identity {
