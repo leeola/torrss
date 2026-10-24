@@ -1150,7 +1150,7 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
     })
 }
 
-/// The client tags a grab carries, as a `tagged` label and one pill per tag.
+/// The client tags a grab carries, as a `tagged` label and one badge per tag.
 ///
 /// [`search_card`], [`parser_card`], and [`subject_card`] share it, so the
 /// tags look the same on the Searches page, the Parsers page, and the home
@@ -1291,7 +1291,7 @@ pub(crate) async fn torrent_row(
     })
 }
 
-/// The state of one torrent, as a tinted pill.
+/// The state of one torrent, as a tinted badge.
 #[component]
 async fn state_badge(state: &TorrentState) -> Result<impl View> {
     // Each tint is a whole literal, because the Tailwind scanner reads class
