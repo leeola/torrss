@@ -1,7 +1,7 @@
 //! The page a reader states their preference lists on.
 //!
 //! A search says which releases are wanted. These lists say which copy of
-//! one is best, so the Results page keeps that copy and hides the rest.
+//! one is best, so the home page keeps that copy and hides the rest.
 //!
 //! Every control here edits one field's list and writes it whole, because
 //! that is the shape the store keeps. Each procedure reads the stored list,

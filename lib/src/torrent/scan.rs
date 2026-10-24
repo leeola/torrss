@@ -1,7 +1,7 @@
 //! Recording what the torrent client holds.
 //!
 //! The client lists its torrents and the index takes the whole list, names
-//! and all. The feed page then answers "do I have this" from one query
+//! and all. The home page then answers "do I have this" from one query
 //! rather than one client call per request.
 //!
 //! A name no search claims is indexed with the rest. The engine reads the

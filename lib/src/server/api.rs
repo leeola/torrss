@@ -54,7 +54,7 @@ enum Outcome {
 
 /// Checks every registered feed, then reports what each one answered.
 ///
-/// Runs the same pass as the feed page's Fetch button and the poll task, so
+/// Runs the same pass as the home page's Fetch button and the poll task, so
 /// a script and a reader never see different behavior.
 ///
 /// The status is 200 whatever the feeds returned. The request itself

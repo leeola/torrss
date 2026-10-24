@@ -1,6 +1,6 @@
 //! What the client holds of one subject, placed in its seasons.
 //!
-//! A Results card names a show by what the feed announces. The subject page
+//! A subject card names a show by what the feed announces. The subject page
 //! answers what the reader already has of it, so it lists the held torrents
 //! of the show season by season.
 

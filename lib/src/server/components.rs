@@ -223,7 +223,7 @@ pub(crate) struct Grabbed {
     pub searches: Vec<String>,
 }
 
-/// One show or film on the Results page, with its identities and their
+/// One show or film on the home page, with its identities and their
 /// releases.
 ///
 /// The view owns everything here, because a view renders after the handler
@@ -264,8 +264,8 @@ pub(crate) struct SubjectRows {
 /// One identity of a subject, such as an episode or a season pack, with its
 /// releases best first.
 ///
-/// The Results page shows it as one row the reader ticks as a whole, with
-/// every release under a fold as a pick.
+/// The home page shows it as one row the reader ticks as a whole, with every
+/// release under a fold as a pick.
 pub(crate) struct GroupRows {
     /// The identity's place in the tree as `subject-group`, such as `0-2`.
     ///
@@ -494,7 +494,7 @@ fn passed(engine: &Engine, searches: &[String]) -> String {
         .join(", ")
 }
 
-/// One show or film on the Results page, as a card that folds open on its
+/// One show or film on the home page, as a card that folds open on its
 /// identities.
 ///
 /// Each identity is one row the reader ticks as a whole, highest first. The
@@ -1153,8 +1153,8 @@ pub(crate) async fn search_card(search: &Search, parser: Option<&Parser>) -> Res
 /// The client tags a grab carries, as a `tagged` label and one pill per tag.
 ///
 /// [`search_card`], [`parser_card`], and [`subject_card`] share it, so the
-/// tags look the same on the Searches page, the Parsers page, and the
-/// Results page.
+/// tags look the same on the Searches page, the Parsers page, and the home
+/// page.
 ///
 /// The caller guards an empty list, so a card with no tag adds no empty
 /// element.

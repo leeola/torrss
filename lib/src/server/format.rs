@@ -1,6 +1,6 @@
 //! How a size and an age read on a page.
 //!
-//! Both renderings appear on the feed page and again in the admin, so they
+//! Both renderings appear on the home page and again in the admin, so they
 //! live here rather than in a handler. That keeps one wording for each, and
 //! it lets both be tested without a request.
 //!

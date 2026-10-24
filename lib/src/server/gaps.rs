@@ -2,8 +2,8 @@
 //!
 //! An announced S04E10 beside a held S04E01 and S04E02 says that S04E03
 //! through S04E09 exist. When no search claims a copy of them, from the feed
-//! or from the client, the Results page lists each as a greyed row of the
-//! card. The reader then relaxes a search or looks for them elsewhere.
+//! or from the client, the home page lists each as a greyed row of the card.
+//! The reader then relaxes a search or looks for them elsewhere.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -138,7 +138,7 @@ pub(super) fn gaps<'a>(
 
 /// Places each missing episode of `runs` among `rows`, highest first.
 ///
-/// The Results card lists a missing episode as a row beside the ones around
+/// The subject card lists a missing episode as a row beside the ones around
 /// it, so it reads where the reader expects it. `rows` read highest first,
 /// as [`groups::tree`](super::groups::tree) orders them, and `runs` read low
 /// to high, as [`gaps`] returns them. Each missing episode lands before the

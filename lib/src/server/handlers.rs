@@ -57,7 +57,7 @@ path_param!(search_id);
 path_param!(feed_id);
 path_param!(subject_key);
 
-/// The selection the feed page keeps while the listing re-renders.
+/// The selection the home page keeps while the listing re-renders.
 ///
 /// The set is the one source of truth in the browser, so an id checked under
 /// one filter survives a re-render that lists other rows. The signal beside
@@ -238,7 +238,7 @@ fn feed_name(registry: &FeedRegistry, item: &StoredItem) -> String {
     })
 }
 
-/// Builds everything the feed page shows about one release.
+/// Builds everything the home page shows about one release.
 ///
 /// The standing and the matched search ids both arrive decided, because the
 /// page needs each to work out which rows to list at all. Resolving the ids
@@ -1153,7 +1153,7 @@ async fn fetch_feeds(cx: &Cx) -> Result<f64> {
 /// What the client holds of one show or film, season by season.
 ///
 /// `subject_key` is the [`Identity::subject`](crate::engine::Identity::subject)
-/// key a Results card links with. A key the client holds nothing of renders
+/// key a subject card links with. A key the client holds nothing of renders
 /// an empty page rather than a 404, because a card of a show the reader is
 /// still collecting links here too.
 ///

@@ -1,5 +1,5 @@
-//! Folds the listed releases into the subjects and identities the Results
-//! page shows.
+//! Folds the listed releases into the subjects and identities the home page
+//! shows.
 //!
 //! A tracker announces one episode many times, in several resolutions, from
 //! several groups, and inside a season pack. A reader picks one copy, so the
@@ -111,7 +111,7 @@ pub(super) struct Group {
 impl Group {
     /// An episode the numbering implies that no listed release carries.
     ///
-    /// [`tree`] never builds one. The Results page adds it beside the groups
+    /// [`tree`] never builds one. The home page adds it beside the groups
     /// that `tree` built.
     pub(super) fn missing(label: String) -> Self {
         Self {

@@ -6,7 +6,7 @@
 //! a rule.
 //!
 //! The application writes to the client in one place, `grab::grab`, which
-//! the feed page's `/grab` form reaches when a reader accepts one or more
+//! the home page's `/grab` form reaches when a reader accepts one or more
 //! items. Every other call, the library scan and the connection check, only
 //! reads.
 //!

@@ -1,7 +1,7 @@
 //! What was already grabbed, how each attempt went, and which searches
 //! claimed it.
 //!
-//! The feed page marks a row the application has acted on, so a reader tells
+//! The home page marks a row the application has acted on, so a reader tells
 //! a release nobody has touched from one that failed to reach the client.
 //!
 //! One row per item. A grab is an attempt rather than an event, so a retry
@@ -148,7 +148,7 @@ pub(crate) async fn record(
 
 /// Returns every attempt, keyed by the item it was made for.
 ///
-/// The whole table comes back at once, because the feed page tests every
+/// The whole table comes back at once, because the home page tests every
 /// listed row against it. A query per row costs one round trip each.
 ///
 /// One grab spans as many rows as it has searches, so the rows fold on the

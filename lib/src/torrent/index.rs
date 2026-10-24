@@ -1,6 +1,6 @@
 //! Every torrent the client holds, kept between restarts.
 //!
-//! The feed page marks an item as owned, which it answers from here rather
+//! The home page marks an item as owned, which it answers from here rather
 //! than from the client. One query per request beats one client call per
 //! request, and the page still renders when the client is down.
 //!
@@ -101,11 +101,11 @@ pub(crate) async fn all(pool: &SqlitePool) -> Result<Vec<Torrent>, sqlx::Error> 
 
 /// Returns the parse of every indexed name a search claims.
 ///
-/// The whole list comes back at once, because the feed page tests every listed
+/// The whole list comes back at once, because the home page tests every listed
 /// item against it. A lookup per item costs one pass of the engine per row.
 ///
 /// A name no search claims contributes nothing. A client holds plenty this
-/// application never grabbed, and such a name answers no question the feed
+/// application never grabbed, and such a name answers no question the home
 /// page asks.
 pub(crate) fn claimed(engine: &Engine, torrents: &[Torrent]) -> Vec<Parsed> {
     torrents
