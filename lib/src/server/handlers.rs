@@ -1742,8 +1742,9 @@ async fn test_feed(cx: &Cx) -> Result<impl View> {
         <p class="mt-1 text-sm text-slate-400">"Fetched just now. Nothing here was stored."</p>
 
         // Bound as `fetched` rather than `feed`, because the `#[page]` attribute
-        // on the feed page puts a unit struct named `feed` in this scope, and
-        // an arm naming it matches that struct instead of binding.
+        // on the home page's `feed` handler puts a unit struct named `feed` in
+        // this scope, and an arm naming it matches that struct instead of
+        // binding.
         match &outcome {
             Err(error) => <p class="mt-6 rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
                 "failed: " (error.to_string())
