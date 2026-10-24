@@ -1,17 +1,24 @@
-//! The preference lists a reader states, kept between restarts.
+//! The preference lists and refused values a reader states, kept between
+//! restarts.
 //!
 //! One row per value, ordered by position within a field. A write replaces
 //! one field's whole list, because a reader reorders a list as readily as
 //! they add to it.
+//!
+//! A refused value is one row with no position, because a set has no order.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sqlx::SqlitePool;
 
 use super::Preferences;
+use super::unwanted::Unwanted;
 
 /// Reads every list, grouped by field and in preference order.
 const SELECT: &str = "SELECT field, position, value FROM preferences ORDER BY field, position";
+
+/// Reads every refused value, grouped by field.
+const SELECT_UNWANTED: &str = "SELECT field, value FROM unwanted ORDER BY field, value";
 
 /// Returns every stated list.
 ///
@@ -63,13 +70,30 @@ pub(crate) async fn replace(
     tx.commit().await
 }
 
+/// Returns every refused value.
+///
+/// The whole set comes back at once, because judging a listing tests every
+/// row against it. A query per field costs one round trip per field the
+/// parser reads.
+pub(crate) async fn unwanted(pool: &SqlitePool) -> Result<Unwanted, sqlx::Error> {
+    let rows: Vec<(String, String)> = sqlx::query_as(SELECT_UNWANTED).fetch_all(pool).await?;
+
+    let mut values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for (field, value) in rows {
+        values.entry(field).or_default().insert(value);
+    }
+
+    Ok(Unwanted::new(values))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use sqlx::SqlitePool;
 
-    use super::{Preferences, all, replace};
+    use super::{Preferences, Unwanted, all, replace, unwanted};
 
     fn list(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -82,6 +106,41 @@ mod tests {
                 .map(|(field, values)| ((*field).to_owned(), list(values)))
                 .collect::<BTreeMap<_, _>>(),
         )
+    }
+
+    fn refused(sets: &[(&str, &[&str])]) -> Unwanted {
+        Unwanted::new(
+            sets.iter()
+                .map(|(field, values)| {
+                    (
+                        (*field).to_owned(),
+                        list(values).into_iter().collect::<BTreeSet<_>>(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>(),
+        )
+    }
+
+    #[sqlx::test]
+    async fn a_refused_set_reads_back(pool: SqlitePool) {
+        for (field, value) in [
+            ("source", "Telecast"),
+            ("codec", "VP9"),
+            ("source", "Broadcast"),
+        ] {
+            sqlx::query("INSERT INTO unwanted (field, value) VALUES (?1, ?2)")
+                .bind(field)
+                .bind(value)
+                .execute(&pool)
+                .await
+                .expect("seed");
+        }
+
+        assert_eq!(
+            unwanted(&pool).await.expect("read"),
+            refused(&[("codec", &["VP9"]), ("source", &["Broadcast", "Telecast"])]),
+            "each field gathers its own values"
+        );
     }
 
     #[sqlx::test]

@@ -643,6 +643,7 @@ async fn feed_listing(
     let preferences = preference::store::all(&services.db)
         .await?
         .or_suggested(&engine, &library);
+    let unwanted = preference::store::unwanted(&services.db).await?;
     let enabled = engine
         .searches()
         .filter(|saved| saved.enabled)
@@ -663,6 +664,7 @@ async fn feed_listing(
                 &engine,
                 &enabled,
                 &holdings,
+                &unwanted,
                 gone.contains(&item.id),
                 &item.item.title,
             )
@@ -670,13 +672,14 @@ async fn feed_listing(
         .collect();
 
     // A gone release counts as unseen, because the tracker no longer serves
-    // it. An overlapping pack counts as seen, because the tracker still
+    // it. So does an unwanted one, because a copy the reader refused fills no
+    // gap. An overlapping pack counts as seen, because the tracker still
     // serves it and the All view lists it.
     let mut gaps = gaps::gaps(
         &engine,
         standings
             .iter()
-            .filter(|standing| !matches!(standing, Standing::Gone(_)))
+            .filter(|standing| !matches!(standing, Standing::Gone(_) | Standing::Unwanted(_)))
             .filter_map(Standing::parsed),
         &held,
     );
@@ -712,6 +715,10 @@ async fn feed_listing(
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Disabled(_)))
         .count();
+    let unwanted_count = listed
+        .iter()
+        .filter(|(_, standing, _)| matches!(standing, Standing::Unwanted(_)))
+        .count();
     let gone_count = listed
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Gone(_)))
@@ -720,8 +727,12 @@ async fn feed_listing(
         .iter()
         .filter(|(_, standing, _)| matches!(standing, Standing::Unmatched))
         .count();
-    let hidden_count =
-        owned_count + overlapping_count + disabled_count + gone_count + unmatched_count;
+    let hidden_count = owned_count
+        + overlapping_count
+        + disabled_count
+        + unwanted_count
+        + gone_count
+        + unmatched_count;
 
     let wanted = show != "all" && show != "unmatched";
 
@@ -889,6 +900,7 @@ async fn feed_listing(
                 (owned_count) " owned, "
                 (overlapping_count) " overlapping, "
                 (disabled_count) " paused, "
+                (unwanted_count) " unwanted, "
                 (gone_count) " gone, "
                 (unmatched_count) " unmatched"
             }

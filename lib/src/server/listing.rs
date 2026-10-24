@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use crate::engine::{Engine, Identity, Parsed};
+use crate::preference::unwanted::Unwanted;
 use crate::store::StoredItem;
 
 /// Where one title stands against the searches and the library.
@@ -26,6 +27,12 @@ pub(super) enum Standing {
     /// season stays missing. The row hides for the overlap, and the page does
     /// not call it owned.
     Overlapping(Parsed),
+
+    /// A field of the release reads a value the reader refused.
+    ///
+    /// The reader wants no copy that reads the value, whichever search claims
+    /// it. A copy of the same identity that reads another value stays wanted.
+    Unwanted(Parsed),
 
     /// The last grab found the tracker no longer serving the release, so
     /// another copy of its identity is wanted in its place.
@@ -46,6 +53,7 @@ impl Standing {
             Self::Wanted(parsed)
             | Self::Owned(parsed)
             | Self::Overlapping(parsed)
+            | Self::Unwanted(parsed)
             | Self::Gone(parsed)
             | Self::Disabled(parsed) => Some(parsed),
             Self::Unmatched => None,
@@ -65,6 +73,7 @@ impl Standing {
             Self::Wanted(_) => None,
             Self::Owned(_) => Some("owned"),
             Self::Overlapping(_) => Some("overlapping"),
+            Self::Unwanted(_) => Some("unwanted"),
             Self::Gone(_) => Some("gone"),
             Self::Disabled(_) => Some("paused"),
             Self::Unmatched => Some("unmatched"),
@@ -178,10 +187,17 @@ pub(super) fn parsed_values(engine: &Engine, parsed: &Parsed) -> Vec<ParsedValue
 /// whatever the tracker serves. A gone span reads as gone rather than as
 /// overlapping, because the library holds no copy of it and the tracker no
 /// longer serves it.
+///
+/// `unwanted` holds the values the reader refused. An owned release stays
+/// owned whatever the reader refuses, because the library holds it. A refused
+/// release reads as unwanted rather than as gone or overlapping, because the
+/// reader turned that copy down whatever the tracker serves or the library
+/// holds beside it.
 pub(super) fn standing(
     engine: &Engine,
     enabled: &HashSet<String>,
     holdings: &Holdings,
+    unwanted: &Unwanted,
     gone: bool,
     title: &str,
 ) -> Standing {
@@ -195,6 +211,10 @@ pub(super) fn standing(
 
     if holdings.owns(&parsed.identity) {
         return Standing::Owned(parsed);
+    }
+
+    if unwanted.refuses(engine, &parsed) {
+        return Standing::Unwanted(parsed);
     }
 
     if gone {
@@ -244,13 +264,14 @@ pub(super) fn distinct_titles(mut items: Vec<StoredItem>) -> Vec<StoredItem> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
 
     use chrono::DateTime;
     use url::Url;
 
     use super::{Holdings, Standing, distinct_titles, parsed_values, standing, title_contains};
     use crate::feed::fake;
+    use crate::preference::unwanted::Unwanted;
     use crate::search::fixture::ENGINE;
     use crate::store::StoredItem;
 
@@ -288,6 +309,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &nothing(),
+                &Unwanted::default(),
                 false,
                 HOLLOW_1080,
             ),
@@ -306,6 +328,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &holdings_of(HOLLOW_1080),
+                &Unwanted::default(),
                 false,
                 HOLLOW_1080,
             ),
@@ -324,6 +347,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &holdings_of(HOLLOW_PACK),
+                &Unwanted::default(),
                 false,
                 HOLLOW_1080,
             ),
@@ -339,6 +363,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &holdings_of(HOLLOW_1080),
+                &Unwanted::default(),
                 false,
                 HOLLOW_PACK,
             ),
@@ -354,6 +379,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &holdings_of(HOLLOW_1080),
+                &Unwanted::default(),
                 false,
                 HOLLOW_NEXT,
             ),
@@ -373,6 +399,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &nothing(),
+                &Unwanted::default(),
                 true,
                 HOLLOW_1080,
             ),
@@ -392,6 +419,7 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &holdings_of(HOLLOW_1080),
+                &Unwanted::default(),
                 true,
                 HOLLOW_1080,
             ),
@@ -407,11 +435,47 @@ mod tests {
                 &ENGINE,
                 &enabled(&["series-hollow-meridian"]),
                 &holdings_of(HOLLOW_1080),
+                &Unwanted::default(),
                 true,
                 HOLLOW_PACK,
             ),
             Standing::Gone(ENGINE.parse(HOLLOW_PACK).expect("claimed")),
             "the tracker no longer serves the pack, and the library holds no copy of it"
+        );
+    }
+
+    #[test]
+    fn a_refused_value_hides_the_release() {
+        let refused = Unwanted::new(BTreeMap::from([(
+            "source".to_owned(),
+            BTreeSet::from(["Broadcast".to_owned()]),
+        )]));
+        let claimed = ENGINE.parse(HOLLOW_1080).expect("claimed");
+        let judge = |holdings: &Holdings, gone: bool| {
+            standing(
+                &ENGINE,
+                &enabled(&["series-hollow-meridian"]),
+                holdings,
+                &refused,
+                gone,
+                HOLLOW_1080,
+            )
+        };
+
+        assert_eq!(
+            judge(&nothing(), false),
+            Standing::Unwanted(claimed.clone()),
+            "the release reads the refused source"
+        );
+        assert_eq!(
+            judge(&holdings_of(HOLLOW_1080), false),
+            Standing::Owned(claimed.clone()),
+            "the library holds the release, whatever the reader refuses"
+        );
+        assert_eq!(
+            judge(&nothing(), true),
+            Standing::Unwanted(claimed),
+            "the reader turned the copy down, whatever the tracker serves"
         );
     }
 
@@ -422,7 +486,14 @@ mod tests {
         };
 
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &nothing(), false, HOLLOW_1080),
+            standing(
+                &ENGINE,
+                &HashSet::new(),
+                &nothing(),
+                &Unwanted::default(),
+                false,
+                HOLLOW_1080
+            ),
             Standing::Disabled(expected),
             "the search that claims this title is switched off"
         );
@@ -431,7 +502,14 @@ mod tests {
     #[test]
     fn a_title_no_search_wants_is_unmatched() {
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &nothing(), false, HOLLOW_720),
+            standing(
+                &ENGINE,
+                &HashSet::new(),
+                &nothing(),
+                &Unwanted::default(),
+                false,
+                HOLLOW_720
+            ),
             Standing::Unmatched,
             "the parser reads the 720p name, and no search admits that resolution"
         );
@@ -440,7 +518,14 @@ mod tests {
     #[test]
     fn title_no_search_claims_is_unmatched() {
         assert_eq!(
-            standing(&ENGINE, &HashSet::new(), &nothing(), false, NONSENSE),
+            standing(
+                &ENGINE,
+                &HashSet::new(),
+                &nothing(),
+                &Unwanted::default(),
+                false,
+                NONSENSE
+            ),
             Standing::Unmatched,
         );
     }
@@ -453,6 +538,7 @@ mod tests {
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
             Standing::Overlapping(claimed.clone()),
+            Standing::Unwanted(claimed.clone()),
             Standing::Gone(claimed.clone()),
             Standing::Disabled(claimed.clone()),
         ] {
@@ -519,6 +605,7 @@ mod tests {
             Standing::Wanted(claimed.clone()),
             Standing::Owned(claimed.clone()),
             Standing::Overlapping(claimed.clone()),
+            Standing::Unwanted(claimed.clone()),
             Standing::Gone(claimed.clone()),
             Standing::Disabled(claimed),
             Standing::Unmatched,
@@ -533,6 +620,7 @@ mod tests {
                 (true, None),
                 (false, Some("owned")),
                 (false, Some("overlapping")),
+                (false, Some("unwanted")),
                 (false, Some("gone")),
                 (false, Some("paused")),
                 (false, Some("unmatched")),

@@ -10,11 +10,13 @@
 //! follows it.
 //!
 //! A value the list does not name is ranked below every value it does, so a
-//! short list is a statement about what the reader wants rather than a
-//! filter that hides the rest.
+//! list hides nothing. A short list is a statement about what the reader
+//! wants first. The refused values in [`unwanted`] are the one statement
+//! that hides a copy.
 
 pub(crate) mod library;
 pub(crate) mod store;
+pub(crate) mod unwanted;
 
 use std::collections::BTreeMap;
 
