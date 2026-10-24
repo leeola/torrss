@@ -103,9 +103,9 @@ struct Review {
 
     /// The `parser|key|field` of every condition the reader turned on.
     ///
-    /// A chip's checkbox is checked when its condition is on, so the
+    /// A toggle's checkbox is checked when its condition is on, so the
     /// serialized form carries what was kept and a field starts off. The
-    /// subject is no chip, because it is always kept.
+    /// subject is no toggle, because it is always kept.
     kept: HashSet<String>,
 }
 
@@ -162,7 +162,7 @@ fn excluded(torrents: &[Torrent], review: Option<&Review>) -> HashSet<TorrentId>
         .collect()
 }
 
-/// Names one condition of one suggestion, which is what a chip's checkbox
+/// Names one condition of one suggestion, which is what a toggle's checkbox
 /// posts to turn it on.
 fn condition_value(suggestion: &Suggestion, condition: &Condition) -> String {
     format!(
@@ -177,7 +177,7 @@ fn condition_value(suggestion: &Suggestion, condition: &Condition) -> String {
 /// and it never drops. A search with no subject condition claims every
 /// release its parser reads.
 ///
-/// Every other condition is off until the reader turns its chip on. The
+/// Every other condition is off until the reader turns its toggle on. The
 /// preference lists rank the copies of a release, so a search that pins the
 /// resolution narrows for no reason.
 fn kept(suggestion: &Suggestion, review: Option<&Review>) -> Vec<Condition> {
@@ -469,7 +469,7 @@ async fn import_suggestions(cx: &Cx, review: String) -> Result<impl View> {
 
                                     // The box is checked when the condition
                                     // is on, so the form carries what the
-                                    // reader kept, and a chip starts off.
+                                    // reader kept, and a toggle starts off.
                                     for condition in rest {
                                         <label class="cursor-pointer rounded-full bg-slate-900/40 px-2 py-0.5 font-mono text-xs text-slate-600 line-through has-checked:bg-slate-800/70 has-checked:text-slate-400 has-checked:no-underline">
                                             <input

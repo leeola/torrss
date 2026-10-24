@@ -3,9 +3,9 @@
 //! A client full of one subject is the reader saying they follow it. This
 //! reads that statement into a search the reader writes by hand otherwise.
 //! The search names the subject, and every other field those torrents read
-//! is what the preview offers as a chip. A field they read several ways
-//! carries every value they read, so a chip the reader turns on claims what
-//! the client holds rather than any value at all.
+//! is what the preview offers as a toggle. A field they read several ways
+//! carries every value they read, so a toggle the reader turns on claims
+//! what the client holds rather than any value at all.
 //!
 //! The grouping is by the parser's own subject rather than by a field called
 //! `show`, because a parser names its subject as it likes. Only an episodic
@@ -77,8 +77,8 @@ pub(crate) struct Suggestion {
     /// parser's own order.
     ///
     /// The search compares the subject. The rest is what the preview offers
-    /// as chips, and each one joins the search only where the reader turns it
-    /// on.
+    /// as toggles, and each one joins the search only where the reader turns
+    /// it on.
     pub(crate) conditions: Vec<Condition>,
 
     /// The search that already names this subject, when one does.
@@ -314,13 +314,13 @@ fn reading_of(parser: &Parser, reading: &Reading) -> Captures {
 }
 
 /// The subject a suggested search compares, and the fields the preview offers
-/// as chips.
+/// as toggles.
 ///
 /// The subject leads, and every field each included torrent read follows it
 /// in the parser's own order. A field they all read one way becomes an
 /// `equals`. A field they read several ways becomes a `one of` naming every
-/// value, the newest first. The list is what the client holds, so a chip the
-/// reader turns on claims that rather than any value at all.
+/// value, the newest first. The list is what the client holds, so a toggle
+/// the reader turns on claims that rather than any value at all.
 ///
 /// An identity field beyond the subject names one release rather than the
 /// set the reader wants, so only the rest take part.
