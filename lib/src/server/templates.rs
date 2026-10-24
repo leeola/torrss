@@ -43,7 +43,6 @@ async fn site_header(cx: &Cx) -> Result<impl View> {
                     "torrss"
                 </a>
                 <nav class="flex items-center gap-1 text-sm">
-                    nav_link(href: "/", label: "Results", current: path == "/")
                     nav_link(
                         href: "/searches",
                         label: "Searches",

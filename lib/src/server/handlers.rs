@@ -1195,13 +1195,7 @@ async fn subject_holdings(cx: &Cx) -> Result<impl View> {
         .collect();
 
     Ok(view! {
-        <nav class="text-sm text-slate-500">
-            <a href="/" class="hover:text-slate-300">"Results"</a>
-            " / "
-            <span class="text-slate-300">(&label)</span>
-        </nav>
-
-        <h1 class="mt-3 text-2xl font-semibold tracking-tight">(&label)</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">(&label)</h1>
         <p class="mt-1 text-sm text-slate-400">
             (format::count(count, "torrent", "torrents")) " of this subject in the client."
         </p>
@@ -1228,7 +1222,7 @@ async fn search_index(cx: &Cx) -> Result<impl View> {
                 <h1 class="text-2xl font-semibold tracking-tight">"Searches"</h1>
                 <p class="mt-1 text-sm text-slate-400">
                     "A search picks a parser and names the values it wants.
-                    The results page lists every release a search matches.
+                    The home page lists every release a search matches.
                     A paused search matches nothing."
                 </p>
             </div>
